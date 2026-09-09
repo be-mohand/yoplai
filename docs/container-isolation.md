@@ -94,6 +94,10 @@ Default internal network has no direct internet. Top-level `onecli` can provide 
 }
 ```
 
+### Provider API keys with OneCLI
+
+Keep real provider keys out of the gateway host. Store each key as a OneCLI generic secret whose host pattern is the provider API host (e.g. `openrouter.ai` for `openrouter`, `opencode.ai` for `opencode-go`); the proxy swaps it into outbound requests. The gateway still needs a non-empty `<PROVIDER>_API_KEY` in `$YOPLAI_HOME/.env` to pass credential resolution, so set a dummy value there (e.g. `OPENCODE_API_KEY=onecli`). This applies to both sandboxed and host agents, since host agents also route through OneCLI when it is enabled.
+
 Without OneCLI, choose network with direct egress and explicitly provide required non-secret/safe env through sandbox configuration. Agent-local `.env` is not injected into containers.
 
 ## Security notes
