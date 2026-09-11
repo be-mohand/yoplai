@@ -252,6 +252,45 @@ describe("buildVolumeMounts", () => {
     });
   });
 
+  it("mounts models.json and models-store.json read-only when present", () => {
+    const root = tmpDir();
+    const workspace = path.join(root, "workspace");
+    const homeDir = path.join(root, "yoplai");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(homeDir, { recursive: true });
+    fs.writeFileSync(path.join(homeDir, "models.json"), "{}");
+    fs.writeFileSync(path.join(homeDir, "models-store.json"), "{}");
+
+    const agent = AgentConfigSchema.parse({
+      id: "agent",
+      name: "Agent",
+      workspace,
+      model: { provider: "anthropic", model: "claude" },
+    });
+
+    const mounts = buildVolumeMounts(
+      agent,
+      {},
+      homeDir,
+      getRunIpcDir(homeDir, "agent", "session-1", "run-1")
+    );
+
+    expect(mounts).toEqual(
+      expect.arrayContaining<ContainerVolumeMount>([
+        {
+          source: path.join(homeDir, "models.json"),
+          target: "/sessions/models.json",
+          readonly: true,
+        },
+        {
+          source: path.join(homeDir, "models-store.json"),
+          target: "/sessions/models-store.json",
+          readonly: true,
+        },
+      ])
+    );
+  });
+
   it("adds a read-only uploads mount for a session", () => {
     const root = tmpDir();
     const workspace = path.join(root, "workspace");

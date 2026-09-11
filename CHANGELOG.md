@@ -21,6 +21,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Sandboxed agent runs now see the refreshed model catalog: the container mounts `$YOPLAI_HOME/models-store.json` (written by `yoplai models refresh`) alongside `models.json`. Previously only host agents picked up refreshed models; sandboxed runs fell back to the Pi SDK's baked-in list and failed with `Model not found` for newly released models.
 - Pi agent turns (host and sandboxed) now retry transient provider failures (rate limits, 5xx responses, queue/backpressure hints, and connection resets) instead of failing the run. Host and container classify and delay retries through one shared contract. The failed turn is dropped and the conversation resumes from where it broke, so a late failure after many tool calls no longer loses the work and the user prompt is never re-sent. Configure `retryMaxAttempts` and `retryBaseDelay` per agent when the defaults of three attempts and a two-second initial delay do not fit the provider.
 - `pnpm update-models` now discovers models like the gateway does: it falls back to `$YOPLAI_HOME/agents/*` when `agents` is unset in `yoplai.json`, scans `pool` agent directories, and collects top-level `subagents` models. Previously it required an explicit `agents` list and missed pool/subagent models.
 - Pi CLI subagent runs now surface the assistant's final answer in `latestOutput` (`yoplai subagents list`/`status`) instead of the raw `{"type":"agent_settled"}` event, and the logs view no longer shows raw token-delta noise.

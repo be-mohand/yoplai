@@ -250,6 +250,13 @@ export function buildVolumeMounts(
     addMount(mounts, modelsPath, "/sessions/models.json", true);
   }
 
+  // Refreshed model catalog (written by `yoplai models refresh`); without it
+  // the sandboxed runner only sees the Pi SDK's baked-in model list.
+  const modelsStorePath = path.join(home, "models-store.json");
+  if (fs.existsSync(modelsStorePath)) {
+    addMount(mounts, modelsStorePath, "/sessions/models-store.json", true);
+  }
+
   if (onecli?.ca?.source === "file" && onecli.ca.path) {
     const caPath = resolveHostPath(onecli.ca.path);
     if (fs.existsSync(caPath)) {
