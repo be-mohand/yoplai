@@ -14,6 +14,7 @@ import { executeExtensionAgentTool } from "../extensions/tools.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { logError, logWarn } from "../logging.js";
+import { resolveOAuthToken, type OAuthTokenLookup } from "../sdk/container/oauth-tokens.js";
 
 const InternalToolRequestSchema = z.object({
   tool: z.string(),
@@ -25,11 +26,23 @@ const InternalToolRequestSchema = z.object({
   containerName: z.string().optional(),
 });
 
+const OAuthTokenRequestSchema = z.object({
+  provider: z.string(),
+  agentId: z.string().optional(),
+  agentToken: z.string(),
+  sessionId: z.string().optional(),
+  runId: z.string().optional(),
+});
+
 type InternalToolsDeps = {
   getConfig: () => GatewayConfig;
   getRuntime: () => ExtensionRuntime;
   getTokenContext: (token: string) => ContainerTokenContext | undefined;
   executeExtensionTool: typeof executeExtensionAgentTool;
+  resolveOAuthToken: (
+    agentId: string,
+    provider: string
+  ) => Promise<OAuthTokenLookup>;
 };
 
 const defaultDeps: InternalToolsDeps = {
@@ -37,12 +50,18 @@ const defaultDeps: InternalToolsDeps = {
   getRuntime: getExtensionRuntime,
   getTokenContext: getContainerTokenContext,
   executeExtensionTool: executeExtensionAgentTool,
+  resolveOAuthToken,
 };
 
 const warnedMissingSessionIdAgents = new Set<string>();
 
 function requestIdentityMatches(
-  request: z.infer<typeof InternalToolRequestSchema>,
+  request: {
+    agentId?: string;
+    sessionId?: string;
+    runId?: string;
+    containerName?: string;
+  },
   context: ContainerTokenContext
 ): boolean {
   return (
@@ -227,6 +246,52 @@ export function createInternalTools(
       });
       return c.json({ error: message }, 500);
     }
+  });
+
+  app.post("/oauth-token", async (c) => {
+    const body = await c.req.json();
+    const parsed = OAuthTokenRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.message }, 400);
+    }
+
+    const headerAgentId = c.req.header("X-Agent-Id");
+    const headerAgentToken = c.req.header("X-Agent-Token");
+    const context = deps.getTokenContext(parsed.data.agentToken);
+    if (
+      (headerAgentId !== undefined && headerAgentId !== context?.agentId) ||
+      (headerAgentToken !== undefined && headerAgentToken !== parsed.data.agentToken) ||
+      !context ||
+      !requestIdentityMatches(parsed.data, context)
+    ) {
+      return c.json({ error: "Invalid agent token" }, 403);
+    }
+
+    let result: OAuthTokenLookup;
+    try {
+      result = await deps.resolveOAuthToken(
+        context.agentId,
+        parsed.data.provider
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "OAuth token renewal failed";
+      logError("[internal-tools] oauth token renewal failed", error, {
+        agentId: context.agentId,
+        provider: parsed.data.provider,
+      });
+      return c.json({ error: message }, 502);
+    }
+    if (result.status === "forbidden") {
+      return c.json({ error: "Provider is not available for OAuth renewal" }, 403);
+    }
+    if (result.status === "not_found") {
+      return c.json({ error: "No stored OAuth credential for provider" }, 404);
+    }
+    return c.json({
+      accessToken: result.accessToken,
+      expiresAt: result.expiresAt,
+    });
   });
 
   return app;

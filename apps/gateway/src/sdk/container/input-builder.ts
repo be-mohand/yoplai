@@ -24,7 +24,8 @@ export class ContainerInputBuilder {
     config: GatewayConfig,
     agentToken: string,
     bootstrapPrompt?: string,
-    runId?: string
+    runId?: string,
+    oauthTokens?: ContainerInput["oauthTokens"]
   ): Promise<ContainerInput> {
     const extensionSystemPrompts = await this.toolBridge.buildSystemPrompts(
       params,
@@ -87,6 +88,7 @@ export class ContainerInputBuilder {
       ipcDir: "/workspace/ipc",
       gatewayUrl: resolveContainerGatewayUrl(config),
       agentToken,
+      oauthTokens,
       onecli:
         config.onecli?.enabled && config.onecli.gatewayUrl
           ? {

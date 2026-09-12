@@ -100,6 +100,21 @@ Keep real provider keys out of the gateway host. Store each key as a OneCLI gene
 
 Without OneCLI, choose network with direct egress and explicitly provide required non-secret/safe env through sandbox configuration. Agent-local `.env` is not injected into containers.
 
+### OAuth providers in sandboxed agents
+
+OAuth-only providers (e.g. `openai-codex`) cannot use the OneCLI static-key swap. Log in on the host once (`yoplai auth login openai-codex`), then set the agent's auth mode:
+
+```yaml
+sdk: pi
+auth:
+  mode: oauth
+model:
+  provider: openai-codex
+  model: gpt-5.6-terra
+sandbox:
+  enabled: true
+``` For agents with `auth.mode: oauth`, the gateway pre-refreshes the OAuth credential on the host (from `$YOPLAI_HOME/auth.json`) and passes only a short-lived access token into the container via `ContainerInput.oauthTokens`; the runner renews it through `POST /internal/oauth-token` (same per-run token identity checks as `/internal/tools`) when under 10 minutes of validity remain. Refresh tokens never enter the sandbox. Do not add a OneCLI secret mapping for an OAuth provider's API host — the proxy would overwrite the injected Authorization header.
+
 ## Security notes
 
 - Containers run unprivileged and are removed on exit.

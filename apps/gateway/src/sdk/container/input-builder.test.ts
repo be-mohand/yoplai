@@ -142,6 +142,69 @@ describe("container input builder", () => {
     });
   });
 
+  it("passes oauthTokens through to the container input", async () => {
+    const workspaceDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-container-input-")
+    );
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
+    const builder = new ContainerInputBuilder({
+      buildSystemPrompts: async () => [],
+      buildTools: async () => [],
+    });
+    const params = {
+      agentId: "cloud",
+      sessionId: "session-1",
+      message: "hello",
+      workspaceDir,
+      agent: {
+        id: "cloud",
+        model: { provider: "anthropic", model: "claude-sonnet" },
+        auth: { mode: "oauth" },
+      },
+    } as SdkRunParams;
+    const config = { agents: [params.agent], extensions: {} } as GatewayConfig;
+    const oauthTokens = {
+      anthropic: { accessToken: "fresh-token", expiresAt: 12345 },
+    };
+
+    const input = await builder.build(
+      params,
+      config,
+      "token-1",
+      undefined,
+      "run-1",
+      oauthTokens
+    );
+
+    expect(input.oauthTokens).toEqual(oauthTokens);
+  });
+
+  it("omits oauthTokens when none are resolved", async () => {
+    const workspaceDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-container-input-")
+    );
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
+    const builder = new ContainerInputBuilder({
+      buildSystemPrompts: async () => [],
+      buildTools: async () => [],
+    });
+    const params = {
+      agentId: "cloud",
+      sessionId: "session-1",
+      message: "hello",
+      workspaceDir,
+      agent: {
+        id: "cloud",
+        model: { provider: "anthropic", model: "claude-sonnet" },
+      },
+    } as SdkRunParams;
+    const config = { agents: [params.agent], extensions: {} } as GatewayConfig;
+
+    const input = await builder.build(params, config, "token-1");
+
+    expect(input.oauthTokens).toBeUndefined();
+  });
+
   it("prepends first-run bootstrap prompt", async () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")

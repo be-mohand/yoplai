@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Sandboxed agents can now use OAuth-only providers (e.g. `openai-codex`): when an agent has `auth.mode: oauth`, the gateway pre-refreshes the provider's OAuth credential on the host and passes only a short-lived access token into the container, and the runner renews it through a new `POST /internal/oauth-token` gateway endpoint before expiry. Refresh tokens never enter the sandbox. Note: do not configure a OneCLI secret mapping for an OAuth provider's API host — it would overwrite the injected Authorization header.
 - Agents can opt into a single `fallback_model` in `agent.yaml`; after transient primary-model retries are exhausted, a silent, tool-free failed Pi turn retries once with that model.
 - Added `yoplai models refresh` to fetch Pi's latest provider model catalogs into `$YOPLAI_HOME/models-store.json`, allowing newly released models to be used without upgrading Yoplai.
 - Scheduler jobs in `cron/jobs.json` accept an optional `reasoning` field to override the agent's reasoning level per job.

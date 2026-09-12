@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { ModelsError } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContainerInput } from "@yoplai/shared";
 import { runAgent, sendFollowUpMessage } from "../runner.js";
@@ -69,7 +70,28 @@ const piMock = vi.hoisted(() => {
 });
 
 vi.mock("@earendil-works/pi-ai", () => ({
-  InMemoryCredentialStore: class {},
+  InMemoryCredentialStore: class {
+    private store = new Map<string, unknown>();
+    async modify(
+      providerId: string,
+      fn: (current: unknown) => Promise<unknown>
+    ) {
+      const next = await fn(this.store.get(providerId));
+      this.store.set(providerId, next);
+      return next;
+    }
+    async read(providerId: string) {
+      return this.store.get(providerId);
+    }
+  },
+  ModelsError: class extends Error {
+    code: string;
+    constructor(code: string, message: string) {
+      super(message);
+      this.name = "ModelsError";
+      this.code = code;
+    }
+  },
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
@@ -543,6 +565,358 @@ describe("Pi runner", () => {
       })
     );
     expect(piMock.session.dispose).toHaveBeenCalledTimes(1);
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("seeds oauth credentials and skips the api-key placeholder for that provider", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      });
+    });
+
+    await runAgent(
+      createInput({
+        workspaceDir,
+        sessionDir,
+        oauthTokens: {
+          anthropic: {
+            accessToken: "access-1",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          },
+        },
+      })
+    );
+
+    expect(piMock.setRuntimeApiKey).not.toHaveBeenCalled();
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("renews a near-expiry seeded token via the gateway before the retry-entry prompt", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          accessToken: "renewed-access",
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        },
+        { status: 200 }
+      )
+    );
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      });
+    });
+
+    await runAgent(
+      createInput({
+        workspaceDir,
+        sessionDir,
+        oauthTokens: {
+          anthropic: {
+            accessToken: "access-1",
+            // Under the 10-minute renewal threshold.
+            expiresAt: Date.now() + 5 * 60 * 1000,
+          },
+        },
+      })
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        href: "http://gateway:3000/internal/oauth-token",
+      }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          provider: "anthropic",
+          agentId: "agent-1",
+          agentToken: "token-1",
+          sessionId: "session-1",
+        }),
+      })
+    );
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("renews the fallback provider's token before the fallback prompt, independent of the primary entry check, and skips its api-key placeholder", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          accessToken: "fallback-renewed",
+          expiresAt: startedAt + 60 * 60 * 1000,
+        },
+        { status: 200 }
+      )
+    );
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      // Simulate the primary attempt itself taking 6 minutes before it
+      // fails, dropping validity to 5 minutes — under the threshold — only
+      // after the primary entry check (at startedAt) already ran and saw it
+      // as fresh. Any renewal observed below can only be the fallback
+      // branch's own check.
+      vi.setSystemTime(startedAt + 6 * 60 * 1000);
+      const failed = {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "HTTP 503 Service Unavailable",
+      };
+      piMock.session.messages.push(
+        { role: "user", content: [{ type: "text", text: "Say hi" }] },
+        failed
+      );
+      for (const subscriber of piMock.subscribers) {
+        subscriber({ type: "message_end", message: failed });
+      }
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "fallback answer" }],
+        stopReason: "end_turn",
+      });
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // The mocked `getModel` always resolves to piMock.model ("anthropic"),
+    // so seed that provider to exercise the fallback branch's own renewal
+    // and setRuntimeApiKey-skip logic (runner.ts's fallback path checks
+    // `fallback.provider`, i.e. the resolved model, not the requested
+    // fallback config's provider string).
+    let output;
+    try {
+      output = await runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          retry: { maxAttempts: 1, baseDelaySeconds: 0 },
+          fallbackModel: { provider: "openai", model: "gpt-5" },
+          oauthTokens: {
+            anthropic: {
+              accessToken: "access-1",
+              expiresAt: startedAt + 11 * 60 * 1000,
+            },
+          },
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(output).toMatchObject({ text: "fallback answer" });
+    expect(piMock.setRuntimeApiKey).not.toHaveBeenCalled();
+    // Seeded 11 minutes out at start, so the primary entry check never
+    // renews; the single fetch call below can only be the fallback branch's
+    // own check.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        href: "http://gateway:3000/internal/oauth-token",
+      }),
+      expect.objectContaining({ method: "POST" })
+    );
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("recovers via resumeAfterFailedTurn, not a second prompt, when the initial prompt's oauth self-refresh fails mid-turn", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          accessToken: "renewed-access",
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        },
+        { status: 200 }
+      )
+    );
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      // Mirrors the real SDK: the user turn is appended to history before
+      // auth is resolved, so a thrown auth failure still leaves it appended.
+      // A retry that calls `session.prompt` again (rather than resuming)
+      // would append a second, duplicate user message.
+      piMock.session.messages.push({
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      });
+      throw new ModelsError("oauth", "OAuth refresh failed for anthropic");
+    });
+    piMock.agent.continue.mockImplementationOnce(async () => {
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "recovered" }],
+        stopReason: "end_turn",
+      });
+    });
+
+    const output = await runAgent(
+      createInput({
+        workspaceDir,
+        sessionDir,
+        // Far above the proactive threshold: the failure below can only come
+        // from the SDK's own mid-turn self-refresh, not our entry check.
+        oauthTokens: {
+          anthropic: {
+            accessToken: "access-1",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          },
+        },
+      })
+    );
+
+    expect(output).toMatchObject({ text: "recovered" });
+    // The recovery goes through `session.agent.continue()` (via
+    // resumeAfterFailedTurn), never a second `session.prompt` call — so the
+    // user message from the failed attempt is not duplicated.
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).toHaveBeenCalledTimes(1);
+    expect(
+      piMock.session.messages.map(
+        (message) => (message as { role: string }).role
+      )
+    ).toEqual(["user", "assistant"]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        href: "http://gateway:3000/internal/oauth-token",
+      }),
+      expect.objectContaining({ method: "POST" })
+    );
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("does not retry the prompt when the forced renewal itself fails", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      Response.json({ error: "gateway unreachable" }, { status: 502 })
+    );
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      throw new ModelsError("oauth", "OAuth refresh failed for anthropic");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          oauthTokens: {
+            anthropic: {
+              accessToken: "access-1",
+              expiresAt: Date.now() + 60 * 60 * 1000,
+            },
+          },
+        })
+      )
+    ).rejects.toThrow("OAuth refresh failed for anthropic");
+
+    // A renewal that didn't actually replace the token would just fail the
+    // same way again, so it must not retry — the original error is the more
+    // informative one to surface.
+    expect(piMock.session.prompt).toHaveBeenCalledTimes(1);
+    expect(piMock.agent.continue).not.toHaveBeenCalled();
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("renews before delivering a follow-up to an already-active session, independent of the entry check", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-runner-"));
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionDir = path.join(tempDir, "sessions");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          accessToken: "renewed-access",
+          expiresAt: startedAt + 60 * 60 * 1000,
+        },
+        { status: 200 }
+      )
+    );
+
+    // Seeded 11 minutes out: the retry-entry check (above) sees it as fresh
+    // and does not renew. Simulate the turn running for 6 minutes before the
+    // follow-up arrives, dropping validity to 5 minutes — under the
+    // threshold — so any renewal observed below can only come from
+    // `sendFollowUpMessage`'s own check on the already-active session.
+    piMock.session.prompt.mockImplementationOnce(async () => {
+      vi.setSystemTime(startedAt + 6 * 60 * 1000);
+      await sendFollowUpMessage({ message: "keep going" });
+      piMock.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      });
+    });
+
+    try {
+      await runAgent(
+        createInput({
+          workspaceDir,
+          sessionDir,
+          oauthTokens: {
+            anthropic: {
+              accessToken: "access-1",
+              expiresAt: startedAt + 11 * 60 * 1000,
+            },
+          },
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // Seeded 11 minutes out at start, so the retry-entry check never renews;
+    // the single fetch call below can only be the follow-up's own check.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(piMock.session.sendUserMessage).toHaveBeenCalledWith("keep going", {
+      deliverAs: "steer",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        href: "http://gateway:3000/internal/oauth-token",
+      }),
+      expect.objectContaining({ method: "POST" })
+    );
 
     await fs.rm(tempDir, { recursive: true, force: true });
   });
@@ -1160,6 +1534,7 @@ function createInput(paths: {
   runId?: string;
   retry?: ContainerInput["retry"];
   fallbackModel?: NonNullable<ContainerInput["sdkConfig"]["fallbackModel"]>;
+  oauthTokens?: ContainerInput["oauthTokens"];
 }): ContainerInput {
   return {
     agentId: "agent-1",
@@ -1177,6 +1552,7 @@ function createInput(paths: {
     attachments: paths.attachments,
     imageInputSupported: paths.imageInputSupported,
     retry: paths.retry,
+    oauthTokens: paths.oauthTokens,
     sdkConfig: {
       sdk: "pi",
       model: {

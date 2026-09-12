@@ -3,8 +3,10 @@ import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   InMemoryCredentialStore,
+  ModelsError,
   type AssistantMessage,
   type ImageContent,
+  type OAuthCredential,
 } from "@earendil-works/pi-ai";
 import {
   DefaultResourceLoader,
@@ -35,7 +37,171 @@ import {
   type HistoryEvent,
 } from "@yoplai/shared";
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
-import { callGatewayTool } from "./gateway-client.js";
+import {
+  callGatewayTool,
+  fetchOAuthToken,
+  type OAuthTokenInput,
+} from "./gateway-client.js";
+
+// The Pi SDK itself tries `oauth.refresh()` once a stored credential has
+// under 5 minutes of validity left, and throws because our credentials carry
+// no refresh token (renewal is gateway-mediated). Renew proactively at a
+// wider threshold so we always win that race.
+const OAUTH_RENEWAL_THRESHOLD_MS = 10 * 60 * 1000;
+
+function toOAuthCredential(token: {
+  accessToken: string;
+  expiresAt: number;
+}): OAuthCredential {
+  return {
+    type: "oauth",
+    access: token.accessToken,
+    refresh: "",
+    expires: token.expiresAt,
+  };
+}
+
+/**
+ * Everything a renewal needs, bundled once per run so every call site
+ * (initial prompt, retries, fallback, and follow-ups delivered to an
+ * already-active session) shares the same expiry tracking and in-flight
+ * dedupe lock instead of racing independent copies.
+ */
+export interface OAuthRenewalContext {
+  store: InMemoryCredentialStore;
+  oauthExpiryByProvider: Map<string, number>;
+  input: OAuthTokenInput;
+  renewalLocks: Map<string, Promise<boolean>>;
+  fetchToken?: typeof fetchOAuthToken;
+  now?: () => number;
+}
+
+/**
+ * Seeds the credential store with oauth-type credentials for every provider
+ * present in `oauthTokens`, and returns the tracked expiry per provider so
+ * `ensureFreshOAuthToken` knows when to renew.
+ */
+export async function seedOAuthCredentials(
+  store: InMemoryCredentialStore,
+  oauthTokens: ContainerInput["oauthTokens"]
+): Promise<Map<string, number>> {
+  const expiryByProvider = new Map<string, number>();
+  await Promise.all(
+    Object.entries(oauthTokens ?? {}).map(async ([provider, token]) => {
+      expiryByProvider.set(provider, token.expiresAt);
+      await store.modify(provider, async () => toOAuthCredential(token));
+    })
+  );
+  return expiryByProvider;
+}
+
+/**
+ * Fetches a new token and writes it into the store, unconditionally. Callers
+ * for the same provider share one in-flight renewal via `renewalLocks`
+ * instead of each independently reading the stale expiry and re-fetching, so
+ * the check-and-refresh is effectively atomic per provider. Renewal failures
+ * are logged and swallowed — the upcoming prompt will surface the auth error
+ * instead of crashing the run before it tries — but the returned boolean
+ * tells a caller (like `runWithOAuthRefreshRetry`) whether the token actually
+ * changed, so it can skip a retry it already knows will fail the same way.
+ */
+export async function renewOAuthToken(
+  provider: string,
+  ctx: OAuthRenewalContext
+): Promise<boolean> {
+  const inFlight = ctx.renewalLocks.get(provider);
+  if (inFlight) {
+    return inFlight;
+  }
+  const fetchToken = ctx.fetchToken ?? fetchOAuthToken;
+  const task = (async () => {
+    try {
+      const token = await fetchToken(ctx.input, provider);
+      await ctx.store.modify(provider, async () => toOAuthCredential(token));
+      ctx.oauthExpiryByProvider.set(provider, token.expiresAt);
+      return true;
+    } catch (error) {
+      console.error(
+        `[agent-runner] Failed to renew OAuth token for provider ${provider}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return false;
+    }
+  })();
+  ctx.renewalLocks.set(provider, task);
+  try {
+    return await task;
+  } finally {
+    ctx.renewalLocks.delete(provider);
+  }
+}
+
+/**
+ * No-op for providers not seeded from `input.oauthTokens`. For tracked
+ * providers, renews via the gateway when the stored credential has under
+ * `OAUTH_RENEWAL_THRESHOLD_MS` of validity left.
+ */
+export async function ensureFreshOAuthToken(
+  provider: string,
+  ctx: OAuthRenewalContext
+): Promise<void> {
+  const now = ctx.now ?? Date.now;
+  const expires = ctx.oauthExpiryByProvider.get(provider);
+  if (expires === undefined) return;
+  if (expires - now() >= OAUTH_RENEWAL_THRESHOLD_MS) return;
+  await renewOAuthToken(provider, ctx);
+}
+
+/**
+ * True for the SDK's own `ModelsError("oauth", ...)`, thrown when a stored
+ * credential drops under its internal 5-minute window and it tries
+ * `oauth.refresh()` itself — which always fails for us since our credentials
+ * carry no refresh token (renewal is gateway-mediated). This can still occur
+ * mid-turn for a long-running attempt that outlasts the proactive 10-minute
+ * renewal at attempt entry.
+ */
+export function isOAuthRefreshError(error: unknown): boolean {
+  return error instanceof ModelsError && error.code === "oauth";
+}
+
+/**
+ * Runs `attempt`; if it fails with the SDK's own oauth-refresh error for a
+ * seeded provider, forces one renewal and, only if that renewal actually
+ * replaced the token, retries once via `recover` before giving up (a failed
+ * renewal would just fail the same way again, so there is no point retrying
+ * — and the original error is more informative than a second identical one).
+ * `recover` defaults to `attempt`, which is only safe when `attempt` itself
+ * never appends a fresh user message on a retry (e.g. it already goes
+ * through `resumeAfterFailedTurn`); callers whose `attempt` can append one
+ * (a raw `session.prompt` on the very first turn) must pass a `recover` that
+ * resumes instead, so a retry does not duplicate that message in history.
+ */
+async function runWithOAuthRefreshRetry<T>(
+  provider: string,
+  ctx: OAuthRenewalContext,
+  attempt: () => Promise<T>,
+  recover: () => Promise<T> = attempt
+): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (
+      !isOAuthRefreshError(error) ||
+      !ctx.oauthExpiryByProvider.has(provider)
+    ) {
+      throw error;
+    }
+    console.error(
+      `[agent-runner] SDK oauth self-refresh failed mid-turn for provider ${provider}; forcing a gateway renewal and retrying once`
+    );
+    const renewed = await renewOAuthToken(provider, ctx);
+    if (!renewed) {
+      throw error;
+    }
+    return recover();
+  }
+}
 
 const CONTAINER_SYSTEM_PROMPT = `You are an AI agent running inside an isolated Yoplai container. Use the mounted workspace as your working directory. Coding tools run inside this container. Orchestration tools call back to the gateway.
 
@@ -47,6 +213,13 @@ const LARGE_TOOL_RESULT_PREVIEW_LENGTH = 2_000;
 
 let activeSession: AgentSession | undefined;
 let pendingFollowUps: string[] = [];
+// Tracks the model currently in use (updated on a fallback switch) so a
+// follow-up delivered to an already-active session — pi's `sendUserMessage`
+// always triggers a turn — renews first instead of prompting on a stale
+// token, notably during a retry-backoff sleep that can run for minutes.
+let activeOAuthContext:
+  | { ctx: OAuthRenewalContext; provider: string }
+  | undefined;
 
 export type DeliveryOwner = Pick<
   ContainerInput,
@@ -110,6 +283,13 @@ export async function sendFollowUpMessage(
     return;
   }
 
+  if (activeOAuthContext) {
+    await ensureFreshOAuthToken(
+      activeOAuthContext.provider,
+      activeOAuthContext.ctx
+    );
+  }
+
   await activeSession.sendUserMessage(decision.text, { deliverAs: "steer" });
 }
 
@@ -130,6 +310,7 @@ export async function runAgent(
   );
 
   activeSession = undefined;
+  activeOAuthContext = undefined;
 
   const provider = input.sdkConfig.model.provider;
   if (!provider) {
@@ -170,11 +351,26 @@ export async function runAgent(
   const sessionFile = runtimeSession.file;
 
   try {
+    const credentialStore = new InMemoryCredentialStore();
+    const oauthExpiryByProvider = await seedOAuthCredentials(
+      credentialStore,
+      input.oauthTokens
+    );
+    const oauthCtx: OAuthRenewalContext = {
+      store: credentialStore,
+      oauthExpiryByProvider,
+      input,
+      renewalLocks: new Map(),
+    };
     const modelRuntime = await ModelRuntime.create({
-      credentials: new InMemoryCredentialStore(),
+      credentials: credentialStore,
       modelsPath: path.join(input.sessionDir, "models.json"),
     });
-    await modelRuntime.setRuntimeApiKey(provider, "onecli-proxy-managed");
+    // A runtime api-key override shadows any stored credential, so providers
+    // seeded from input.oauthTokens must skip it.
+    if (!oauthExpiryByProvider.has(provider)) {
+      await modelRuntime.setRuntimeApiKey(provider, "onecli-proxy-managed");
+    }
     const model = modelRuntime.getModel(provider, input.sdkConfig.model.model);
     if (!model) {
       throw new Error(
@@ -224,6 +420,7 @@ export async function runAgent(
       settingsManager,
     });
     activeSession = session;
+    activeOAuthContext = { ctx: oauthCtx, provider };
 
     const systemPrompt = session.agent.state.systemPrompt;
     if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
@@ -243,11 +440,14 @@ export async function runAgent(
     });
 
     try {
+      if (pendingFollowUps.length > 0) {
+        await ensureFreshOAuthToken(provider, oauthCtx);
+      }
       for (const message of pendingFollowUps.splice(0)) {
         await session.sendUserMessage(message, { deliverAs: "steer" });
       }
 
-    const promptOptions =
+      const promptOptions =
         input.imageInputSupported === false
           ? undefined
           : await loadPromptOptions(input);
@@ -258,12 +458,27 @@ export async function runAgent(
           maxAttempts: input.retry?.maxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS,
           baseDelaySeconds:
             input.retry?.baseDelaySeconds ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
-          runTurn: (attempt) =>
-            attempt === 1
-              ? session.prompt(promptText, promptOptions)
-              : resumeAfterFailedTurn(session, () =>
+          runTurn: async (attempt) => {
+            await ensureFreshOAuthToken(provider, oauthCtx);
+            await runWithOAuthRefreshRetry(
+              provider,
+              oauthCtx,
+              () =>
+                attempt === 1
+                  ? session.prompt(promptText, promptOptions)
+                  : resumeAfterFailedTurn(session, () =>
+                      session.prompt(promptText, promptOptions)
+                    ),
+              // A raw `session.prompt` (attempt 1) may have already appended
+              // the user message before the SDK's own oauth self-refresh
+              // threw, so the once-only retry must resume rather than
+              // re-prompt, or it would duplicate that message in history.
+              () =>
+                resumeAfterFailedTurn(session, () =>
                   session.prompt(promptText, promptOptions)
-                ),
+                )
+            );
+          },
           getMessages: () => session.messages,
           isAbort: isAbortLikeError,
           onRetry: (attempt, delaySeconds, message) =>
@@ -302,7 +517,11 @@ export async function runAgent(
         primaryFailure &&
         fallbackConfig &&
         isReplayableFailedTurn(session.messages) &&
-        isRetryableProviderError(primaryFailure.source, primaryFailure.message)
+        (isRetryableProviderError(
+          primaryFailure.source,
+          primaryFailure.message
+        ) ||
+          isOAuthRefreshError(primaryFailure.source))
       ) {
         const fallbackStartedAt = Date.now();
         const logFallback = (outcome: "success" | "failure", fallbackFailure?: string) =>
@@ -332,13 +551,19 @@ export async function runAgent(
           );
         }
         try {
-          await modelRuntime.setRuntimeApiKey(
-            fallback.provider,
-            "onecli-proxy-managed"
-          );
+          if (!oauthExpiryByProvider.has(fallback.provider)) {
+            await modelRuntime.setRuntimeApiKey(
+              fallback.provider,
+              "onecli-proxy-managed"
+            );
+          }
           await session.setModel(fallback);
-          await resumeAfterFailedTurn(session, () =>
-            session.prompt(promptText, promptOptions)
+          activeOAuthContext = { ctx: oauthCtx, provider: fallback.provider };
+          await ensureFreshOAuthToken(fallback.provider, oauthCtx);
+          await runWithOAuthRefreshRetry(fallback.provider, oauthCtx, () =>
+            resumeAfterFailedTurn(session, () =>
+              session.prompt(promptText, promptOptions)
+            )
           );
         } catch (error) {
           const message =
@@ -366,6 +591,7 @@ export async function runAgent(
         session.dispose();
         await runtimeSession.persist();
         activeSession = undefined;
+        activeOAuthContext = undefined;
         pendingFollowUps = [];
         throw error;
       }
@@ -386,6 +612,7 @@ export async function runAgent(
       session.dispose();
       await runtimeSession.persist();
       activeSession = undefined;
+      activeOAuthContext = undefined;
       pendingFollowUps = [];
       throw new Error(`Agent error: ${message}`);
     }
@@ -394,6 +621,7 @@ export async function runAgent(
     session.dispose();
     await runtimeSession.persist();
     activeSession = undefined;
+    activeOAuthContext = undefined;
     pendingFollowUps = [];
 
     return { text, aborted, history };

@@ -23,6 +23,7 @@ import {
 } from "../../agents/workspace.js";
 import { getDefaultSdkId, getSdkAdapter } from "../registry.js";
 import { registerContainerToken, removeContainerToken } from "./tokens.js";
+import { resolveOAuthTokens } from "./oauth-tokens.js";
 import {
   appendAttachmentContext,
   buildDocumentAttachmentContext,
@@ -350,6 +351,7 @@ export function getContainerAdapter(): SdkAdapter {
               )
             )
           : "";
+        const oauthTokens = await resolveOAuthTokens(params.agent);
         input = await new ContainerInputBuilder().build(
           {
             ...params,
@@ -363,7 +365,8 @@ export function getContainerAdapter(): SdkAdapter {
           config,
           agentToken,
           isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined,
-          runId
+          runId,
+          oauthTokens
         );
         invisibleToolNames = new Set(
           input.extensionTools

@@ -488,3 +488,139 @@ describe("internal tools", () => {
     });
   });
 });
+
+function createOAuthDeps(
+  resolveOAuthToken: ReturnType<typeof vi.fn>,
+  agentId = "agent-1"
+) {
+  const config = {
+    agents: [
+      {
+        id: agentId,
+        name: "Agent One",
+        workspace: "/tmp/agent-1",
+        queueMode: "queue",
+        model: { model: "test" },
+      },
+    ],
+    extensions: {},
+  } as unknown as GatewayConfig;
+
+  return createInternalTools({
+    getConfig: () => config,
+    getRuntime: () => ({}) as never,
+    executeExtensionTool: vi.fn(),
+    resolveOAuthToken,
+  });
+}
+
+function postOAuthToken(
+  app: ReturnType<typeof createInternalTools>,
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {}
+): Promise<Response> {
+  return Promise.resolve(
+    app.request("/oauth-token", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Agent-Id": String(body.agentId),
+        "X-Agent-Token": String(body.agentToken),
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    })
+  );
+}
+
+describe("internal oauth-token renewal endpoint", () => {
+  it("returns a fresh token on success", async () => {
+    const resolveOAuthToken = vi.fn().mockResolvedValue({
+      status: "ok",
+      accessToken: "fresh-token",
+      expiresAt: 12345,
+    });
+    const app = createOAuthDeps(resolveOAuthToken);
+    registerToken("oauth-token-1");
+
+    const response = await postOAuthToken(app, {
+      provider: "anthropic",
+      agentId: "agent-1",
+      agentToken: "oauth-token-1",
+      sessionId: "session-1",
+      runId: "run-1",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      accessToken: "fresh-token",
+      expiresAt: 12345,
+    });
+    expect(resolveOAuthToken).toHaveBeenCalledWith("agent-1", "anthropic");
+  });
+
+  it("rejects an identity mismatch with 403", async () => {
+    const resolveOAuthToken = vi.fn();
+    const app = createOAuthDeps(resolveOAuthToken);
+    registerToken("oauth-token-2", "agent-2");
+
+    const response = await postOAuthToken(app, {
+      provider: "anthropic",
+      agentId: "agent-1",
+      agentToken: "oauth-token-2",
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Invalid agent token" });
+    expect(resolveOAuthToken).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the provider is not available for the agent", async () => {
+    const resolveOAuthToken = vi.fn().mockResolvedValue({ status: "forbidden" });
+    const app = createOAuthDeps(resolveOAuthToken);
+    registerToken("oauth-token-3");
+
+    const response = await postOAuthToken(app, {
+      provider: "openai",
+      agentId: "agent-1",
+      agentToken: "oauth-token-3",
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Provider is not available for OAuth renewal",
+    });
+  });
+
+  it("returns 404 when there is no stored oauth credential", async () => {
+    const resolveOAuthToken = vi.fn().mockResolvedValue({ status: "not_found" });
+    const app = createOAuthDeps(resolveOAuthToken);
+    registerToken("oauth-token-4");
+
+    const response = await postOAuthToken(app, {
+      provider: "anthropic",
+      agentId: "agent-1",
+      agentToken: "oauth-token-4",
+    });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "No stored OAuth credential for provider",
+    });
+  });
+
+  it("returns a JSON 502 when the resolver throws instead of a bare 500", async () => {
+    const resolveOAuthToken = vi.fn().mockRejectedValue(new Error("IdP unreachable"));
+    const app = createOAuthDeps(resolveOAuthToken);
+    registerToken("oauth-token-5");
+
+    const response = await postOAuthToken(app, {
+      provider: "anthropic",
+      agentId: "agent-1",
+      agentToken: "oauth-token-5",
+    });
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "IdP unreachable" });
+  });
+});
