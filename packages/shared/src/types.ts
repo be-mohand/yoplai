@@ -2304,6 +2304,12 @@ export const ContainerInputSchema = z.object({
       caPath: z.string().optional(),
     })
     .optional(),
+  oauthTokens: z
+    .record(
+      z.string(),
+      z.object({ accessToken: z.string(), expiresAt: z.number() })
+    )
+    .optional(),
   sdkConfig: z.object({
     sdk: SdkIdSchema,
     model: AgentModelConfigSchema,
