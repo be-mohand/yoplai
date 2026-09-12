@@ -33,7 +33,7 @@ yoplai scheduler rm my-agent <job-id> -y
 
 Manual run uses same execution/output path, works for disabled jobs, and does not shift next cron fire. Concurrent execution of same job is rejected/skipped.
 
-Scheduler supports plain agent prompts, script-only jobs, wake-agent script gates, quiet outputs, model overrides, timeouts, and channel/user delivery. For exact JSON schemas, script security, tool fields, and examples see [scheduler README](../packages/extensions/scheduler/README.md).
+Scheduler supports plain agent prompts, script-only jobs, wake-agent script gates, quiet outputs, model/reasoning overrides, timeouts, and channel/user delivery. For exact JSON schemas, script security, tool fields, and examples see [scheduler README](../packages/extensions/scheduler/README.md).
 
 ## HTTP example
 

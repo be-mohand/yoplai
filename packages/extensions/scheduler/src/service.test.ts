@@ -147,6 +147,54 @@ describe("SchedulerService.runNow", () => {
     expect(after?.state?.lastStatus).toBe("ok");
   });
 
+  it("passes a job's reasoning override as thinkLevel to runAgent", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    tmpDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-scheduler-service-")
+    );
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    await fs.mkdir(path.join(alpha.workspace, "cron"), { recursive: true });
+    await fs.writeFile(
+      path.join(alpha.workspace, "cron/jobs.json"),
+      JSON.stringify({
+        version: 1,
+        jobs: [
+          {
+            id: "job-1",
+            name: "Digest",
+            enabled: true,
+            schedule: { cron: "0 8 * * *", tz: "UTC" },
+            reasoning: "high",
+            payload: jobPayload({ message: "Run" }),
+          },
+        ],
+      })
+    );
+    const runAgent = vi.fn().mockResolvedValue({
+      payloads: [{ text: "done" }],
+      meta: { durationMs: 12, sessionId: "manual-session" },
+    });
+    const config: GatewayConfig = {
+      version: 3,
+      agents: [alpha],
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 },
+      agentFab: false,
+    };
+    setSchedulerContext(context(config, runAgent));
+    const scheduler = new SchedulerService();
+
+    await scheduler.runNow("alpha", "job-1");
+
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "alpha",
+        message: "Run",
+        thinkLevel: "high",
+      })
+    );
+  });
+
   it("rejects a second manual run while the same job is executing", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     tmpDir = await fs.mkdtemp(

@@ -558,6 +558,7 @@ export class SchedulerService {
       message: prompt,
       sessionId,
       model: job.model,
+      thinkLevel: job.reasoning,
       source: "scheduler",
       // Without an explicit surface the tracer falls back to "chat", so
       // scheduled runs would show up as yoplai:chat:<agent> in Langfuse.

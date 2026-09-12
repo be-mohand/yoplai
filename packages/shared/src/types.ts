@@ -409,6 +409,7 @@ export const ScheduleJobFileSchema = z.object({
   enabled: z.boolean().optional().default(true),
   schedule: ScheduleSchema,
   model: RequiredModelConfigSchema.optional(),
+  reasoning: ThinkLevelSchema.optional(),
   payload: SchedulePayloadSchema,
   deliver: z.array(DeliverTargetSchema).optional(),
   createdAt: z.string().optional(),

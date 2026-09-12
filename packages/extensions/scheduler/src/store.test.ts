@@ -132,6 +132,33 @@ describe("PerAgentScheduleStore", () => {
     });
   });
 
+  it("loads job reasoning overrides", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
+    const a = agent("alpha", path.join(tmpDir, "alpha"));
+    await fs.mkdir(path.join(a.workspace, "cron"), { recursive: true });
+    await fs.writeFile(
+      path.join(a.workspace, "cron/jobs.json"),
+      JSON.stringify({
+        version: 1,
+        jobs: [
+          {
+            id: "job-1",
+            name: "Digest",
+            enabled: true,
+            schedule: { cron: "0 8 * * *", tz: "UTC" },
+            reasoning: "high",
+            payload: { message: "Run" },
+          },
+        ],
+      })
+    );
+
+    const store = new PerAgentScheduleStore([a], (candidate) => candidate.workspace);
+    const loaded = await store.load();
+
+    expect(loaded.jobs[0]?.reasoning).toBe("high");
+  });
+
   it("rejects partial job model overrides", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
     const a = agent("alpha", path.join(tmpDir, "alpha"));
@@ -180,5 +207,25 @@ describe("PerAgentScheduleStore", () => {
     const alphaRaw = await fs.readFile(path.join(a.workspace, "cron/jobs.json"), "utf8");
     expect(JSON.parse(alphaRaw).jobs[0].agentId).toBeUndefined();
     await expect(fs.stat(path.join(b.workspace, "cron/jobs.json"))).rejects.toThrow();
+  });
+
+  it("preserves reasoning across an unrelated save", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-store-"));
+    const a = agent("alpha", path.join(tmpDir, "alpha"));
+    const store = new PerAgentScheduleStore([a], (candidate) => candidate.workspace, tmpDir);
+    const job: ScheduleJob = {
+      id: "job-1",
+      name: "Digest",
+      agentId: "alpha",
+      enabled: true,
+      schedule: { cron: "0 8 * * *", tz: "UTC" },
+      reasoning: "high",
+      payload: { message: "Run" },
+    };
+
+    await store.saveAgentJobs("alpha", [job]);
+
+    const alphaRaw = await fs.readFile(path.join(a.workspace, "cron/jobs.json"), "utf8");
+    expect(JSON.parse(alphaRaw).jobs[0].reasoning).toBe("high");
   });
 });

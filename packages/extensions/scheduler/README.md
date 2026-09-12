@@ -44,6 +44,7 @@ Disk shape omits `agentId`; it is implied by the workspace:
         "startAt": "2026-05-19T07:00:00.000Z"
       },
       "model": { "provider": "anthropic", "model": "claude-sonnet-4" },
+      "reasoning": "high",
       "payload": { "message": "Summarize overnight events." },
       "timeoutMs": 1800000,
       "createdAt": "2026-05-19T07:00:00.000Z"
@@ -53,6 +54,8 @@ Disk shape omits `agentId`; it is implied by the workspace:
 ```
 
 `model` is optional. When present, both `provider` and `model` are required and the scheduled run uses that model instead of the agent default. Jobs without `model` keep using the agent default.
+
+`reasoning` is an optional top-level job field (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`) that overrides the agent's configured reasoning level for that run. Jobs without `reasoning` keep using the agent default.
 
 `timeoutMs` is an optional top-level job field: the per-run timeout in milliseconds for that job. Falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in default.
 
@@ -408,7 +411,7 @@ When `extensions.scheduler.enabled` is not `false`, agents receive scheduler too
 - `scheduler.delete_job`
 - `scheduler.get_latest_output`
 
-Tools use raw cron + timezone input, generate job ids server-side, create enabled jobs by default, and support optional `sessionId`. They do not expose model overrides. `create_job`/`update_job` accept `script`, `noAgent`, and `quietOutput` alongside `message`, following the same shape rules as the payload schema (see Job shapes above), plus an optional `timeoutMs`: the per-run timeout in milliseconds (default 30 minutes; falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in). `update_job` only changes payload fields you pass; omitted fields keep their existing value.
+Tools use raw cron + timezone input, generate job ids server-side, create enabled jobs by default, and support optional `sessionId`. They do not expose model or reasoning overrides. `create_job`/`update_job` accept `script`, `noAgent`, and `quietOutput` alongside `message`, following the same shape rules as the payload schema (see Job shapes above), plus an optional `timeoutMs`: the per-run timeout in milliseconds (default 30 minutes; falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in). `update_job` only changes payload fields you pass; omitted fields keep their existing value.
 
 `scheduler.get_latest_output` requires `jobId`. Call `scheduler.list_jobs` first and pass a returned `jobs[n].id`; optional `maxChars` bounds preview length from 1 to 20,000 characters (default 4,000). `Output not found` means job has not produced stored output yet.
 
