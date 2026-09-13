@@ -9,7 +9,23 @@ export async function getExtensionAgentTools(
   config: GatewayConfig = loadConfig(),
   runtime: ExtensionRuntime = getExtensionRuntime()
 ): Promise<LoadedExtensionAgentTool[]> {
-  return runtime.getTools(agent, config);
+  const tools = await runtime.getTools(agent, config);
+  return tools.map((tool) => ({
+    ...tool,
+    parameters: stripSchemaPatterns(tool.parameters) as Record<string, unknown>,
+  }));
+}
+
+// Some providers (e.g. opencode-go) reject lookaround regexes such as the one
+// Zod v4's z.email() emits; tools validate their own inputs anyway.
+function stripSchemaPatterns(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(stripSchemaPatterns);
+  if (!schema || typeof schema !== "object") return schema;
+  return Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key, value]) => !(key === "pattern" && typeof value === "string"))
+      .map(([key, value]) => [key, stripSchemaPatterns(value)])
+  );
 }
 
 export async function executeExtensionAgentTool(
