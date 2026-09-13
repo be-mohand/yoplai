@@ -15,6 +15,7 @@ export const ThinkLevelSchema = z.enum([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]);
 export type ThinkLevel = z.infer<typeof ThinkLevelSchema>;
 

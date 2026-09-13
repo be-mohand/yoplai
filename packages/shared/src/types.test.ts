@@ -40,10 +40,10 @@ describe("AgentConfigSchema openclaw model handling", () => {
       name: "Reasoning Agent",
       workspace: "~/agents/reasoning",
       model: { provider: "anthropic", model: "claude-sonnet-4" },
-      reasoning: "high",
+      reasoning: "max",
     });
 
-    expect(result.reasoning).toBe("high");
+    expect(result.reasoning).toBe("max");
   });
 
   it("rejects invalid reasoning values", () => {

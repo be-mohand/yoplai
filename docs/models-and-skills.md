@@ -52,7 +52,7 @@ The script is build-time only: it rewrites `packages/shared/src/model-context-da
 
 ## Reasoning
 
-Agent `reasoning` values: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. Harness-specific supported values may differ; project/orchestrator profiles validate before run.
+Agent `reasoning` values: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Harness-specific supported values may differ; project/orchestrator profiles validate before run.
 
 ## Workspace prompt files
 

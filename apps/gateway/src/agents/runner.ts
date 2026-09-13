@@ -56,6 +56,7 @@ const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 
 // Thinking levels in fallback order (highest to lowest)
 const THINK_LEVELS_ORDERED: ThinkLevel[] = [
+  "max",
   "xhigh",
   "high",
   "medium",

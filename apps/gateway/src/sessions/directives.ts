@@ -5,14 +5,13 @@ const THINK_ALIASES: Record<string, ThinkLevel> = {
   min: "minimal",
   mid: "medium",
   med: "medium",
-  max: "high",
   ultra: "high",
   none: "off",
 };
 
 // Valid think levels (including aliases)
 const VALID_LEVELS = new Set<string>([
-  "off", "minimal", "low", "medium", "high", "xhigh",
+  "off", "minimal", "low", "medium", "high", "xhigh", "max",
   ...Object.keys(THINK_ALIASES),
 ]);
 

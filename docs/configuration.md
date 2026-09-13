@@ -61,7 +61,7 @@ Common fields:
 | `model.auth_token`                    | Claude SDK auth override; prefer `$env:`                    |
 | `auth.mode`                           | `oauth`, `api_key`, or `proxy` for Pi                       |
 | `auth.profileId`                      | Optional Pi credential profile id                           |
-| `reasoning`                           | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`          |
+| `reasoning`                           | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`   |
 | `thinkLevel`                          | Deprecated alias for `reasoning`                            |
 | `queueMode`                           | `queue` or `interrupt`                                      |
 | `retryMaxAttempts`                    | Attempts for a transient provider error; default 3          |

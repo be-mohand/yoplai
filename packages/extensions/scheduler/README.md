@@ -55,7 +55,7 @@ Disk shape omits `agentId`; it is implied by the workspace:
 
 `model` is optional. When present, both `provider` and `model` are required and the scheduled run uses that model instead of the agent default. Jobs without `model` keep using the agent default.
 
-`reasoning` is an optional top-level job field (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`) that overrides the agent's configured reasoning level for that run. Jobs without `reasoning` keep using the agent default.
+`reasoning` is an optional top-level job field (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) that overrides the agent's configured reasoning level for that run. Jobs without `reasoning` keep using the agent default.
 
 `timeoutMs` is an optional top-level job field: the per-run timeout in milliseconds for that job. Falls back to `extensions.scheduler.jobTimeoutMs`, then the 30-minute built-in default.
 
