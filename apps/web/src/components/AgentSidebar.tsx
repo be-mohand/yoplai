@@ -173,9 +173,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 classList={{
                   active: stripBase(location.pathname).startsWith("/projects"),
                 }}
+                title="Projects"
               >
+                <i class="fa-solid fa-folder-tree nav-icon" aria-hidden="true" />
                 <span class="nav-full">Projects</span>
-                <span class="nav-short">Pr</span>
               </A>
             </Show>
             <Show when={isExtensionEnabled("orchestrator")}>
@@ -185,9 +186,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 classList={{
                   active: stripBase(location.pathname).startsWith("/orchestrator"),
                 }}
+                title="Orchestrator"
               >
+                <i class="fa-solid fa-diagram-project nav-icon" aria-hidden="true" />
                 <span class="nav-full">Orchestrator</span>
-                <span class="nav-short">Or</span>
               </A>
             </Show>
             <A
@@ -198,9 +200,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
                   stripBase(location.pathname).startsWith("/agents") ||
                   stripBase(location.pathname).startsWith("/chat"),
               }}
+              title="Agents"
             >
+              <i class="fa-solid fa-comments nav-icon" aria-hidden="true" />
               <span class="nav-full">Agents</span>
-              <span class="nav-short">Ag</span>
             </A>
             <Show when={capabilities.multiUser && capabilities.forkedAgents}>
               <A
@@ -209,9 +212,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 classList={{
                   active: stripBase(location.pathname).startsWith("/teams"),
                 }}
+                title="Teams"
               >
+                <i class="fa-solid fa-users nav-icon" aria-hidden="true" />
                 <span class="nav-full">Teams</span>
-                <span class="nav-short">Te</span>
               </A>
             </Show>
             <Show
@@ -225,9 +229,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 classList={{
                   active: stripBase(location.pathname).startsWith("/admin/"),
                 }}
+                title="Admin"
               >
+                <i class="fa-solid fa-shield-halved nav-icon" aria-hidden="true" />
                 <span class="nav-full">Admin</span>
-                <span class="nav-short">Ad</span>
               </A>
             </Show>
           </nav>
@@ -669,7 +674,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .nav-link {
-          display: block;
+          display: flex;
+          align-items: center;
+          gap: 10px;
           padding: 8px 10px;
           border-radius: 8px;
           color: var(--text-secondary);
@@ -690,9 +697,14 @@ export function AgentSidebar(props: AgentSidebarProps) {
           color: var(--text-primary);
         }
 
+        .nav-icon {
+          width: 16px;
+          flex: 0 0 16px;
+          text-align: center;
+        }
+
         /* Collapsed/expanded toggle for dual-content elements */
-        .logo-short,
-        .nav-short {
+        .logo-short {
           display: none;
         }
 
@@ -705,8 +717,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: none;
         }
 
-        .agent-sidebar.collapsed .logo-short,
-        .agent-sidebar.collapsed .nav-short {
+        .agent-sidebar.collapsed .logo-short {
           display: inline;
         }
 
@@ -726,10 +737,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .agent-sidebar.collapsed .nav-link {
-          text-align: center;
+          justify-content: center;
           padding: 8px 4px;
-          font-weight: 600;
-          font-size: 13px;
         }
 
         .agent-sidebar.collapsed .theme-toggle {
@@ -746,8 +755,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: revert;
         }
 
-        .agent-sidebar.collapsed:hover .logo-short,
-        .agent-sidebar.collapsed:hover .nav-short {
+        .agent-sidebar.collapsed:hover .logo-short {
           display: none;
         }
 
@@ -764,10 +772,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .agent-sidebar.collapsed:hover .nav-link {
-          text-align: unset;
+          justify-content: flex-start;
           padding: 8px 10px;
-          font-weight: unset;
-          font-size: 14px;
         }
 
         .agent-sidebar.collapsed:hover .theme-toggle {

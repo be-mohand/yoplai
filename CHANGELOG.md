@@ -20,6 +20,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Sidebar navigation now pairs each destination with an icon and shows icons instead of text abbreviations when collapsed.
 - Raised muted-text contrast to WCAG AA across the web UI: `--text-muted` is now `#8a8a8a` (dark) and `#6b6b6b` (light), and user-message text in chat is `#a8c4ff` (dark) / `#1d4ed8` (light) instead of a low-contrast accent mix.
 - Clicking "Chat" on an agent in the web Agents catalog now always starts a fresh chat session instead of resuming the agent's default "main" session. Each click mints a new logical session key; the gateway creates the new session lazily on the first message. Previous sessions remain available from the sidebar session list.
 - Upgraded the pi SDK packages (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`) from 0.80.6 to 0.84.4 across the gateway, agent-runner container, and projects extension. Model and credential resolution now goes through pi's `ModelRuntime`; `yoplai auth login/status/logout` keep the same behavior on the new provider-owned login flow.

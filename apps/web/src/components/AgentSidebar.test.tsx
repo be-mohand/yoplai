@@ -80,6 +80,39 @@ describe("AgentSidebar", () => {
     dispose();
   });
 
+  it("renders labeled Font Awesome icons instead of abbreviations when collapsed", () => {
+    setCapabilitiesForTests({
+      extensions: { projects: true, orchestrator: true },
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [collapsed] = createSignal(true);
+
+    const dispose = render(
+      () => (
+        <AgentSidebar
+          collapsed={collapsed}
+          onToggleCollapse={() => {}}
+        />
+      ),
+      container
+    );
+
+    const expectedIcons = [
+      ["Projects", "fa-folder-tree"],
+      ["Orchestrator", "fa-diagram-project"],
+      ["Agents", "fa-comments"],
+    ];
+    for (const [label, iconClass] of expectedIcons) {
+      const link = container.querySelector(`a[title="${label}"]`);
+      expect(link?.textContent).toBe(label);
+      expect(link?.querySelector(`.${iconClass}`)?.getAttribute("aria-hidden")).toBe("true");
+    }
+    expect(container.querySelector(".nav-short")).toBeNull();
+
+    dispose();
+  });
+
   it("renders theme toggle button", () => {
     setCapabilitiesForTests({
       extensions: { projects: true },
@@ -249,6 +282,8 @@ describe("AgentSidebar", () => {
     );
 
     expect(container.textContent).toContain("Teams");
+    const teamsLink = container.querySelector('a[title="Teams"]');
+    expect(teamsLink?.querySelector(".fa-users")?.getAttribute("aria-hidden")).toBe("true");
 
     dispose();
   });
