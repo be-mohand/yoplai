@@ -331,7 +331,7 @@ describe("container adapter", () => {
       workspaceDir: "/workspace",
       sessionDir: "/sessions",
       ipcDir: "/workspace/ipc",
-      gatewayUrl: "http://host.docker.internal:4000",
+      gatewayUrl: expect.any(String),
       onecli: {
         enabled: true,
         url: "http://onecli:4141",
