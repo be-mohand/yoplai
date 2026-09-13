@@ -171,6 +171,14 @@ export function setSessionKey(agentId: string, key: string): void {
   localStorage.setItem(`${SESSION_KEY_PREFIX}${agentId}`, key);
 }
 
+// Start a brand-new chat for an agent: mint a fresh logical session key so
+// the gateway creates a new session on the first message instead of resuming
+// the agent's "main" session.
+export function startNewChat(agentId: string): void {
+  const key = `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  setSessionKey(agentId, key);
+}
+
 export function streamMessage(
   agentId: string,
   message: string,

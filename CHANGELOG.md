@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Clicking "Chat" on an agent in the web Agents catalog now always starts a fresh chat session instead of resuming the agent's default "main" session. Each click mints a new logical session key; the gateway creates the new session lazily on the first message. Previous sessions remain available from the sidebar session list.
 - Upgraded the pi SDK packages (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`) from 0.80.6 to 0.84.4 across the gateway, agent-runner container, and projects extension. Model and credential resolution now goes through pi's `ModelRuntime`; `yoplai auth login/status/logout` keep the same behavior on the new provider-owned login flow.
 - `ui.tailscale.resetOnExit` now defaults to `false`. The previous default ran `tailscale serve reset` on gateway shutdown/restart, which wipes the machine's entire Tailscale serve config — including entries Yoplai didn't create. Set it to `true` explicitly to opt back in.
 

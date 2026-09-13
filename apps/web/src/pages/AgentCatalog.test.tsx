@@ -33,11 +33,19 @@ vi.mock("../api/realtime-client", () => ({ subscribeToRealtime: subscribeToRealt
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
 
 vi.mock("@solidjs/router", () => ({
-  A: (props: { href: string; class?: string; children: unknown }) => {
+  A: (props: {
+    href: string;
+    class?: string;
+    children: unknown;
+    onClick?: (e: MouseEvent) => void;
+  }) => {
     const a = document.createElement("a");
     a.setAttribute("href", props.href);
     if (props.class) a.className = props.class;
     a.textContent = String(props.children ?? "");
+    if (props.onClick) {
+      a.addEventListener("click", (e) => props.onClick!(e as MouseEvent));
+    }
     return a;
   },
 }));
@@ -118,6 +126,27 @@ describe("AgentCatalog action states", () => {
     );
     expect(chat).not.toBeNull();
     expect(chat?.getAttribute("href")).toBe("/chat/scribe");
+  });
+
+  it("rotates to a fresh non-main session key on every Chat click", async () => {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("scribe")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("scribe", "chat")]);
+    await mountCatalog();
+
+    const chat = container.querySelector<HTMLAnchorElement>(
+      ".catalog-chat-link"
+    );
+    expect(chat).not.toBeNull();
+    localStorage.setItem("yoplai:sessionKey:scribe", "main");
+
+    chat!.click();
+    const first = localStorage.getItem("yoplai:sessionKey:scribe");
+    expect(first).not.toBe("main");
+    expect(first).toMatch(/^web-/);
+
+    chat!.click();
+    expect(localStorage.getItem("yoplai:sessionKey:scribe")).not.toBe(first);
   });
 
   it("uses runnable agents directly when forked-agent mode is disabled", async () => {

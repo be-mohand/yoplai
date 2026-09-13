@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createResource, For, Show, onCleanup } from "solid-js";
 import { A } from "@solidjs/router";
 import { fetchAgents, fetchPool } from "../api";
+import { startNewChat } from "../api/chat";
 import {
   fetchPoolActions,
   type PoolCatalogEntry,
@@ -131,7 +132,11 @@ export function AgentCatalog() {
                   const entry = actionByPool().get(agent.id);
                   if (!capabilities.forkedAgents) {
                     return (
-                      <A href={`/chat/${agent.id}`} class="catalog-chat-link">
+                      <A
+                        href={`/chat/${agent.id}`}
+                        class="catalog-chat-link"
+                        onClick={() => startNewChat(agent.id)}
+                      >
                         Chat
                       </A>
                     );
@@ -158,6 +163,7 @@ export function AgentCatalog() {
                       <A
                         href={`/chat/${entry?.chatAgentId ?? agent.id}`}
                         class="catalog-chat-link"
+                        onClick={() => startNewChat(entry?.chatAgentId ?? agent.id)}
                       >
                         Chat
                       </A>

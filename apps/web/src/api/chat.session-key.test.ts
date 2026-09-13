@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getSessionKey, postCompact, setSessionKey } from "./chat";
+import { getSessionKey, postCompact, setSessionKey, startNewChat } from "./chat";
 
 describe("getSessionKey after the aihub -> yoplai rename", () => {
   beforeEach(() => {
@@ -41,6 +41,18 @@ describe("getSessionKey after the aihub -> yoplai rename", () => {
 
   it("falls back to the default session with nothing stored", () => {
     expect(getSessionKey("lead")).toBe("main");
+  });
+
+  it("startNewChat mints a distinct non-main key per call", () => {
+    startNewChat("lead");
+    const first = localStorage.getItem("yoplai:sessionKey:lead");
+    expect(first).toMatch(/^web-/);
+    expect(getSessionKey("lead")).toBe(first);
+
+    startNewChat("lead");
+    const second = localStorage.getItem("yoplai:sessionKey:lead");
+    expect(second).toMatch(/^web-/);
+    expect(second).not.toBe(first);
   });
 
   it("times out a stalled compaction request", async () => {
