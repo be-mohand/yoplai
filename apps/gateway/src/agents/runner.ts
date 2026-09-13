@@ -337,6 +337,17 @@ export async function runAgent(
   let runCompleted = false;
 
   try {
+    // Persist the user message before the adapter runs so a failure before
+    // the model starts (model resolution, auth, ...) cannot lose it. Must be
+    // awaited: a persistence error aborts the run via the normal catch path.
+    if (message.trim()) {
+      await lifecycle.beginUserTurn(
+        message,
+        Date.now(),
+        params.attachments
+      );
+    }
+
     // Run with fallback retry for unsupported thinking levels
     let hasEmittedContent = false;
     let actualThinkLevel = resolvedThinkLevel;
@@ -376,6 +387,7 @@ export async function runAgent(
 
     if (startIdx === -1 || !actualThinkLevel) {
       // No thinking level set, run normally
+      lifecycle.rearmInitialEcho();
       result = await adapter.run({ ...runParams, thinkLevel: undefined });
     } else {
       // Try with fallback on thinking level errors
@@ -386,6 +398,7 @@ export async function runAgent(
         attempted.add(level);
 
         try {
+          lifecycle.rearmInitialEcho();
           result = await adapter.run({ ...runParams, thinkLevel: level });
           actualThinkLevel = level;
           fallbackUsed = level !== resolvedThinkLevel;

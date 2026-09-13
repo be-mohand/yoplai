@@ -6,6 +6,7 @@ const flushedTurns: Array<Array<HistoryEvent>> = [];
 const eagerlyFlushedUsers: Array<Array<HistoryEvent>> = [];
 
 vi.mock("../history/store.js", () => ({
+  backfillFromPiSession: vi.fn(async () => false),
   createTurnBuffer: () => ({ events: [] }),
   bufferHistoryEvent: (
     buffer: { events: HistoryEvent[] },
@@ -34,10 +35,12 @@ vi.mock("../history/store.js", () => ({
 }));
 
 import { flushUserMessage } from "../history/store.js";
+import { backfillFromPiSession } from "../history/store.js";
 import { SessionRunLifecycle } from "./run-lifecycle.js";
 import {
   getSessionCurrentTurn,
   isStreaming,
+  popAllPendingUserMessages,
   setSessionStreaming,
 } from "./sessions.js";
 
@@ -70,6 +73,105 @@ function makeLifecycle(sessionId: string) {
     sessionId,
   });
 }
+
+describe("beginUserTurn (pre-acceptance)", () => {
+  beforeEach(() => {
+    flushedTurns.length = 0;
+    eagerlyFlushedUsers.length = 0;
+    vi.mocked(backfillFromPiSession).mockClear();
+  });
+
+  it("eagerly persists a sanitized user message and suppresses the adapter's initial echo", async () => {
+    const sessionId = `preaccept-basic-${Date.now()}`;
+    const lifecycle = makeLifecycle(sessionId);
+
+    await lifecycle.beginUserTurn("hello with token=abc123 inside", 1000, [
+      { path: "/tmp/a.txt", mimeType: "text/plain", filename: "a.txt", size: 3 },
+    ]);
+
+    expect(eagerlyFlushedUsers).toHaveLength(1);
+    expect(eagerlyFlushedUsers[0]).toHaveLength(1);
+    expect(eagerlyFlushedUsers[0][0]).toMatchObject({
+      type: "user",
+      text: "hello with token=[REDACTED] inside",
+    });
+    const acceptedEvent = eagerlyFlushedUsers[0][0] as Extract<
+      HistoryEvent,
+      { type: "user" }
+    >;
+    expect(acceptedEvent.attachments).toEqual([
+      { path: "/tmp/a.txt", mimeType: "text/plain", filename: "a.txt", size: 3 },
+    ]);
+    expect(backfillFromPiSession).toHaveBeenCalled();
+    expect(getSessionCurrentTurn("agent-lifecycle-test", sessionId)).toBe(
+      lifecycle["currentTurn"]
+    );
+
+    // Adapter's initial user echo: consumed, no duplicate flush, no pending.
+    lifecycle.acceptHistoryEvent({
+      type: "user",
+      text: "hello with token=[REDACTED] inside",
+      timestamp: 1000,
+    });
+    expect(eagerlyFlushedUsers).toHaveLength(1);
+    expect(popAllPendingUserMessages("agent-lifecycle-test", sessionId)).toEqual(
+      []
+    );
+  });
+
+  it("echo suppression survives turn_end and rearms (OpenClaw retry shape)", async () => {
+    const sessionId = `preaccept-retry-${Date.now()}`;
+    const lifecycle = makeLifecycle(sessionId);
+
+    await lifecycle.beginUserTurn("retry me", 1000);
+    lifecycle.acceptHistoryEvent({ type: "user", text: "retry me", timestamp: 1000 });
+    lifecycle.acceptHistoryEvent({ type: "turn_end", timestamp: 1001 });
+
+    // First adapter attempt failed with a thinking-level error; runner
+    // rearms before the retry, which re-emits its initial user event.
+    lifecycle.rearmInitialEcho();
+    lifecycle.acceptHistoryEvent({ type: "user", text: "retry me", timestamp: 1002 });
+
+    expect(eagerlyFlushedUsers).toHaveLength(1);
+    expect(popAllPendingUserMessages("agent-lifecycle-test", sessionId)).toEqual(
+      []
+    );
+
+    // Pin completed-turn persistence: the retried turn's flush must not
+    // re-emit the already-persisted user message (the first turn's buffered
+    // user event is skipped by flushTurnBuffer via userFlushed).
+    lifecycle.acceptHistoryEvent({ type: "assistant_text", text: "done", timestamp: 1003 });
+    await lifecycle.flushTurns();
+    expect(eagerlyFlushedUsers).toHaveLength(1);
+    expect(flushedTurns).toHaveLength(2);
+    expect(flushedTurns[1].map((e) => e.type)).toEqual(["assistant_text"]);
+  });
+
+  it("without pre-acceptance a user event still starts a turn and flushes", async () => {
+    const sessionId = `no-preaccept-${Date.now()}`;
+    const lifecycle = makeLifecycle(sessionId);
+
+    lifecycle.rearmInitialEcho(); // rearm without prior beginUserTurn is a no-op
+    lifecycle.acceptHistoryEvent({ type: "user", text: "fresh", timestamp: 1000 });
+
+    expect(eagerlyFlushedUsers).toHaveLength(1);
+    expect(eagerlyFlushedUsers[0][0]).toMatchObject({ type: "user", text: "fresh" });
+  });
+
+  it("beginUserTurn queues as pending when a turn is already streaming", async () => {
+    const sessionId = `preaccept-queue-${Date.now()}`;
+    const lifecycle = makeLifecycle(sessionId);
+    lifecycle.beginRun();
+
+    await lifecycle.beginUserTurn("first", 1000);
+    await lifecycle.beginUserTurn("second", 2000);
+
+    expect(eagerlyFlushedUsers).toHaveLength(1);
+    const pending = popAllPendingUserMessages("agent-lifecycle-test", sessionId);
+    expect(pending.map((p) => p.text)).toEqual(["second"]);
+    lifecycle.finishRun();
+  });
+});
 
 describe("SessionRunLifecycle", () => {
   beforeEach(() => {

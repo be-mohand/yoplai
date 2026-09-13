@@ -1,6 +1,7 @@
 import {
   sanitizeForStorage,
   type ContainerDeliveryContext,
+  type FileAttachment,
   type StreamEvent,
 } from "@yoplai/shared";
 import {
@@ -29,6 +30,7 @@ import type {
 } from "../sdk/types.js";
 import { isRunSettledError } from "../sdk/run-settled.js";
 import {
+  backfillFromPiSession,
   bufferHistoryEvent,
   createTurnBuffer,
   flushTurnBuffer,
@@ -68,6 +70,12 @@ export class SessionRunLifecycle {
   private currentTurn: TurnBuffer | null = null;
   private completedTurns: TurnBuffer[] = [];
   private eagerUserFlushes: Promise<void>[] = [];
+  // Run-scoped: this lifecycle accepted the user message before the adapter
+  // ran (see beginUserTurn). Survives turn_end events clearing currentTurn.
+  private preAcceptedRun = false;
+  // Armed before each adapter.run() invocation; consumed by the adapter's
+  // initial user-echo event so the pre-accepted message is not duplicated.
+  private initialEchoArmed = false;
 
   constructor(private readonly context: LifecycleContext) {}
 
@@ -280,7 +288,74 @@ export class SessionRunLifecycle {
     return popPendingMessages(this.context.agentId, this.context.sessionId);
   }
 
+  /**
+   * Accept the user message into the current turn and persist it to
+   * canonical history BEFORE the adapter runs, so a run that fails before
+   * the model starts (model resolution, auth, etc.) still leaves the
+   * message on disk. Callers must await; a rejection should abort the run
+   * before the model is invoked.
+   */
+  async beginUserTurn(
+    text: string,
+    timestamp: number,
+    attachments?: FileAttachment[]
+  ): Promise<void> {
+    const sanitized = sanitizeForStorage<Extract<HistoryEvent, { type: "user" }>>({
+      type: "user",
+      text,
+      attachments,
+      timestamp,
+    });
+    if (this.currentTurn) {
+      // A turn is already streaming: keep queue semantics as today.
+      enqueuePendingUserMessage(
+        this.context.agentId,
+        this.context.sessionId,
+        sanitized.text,
+        sanitized.timestamp
+      );
+      return;
+    }
+    const buffer = createTurnBuffer();
+    bufferHistoryEvent(buffer, sanitized);
+    this.currentTurn = buffer;
+    setSessionCurrentTurn(
+      this.context.agentId,
+      this.context.sessionId,
+      buffer
+    );
+    this.preAcceptedRun = true;
+    this.initialEchoArmed = true;
+    // Preserve legacy Pi-only sessions: backfill self-skips when canonical
+    // history already exists, so this is a no-op after the first append.
+    await backfillFromPiSession(
+      this.context.agentId,
+      this.context.sessionId,
+      this.context.userId
+    );
+    await flushUserMessage(
+      this.context.agentId,
+      this.context.sessionId,
+      buffer,
+      this.context.userId
+    );
+  }
+
+  /**
+   * Re-arm the initial user-echo suppression before each adapter.run()
+   * invocation (the adapter re-emits its initial user event on every
+   * invocation, e.g. thinking-level fallback retries).
+   */
+  rearmInitialEcho(): void {
+    this.initialEchoArmed = this.preAcceptedRun;
+  }
+
   private startTurnWithUser(event: Extract<HistoryEvent, { type: "user" }>) {
+    if (this.initialEchoArmed) {
+      // Echo of the message pre-accepted in beginUserTurn: already on disk.
+      this.initialEchoArmed = false;
+      return;
+    }
     const buffer = createTurnBuffer();
     bufferHistoryEvent(buffer, event);
     if (!this.currentTurn) {

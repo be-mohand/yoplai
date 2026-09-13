@@ -44,8 +44,15 @@ vi.mock("../sessions/store.js", () => ({
 
 vi.mock("../history/store.js", () => ({
   appendSessionMeta,
-  backfillFromPiSession: vi.fn(),
-  bufferHistoryEvent: vi.fn(),
+  backfillFromPiSession: vi.fn(async () => false),
+  bufferHistoryEvent: vi.fn(
+    (
+      buffer: { events?: unknown[] },
+      event: unknown
+    ) => {
+      (buffer.events ??= []).push(event);
+    }
+  ),
   createTurnBuffer: vi.fn(() => ({})),
   flushTurnBuffer: vi.fn(),
   flushUserMessage: vi.fn(),
@@ -143,6 +150,158 @@ describe("runAgent think level resolution", () => {
     expect(adapter.run).toHaveBeenCalledWith(
       expect.objectContaining({ thinkLevel: "medium" })
     );
+  });
+});
+
+describe("runAgent user message pre-acceptance", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isAbortTrigger.mockReturnValue(false);
+    getTask.mockResolvedValue(undefined);
+  });
+
+  it("awaits persisted user message before invoking the adapter and suppresses its echo", async () => {
+    const adapter = createAdapter();
+    adapter.run.mockImplementation(async (params: {
+      onHistoryEvent: (event: unknown) => void;
+    }) => {
+      params.onHistoryEvent({ type: "user", text: "hello", timestamp: 1 });
+      return { text: "ok" };
+    });
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+
+    const { flushUserMessage } = await import("../history/store.js");
+    let release: () => void = () => {};
+    (flushUserMessage as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+
+    const { runAgent } = await import("./runner.js");
+    let settled = false;
+    const run = runAgent({
+      agentId: "alpha",
+      message: "hello",
+      sessionId: "session-pre-1",
+    }).then((r) => {
+      settled = true;
+      return r;
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+    // Acceptance still in flight: the adapter must not have started.
+    expect(adapter.run).not.toHaveBeenCalled();
+    expect(settled).toBe(false);
+
+    release();
+    await run;
+    expect(adapter.run).toHaveBeenCalledTimes(1);
+    // Adapter's user echo consumed: exactly one eager flush.
+    expect(flushUserMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts the run before the adapter when persistence fails", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+
+    const { flushUserMessage } = await import("../history/store.js");
+    (flushUserMessage as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => Promise.reject(new Error("disk full"))
+    );
+
+    const { runAgent } = await import("./runner.js");
+    await expect(
+      runAgent({ agentId: "alpha", message: "hello", sessionId: "session-pre-2" })
+    ).rejects.toThrow("disk full");
+    expect(adapter.run).not.toHaveBeenCalled();
+
+    const { isStreaming } = await import("./sessions.js");
+    expect(isStreaming("alpha", "session-pre-2")).toBe(false);
+  });
+
+  it("does not pre-accept empty messages", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+
+    const { flushUserMessage } = await import("../history/store.js");
+    (flushUserMessage as ReturnType<typeof vi.fn>).mockClear();
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({
+      agentId: "alpha",
+      message: "   ",
+      sessionId: "session-pre-3",
+    });
+
+    expect(flushUserMessage).not.toHaveBeenCalled();
+    expect(adapter.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("pre-accepts the directive-stripped message", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(
+      createAgent({ auth: { mode: "oauth" }, reasoning: "high" })
+    );
+
+    const { flushUserMessage } = await import("../history/store.js");
+    (flushUserMessage as ReturnType<typeof vi.fn>).mockClear();
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({
+      agentId: "alpha",
+      message: "/think high say hi",
+      sessionId: "session-pre-4",
+    });
+
+    expect(flushUserMessage).toHaveBeenCalledTimes(1);
+    const acceptedBuffer = (flushUserMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][2] as { events: Array<{ type: string; text: string }> };
+    expect(acceptedBuffer.events).toEqual([
+      { type: "user", text: "say hi", attachments: undefined, timestamp: expect.any(Number) },
+    ]);
+    expect(adapter.run).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "say hi" })
+    );
+  });
+
+  it("single flush across thinking-level fallback retries", async () => {
+    const adapter = createAdapter();
+    let attempt = 0;
+    adapter.run.mockImplementation(async (params: {
+      onHistoryEvent: (event: unknown) => void;
+    }) => {
+      attempt += 1;
+      params.onHistoryEvent({
+        type: "user",
+        text: "fallback me",
+        timestamp: attempt,
+      });
+      if (attempt === 1) {
+        throw new Error("thinking level not supported");
+      }
+      return { text: "ok" };
+    });
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({ reasoning: "high" }));
+
+    const { flushUserMessage } = await import("../history/store.js");
+    (flushUserMessage as ReturnType<typeof vi.fn>).mockClear();
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({
+      agentId: "alpha",
+      message: "fallback me",
+      sessionId: "session-pre-5",
+    });
+
+    expect(adapter.run).toHaveBeenCalledTimes(2);
+    expect(flushUserMessage).toHaveBeenCalledTimes(1);
   });
 });
 
