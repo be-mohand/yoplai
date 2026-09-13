@@ -39,7 +39,7 @@ export type SchedulerState = {
 
 export type SchedulerRunResult = {
   job: ScheduleJob;
-  status: "ok" | "error" | "skipped";
+  status: "ok" | "error" | "skipped" | "accepted";
   firedAt: string;
   finishedAt: string;
   sessionId?: string;
@@ -305,6 +305,33 @@ export class SchedulerService {
     return result;
   }
 
+  async runNowDetached(agentId: string, id: string): Promise<SchedulerRunResult> {
+    await this.load();
+    const job = this.findJob(agentId, id);
+    if (!job) throw new Error(`Schedule not found: ${agentId}/${id}`);
+
+    const key = this.executionKey(job);
+    if (this.executingJobs.has(key)) {
+      throw new ScheduleAlreadyRunningError(agentId, id);
+    }
+
+    const firedAt = new Date();
+    const sessionId = job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
+    const previousNextRunAtMs = job.state?.nextRunAtMs;
+
+    void this.executeJob(job, { sessionId, previousNextRunAtMs }).catch((error) => {
+      console.error(`[scheduler] Detached job failed: ${job.name}`, error);
+    });
+
+    return {
+      job,
+      status: "accepted",
+      firedAt: firedAt.toISOString(),
+      finishedAt: firedAt.toISOString(),
+      sessionId,
+    };
+  }
+
   private async load() {
     if (this.loaded) return;
     this.store = await this.jobStore.load();
@@ -415,7 +442,10 @@ export class SchedulerService {
     return `${job.agentId}/${job.id}`;
   }
 
-  private async executeJob(job: JobWithState): Promise<SchedulerRunResult> {
+  private async executeJob(
+    job: JobWithState,
+    detached?: { sessionId: string; previousNextRunAtMs?: number }
+  ): Promise<SchedulerRunResult> {
     const key = this.executionKey(job);
     if (this.executingJobs.has(key)) {
       throw new ScheduleAlreadyRunningError(job.agentId, job.id);
@@ -432,7 +462,7 @@ export class SchedulerService {
     const agent = ctx.getAgent(job.agentId);
     const firedAt = new Date();
     const sessionId =
-      job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
+      detached?.sessionId ?? job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
 
     if (!agent) {
       console.error(`[scheduler] Agent not found: ${job.agentId}`);
@@ -603,7 +633,7 @@ export class SchedulerService {
     }
 
     try {
-      return await this.completeRun({
+      const result = await this.completeRun({
         job,
         agent,
         workspaceDir,
@@ -624,6 +654,20 @@ export class SchedulerService {
         error: errorValue,
         errorMessage: runError,
       });
+      if (detached) {
+        const skippedScheduledFire = this.skippedScheduledFireKeys.delete(key);
+        if (!skippedScheduledFire) {
+          job.state = job.state ?? {};
+          if (detached.previousNextRunAtMs === undefined) {
+            delete job.state.nextRunAtMs;
+          } else {
+            job.state.nextRunAtMs = detached.previousNextRunAtMs;
+          }
+        }
+        await this.saveAgent(job.agentId);
+        this.armTimer();
+      }
+      return result;
     } finally {
       // Release only once the underlying run has settled too: a timed-out run
       // may still be aborting, and the next fire must not overlap with it.

@@ -446,11 +446,8 @@ const schedulerExtension: Extension = {
       const id = c.req.param("id");
       const scheduler = getScheduler();
       try {
-        const result = await scheduler.runNow(agentId, id);
-        if (result.status === "error") {
-          return c.json({ error: result.error ?? "Schedule run failed", result }, 500);
-        }
-        return c.json(result, result.status === "skipped" ? 202 : 200);
+        const result = await scheduler.runNowDetached(agentId, id);
+        return c.json(result, 202);
       } catch (error) {
         if (error instanceof ScheduleAlreadyRunningError) {
           return c.json({ error: error.message }, 409);

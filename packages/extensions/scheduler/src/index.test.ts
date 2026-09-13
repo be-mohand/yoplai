@@ -61,7 +61,7 @@ describe("scheduler routes", () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("POST /schedules/:agentId/:id/run triggers one immediate run", async () => {
+  it("POST /schedules/:agentId/:id/run starts one immediate run", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
@@ -97,17 +97,17 @@ describe("scheduler routes", () => {
     });
     const result = (await runResponse.json()) as {
       status: string;
-      outputPath?: string;
       sessionId?: string;
     };
 
-    expect(runResponse.status).toBe(200);
-    expect(result).toMatchObject({ status: "ok", sessionId: "route-session" });
-    expect(result.outputPath).toContain(path.join("cron", "output", job.id));
-    expect(runAgent).toHaveBeenCalledTimes(1);
-    await expect(fs.readFile(result.outputPath!, "utf8")).resolves.toContain(
-      "route output"
-    );
+    expect(runResponse.status).toBe(202);
+    expect(result).toMatchObject({ status: "accepted" });
+    expect(result.sessionId).toContain(`scheduler:${job.id}:`);
+    await vi.waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+    await vi.waitFor(async () => {
+      const files = await fs.readdir(path.join(tmpDir!, "alpha", "cron", "output", job.id));
+      expect(files.length).toBeGreaterThan(0);
+    });
   });
 
   it("POST /schedules creates a script-only job without a message", async () => {

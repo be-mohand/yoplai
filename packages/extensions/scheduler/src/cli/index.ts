@@ -371,6 +371,11 @@ export function registerSchedulerCommands(program: Command): Command {
           console.log(JSON.stringify(result, null, 2));
           return;
         }
+        if (result.status === "accepted") {
+          console.log(`Started schedule ${agentId}/${id}: ${result.status}`);
+          if (result.sessionId) console.log(`Session: ${result.sessionId}`);
+          return;
+        }
         console.log(`Ran schedule ${agentId}/${id}: ${result.status}`);
         if (result.outputPath) console.log(`Output: ${result.outputPath}`);
       } catch (err) {

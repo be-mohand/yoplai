@@ -474,19 +474,18 @@ describe("scheduler add command --deliver", () => {
 });
 
 describe("scheduler run command", () => {
-  it("posts to the manual run endpoint and prints the output path", async () => {
+  it("posts to the manual run endpoint and prints accepted session", async () => {
     process.env.YOPLAI_API_URL = "http://localhost:4521";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          status: "ok",
+          status: "accepted",
           firedAt: "2026-06-03T00:00:00.000Z",
-          finishedAt: "2026-06-03T00:00:01.000Z",
+          finishedAt: "2026-06-03T00:00:00.000Z",
           sessionId: "session-1",
-          outputPath: "/tmp/alpha/cron/output/job-1/run.md",
           job: { id: "job-1", agentId: "alpha" },
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        { status: 202, headers: { "Content-Type": "application/json" } }
       )
     );
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -500,11 +499,8 @@ describe("scheduler run command", () => {
       "http://localhost:4521/api/schedules/alpha/job-1/run",
       expect.objectContaining({ method: "POST" })
     );
-    expect(log).toHaveBeenNthCalledWith(1, "Ran schedule alpha/job-1: ok");
-    expect(log).toHaveBeenNthCalledWith(
-      2,
-      "Output: /tmp/alpha/cron/output/job-1/run.md"
-    );
+    expect(log).toHaveBeenNthCalledWith(1, "Started schedule alpha/job-1: accepted");
+    expect(log).toHaveBeenNthCalledWith(2, "Session: session-1");
   });
 
   it("prints failed run output path before exiting non-zero", async () => {
