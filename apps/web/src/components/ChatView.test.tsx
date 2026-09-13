@@ -207,10 +207,28 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("shows the hero with a one-liner and a note when no suggestions exist", async () => {
+    fetchAgentSuggestionsMock.mockResolvedValue([]);
+    const { container, dispose } = renderView();
+
+    await waitFor(() =>
+      expect(container.querySelector(".chat-view")?.classList).toContain(
+        "hero-mode"
+      )
+    );
+    expect(container.querySelector(".hero-avatar")).not.toBeNull();
+    expect(
+      container.querySelector(".hero-no-suggestions")?.textContent
+    ).toContain("No prompt suggestions");
+    expect(container.querySelector(".suggestion-card")).toBeNull();
+    dispose();
+  });
+
   it("refreshes suggestions for a new session with the same agent", async () => {
     fetchAgentSuggestionsMock
       .mockResolvedValueOnce([{ title: "First", prompt: "First prompt" }])
-      .mockResolvedValueOnce([{ title: "Updated", prompt: "Updated prompt" }]);
+      .mockResolvedValueOnce([{ title: "Updated", prompt: "Updated prompt" }])
+      .mockImplementation(async () => { console.log("DBG callN"); return []; });
     const { container, dispose } = renderView();
 
     await waitFor(() => expect(container.textContent).toContain("First"));
@@ -1002,7 +1020,7 @@ describe("ChatView abort handling", () => {
 
     const textarea = container.querySelector("textarea");
     const chatView = container.querySelector(".chat-view");
-    const inputWrapper = container.querySelector(".input-wrapper");
+    const inputWrapper = container.querySelector(".input-pill");
     if (
       !(textarea instanceof HTMLTextAreaElement) ||
       !(chatView instanceof HTMLDivElement) ||

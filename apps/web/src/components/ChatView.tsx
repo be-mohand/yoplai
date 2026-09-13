@@ -59,6 +59,44 @@ function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
 }
 
+// Greeting one-liners for the empty-chat hero; one is picked at random
+// per new chat session.
+const HERO_ONE_LINERS = [
+  "What are we building today?",
+  "Where do you want to start?",
+  "What's on your mind?",
+  "Ready when you are.",
+  "What can I help you ship?",
+  "Got something to untangle?",
+  "Let's make something good.",
+  "What's the mission?",
+  "First thought, best thought.",
+  "What are you curious about?",
+  "Drop the big question.",
+  "What needs doing?",
+  "Say the word.",
+  "New session, fresh ideas.",
+  "What's brewing?",
+  "Pick a thread to pull.",
+  "What should we tackle first?",
+  "Blank slate, endless options.",
+  "What's the puzzle today?",
+  "Ask me anything.",
+  "Let's get to work.",
+  "What's on the docket?",
+  "Bring me your hardest problem.",
+  "What are we exploring?",
+  "Start anywhere. I'll keep up.",
+  "What's the goal today?",
+  "Give me the gist.",
+  "What's next on the list?",
+  "Fire away.",
+  "What's the plan, boss?",
+];
+
+const pickHeroOneLiner = () =>
+  HERO_ONE_LINERS[Math.floor(Math.random() * HERO_ONE_LINERS.length)];
+
 // Threshold for auto-collapsing content
 const COLLAPSE_THRESHOLD = 200;
 type DropZone = "history" | "composer" | "attach";
@@ -552,6 +590,55 @@ export function ChatView() {
   );
   const compactRequests = new Map<string, Promise<void>>();
 
+  // Empty-chat hero state. `heroEmpty` is true when the chat has no content;
+  // `heroPhase` tracks hero -> exiting -> off so the composer can slide from
+  // its centered hero position to the docked position once, smoothly.
+  const heroEmpty = createMemo(
+    () =>
+      !loading() &&
+      !isStreaming() &&
+      simpleMessages().length === 0 &&
+      fullMessages().length === 0 &&
+      pendingQueuedMessages().length === 0
+  );
+  const [heroPhase, setHeroPhase] = createSignal<"hero" | "exiting" | "off">(
+    "off"
+  );
+  const [heroGone, setHeroGone] = createSignal(false);
+  let heroExitTimer: number | undefined;
+  createEffect(() => {
+    const empty = heroEmpty();
+    if (empty) {
+      if (heroExitTimer !== undefined) {
+        window.clearTimeout(heroExitTimer);
+        heroExitTimer = undefined;
+      }
+      setHeroGone(false);
+      setHeroPhase("hero");
+      return;
+    }
+    if (heroPhase() === "hero") {
+      setHeroPhase("exiting");
+      heroExitTimer = window.setTimeout(() => {
+        heroExitTimer = undefined;
+        if (!heroEmpty()) {
+          setHeroGone(true);
+          setHeroPhase("off");
+        }
+      }, 450);
+    }
+  });
+  onCleanup(() => {
+    if (heroExitTimer !== undefined) window.clearTimeout(heroExitTimer);
+  });
+  const [heroOneLiner, setHeroOneLiner] = createSignal(HERO_ONE_LINERS[0]);
+  createEffect(() => {
+    void params.agentId;
+    void sessionKey();
+    void explicitSessionId();
+    setHeroOneLiner(pickHeroOneLiner());
+  });
+
   let chatViewRef: HTMLDivElement | undefined;
   let messagesContainerRef: HTMLDivElement | undefined;
   let textareaRef: HTMLTextAreaElement | undefined;
@@ -719,7 +806,7 @@ export function ChatView() {
     const element = target instanceof Element ? target : null;
     if (!element) return null;
     if (element.closest(".attach-btn")) return "attach";
-    if (element.closest(".input-wrapper") || element.closest(".input-area")) {
+    if (element.closest(".input-pill") || element.closest(".input-area")) {
       return "composer";
     }
     if (element.closest(".messages")) return "history";
@@ -2073,7 +2160,11 @@ export function ChatView() {
     <div
       ref={chatViewRef}
       class="chat-view"
-      classList={{ "drop-active": isFileDragActive() }}
+      classList={{
+        "drop-active": isFileDragActive(),
+        "hero-mode": heroPhase() !== "off",
+        "hero-sent": heroPhase() === "exiting" || heroPhase() === "off",
+      }}
     >
       <header class="header">
         <A href="/agents" class="back-btn" aria-label="Go back">
@@ -2177,9 +2268,35 @@ export function ChatView() {
         </Show>
       </header>
 
-      <div
-        class="messages"
-        ref={messagesContainerRef}
+      <div class="chat-body">
+        <div class="hero-spacer hero-spacer-top" />
+        <div class="hero hero-collapsible" classList={{ gone: heroGone() }}>
+          <Show
+            when={agent()?.avatar}
+            fallback={
+              <div class="hero-avatar">
+                <span class="avatar-emoji">
+                  {agent()?.name?.[0]?.toUpperCase() ?? "A"}
+                </span>
+              </div>
+            }
+          >
+            {(avatar) => (
+              <div class="hero-avatar">
+                {isEmoji(avatar()) ? (
+                  <span class="avatar-emoji">{avatar()}</span>
+                ) : (
+                  <img src={avatar()} alt={agent()?.name} class="avatar-img" />
+                )}
+              </div>
+            )}
+          </Show>
+          <h1 class="hero-one-liner">{heroOneLiner()}</h1>
+        </div>
+
+        <div
+          class="messages"
+          ref={messagesContainerRef}
         onScroll={handleScroll}
         onWheel={handleUserScrollIntent}
         onTouchMove={handleUserScrollIntent}
@@ -2199,19 +2316,6 @@ export function ChatView() {
           "drop-target": isFileDragActive() && activeDropZone() === "history",
         }}
       >
-        <Show
-          when={
-            !loading() &&
-            !isStreaming() &&
-            simpleMessages().length === 0 &&
-            fullMessages().length === 0
-          }
-        >
-          <SuggestionCards
-            suggestions={suggestions() ?? []}
-            onSelect={prefillSuggestion}
-          />
-        </Show>
         <Show when={viewMode() === "simple"}>
           <For each={simpleMessages()}>
             {(msg) => {
@@ -2540,9 +2644,10 @@ export function ChatView() {
         </Show>
 
         <div data-scroll-anchor />
-      </div>
+        </div>
 
-      <Show when={isFileDragActive()}>
+        <div class="composer-zone">
+        <Show when={isFileDragActive()}>
         <div class="drop-banner">{fileDropHint()}</div>
       </Show>
       <Show when={uploadError()}>
@@ -2592,9 +2697,19 @@ export function ChatView() {
             e.currentTarget.value = "";
           }}
         />
+        <div
+          class="input-pill"
+          classList={{
+            "drop-target":
+              isFileDragActive() && activeDropZone() === "composer",
+          }}
+        >
+          <Show when={isFileDragActive() && activeDropZone() === "composer"}>
+            <div class="input-drop-hint">Drop files to attach</div>
+          </Show>
         <button
           type="button"
-          class="attach-btn"
+          class="pill-btn attach-btn"
           classList={{
             "drop-target": isFileDragActive() && activeDropZone() === "attach",
           }}
@@ -2614,16 +2729,6 @@ export function ChatView() {
             />
           </svg>
         </button>
-        <div
-          class="input-wrapper"
-          classList={{
-            "drop-target":
-              isFileDragActive() && activeDropZone() === "composer",
-          }}
-        >
-          <Show when={isFileDragActive() && activeDropZone() === "composer"}>
-            <div class="input-drop-hint">Drop files to attach</div>
-          </Show>
           <textarea
             ref={textareaRef}
             class="input"
@@ -2641,17 +2746,11 @@ export function ChatView() {
             onKeyDown={handleKeyDown}
             rows={1}
           />
-        </div>
-        <Show when={impersonationStatus()?.active}>
-          <div class="readonly-impersonation-hint">
-            Read-only — exit impersonation to send.
-          </div>
-        </Show>
-        <Show
-          when={isStreaming()}
+          <Show
+            when={isStreaming()}
           fallback={
             <button
-              class="send-btn"
+              class="pill-btn send-btn"
               onClick={handleSend}
               disabled={
                 impersonationStatus()?.active ||
@@ -2681,7 +2780,7 @@ export function ChatView() {
           }
         >
           <button
-            class="stop-btn"
+            class="pill-btn stop-btn"
             classList={{ stopping: stopping() }}
             disabled={stopping()}
             onClick={handleStop}
@@ -2692,6 +2791,33 @@ export function ChatView() {
             </svg>
           </button>
         </Show>
+        </div>
+        <Show when={impersonationStatus()?.active}>
+          <div class="readonly-impersonation-hint">
+            Read-only — exit impersonation to send.
+          </div>
+        </Show>
+        </div>
+
+        <div
+          class="suggestion-slot hero-collapsible"
+          classList={{ gone: heroGone() }}
+        >
+          <Show when={(suggestions() ?? []).length > 0}>
+            <SuggestionCards
+              suggestions={suggestions() ?? []}
+              onSelect={prefillSuggestion}
+            />
+          </Show>
+          <Show when={suggestions.state === "ready" && (suggestions() ?? []).length === 0}>
+            <div class="hero-no-suggestions">
+              No prompt suggestions configured for this agent.
+            </div>
+          </Show>
+        </div>
+        </div>
+
+        <div class="hero-spacer hero-spacer-bottom" />
       </div>
 
       <Show when={contextUsageDisplay()}>
@@ -2722,7 +2848,7 @@ export function ChatView() {
           --surface-1: color-mix(in srgb, var(--bg-surface) 88%, var(--bg-base));
           --surface-2: var(--border-default);
           --surface-3: color-mix(in srgb, var(--bg-raised) 72%, var(--bg-base));
-          --transcript-width: 1120px;
+          --transcript-width: 720px;
           --user-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
           --tool-bg: color-mix(in srgb, var(--text-primary) 5%, var(--bg-surface));
           --tool-border: color-mix(in srgb, var(--text-primary) 9%, transparent);
@@ -2895,28 +3021,111 @@ export function ChatView() {
           box-shadow: 0 0 0 3px var(--accent-glow);
         }
 
-        .suggestion-cards {
-          display: grid;
-          gap: 10px;
-          width: min(100%, 440px);
-          margin: auto;
-          padding: 48px 18px;
+        /* ── Empty-chat hero ─────────────────────────────────────── */
+        .chat-body {
+          flex: 1;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+          position: relative;
         }
 
-        .suggestion-cards-lead {
-          margin: 0 0 4px;
-          font-size: 16px;
-          font-style: italic;
-          color: var(--text-tertiary);
-          text-align: center;
+        .hero-spacer {
+          flex: 1 1 0;
+          transition: flex-grow 0.38s cubic-bezier(0.3, 1, 0.4, 1);
         }
+        .chat-view.hero-sent .hero-spacer-top { flex-grow: 1; }
+        .chat-view.hero-sent .hero-spacer-bottom { flex-grow: 0; }
+
+        .hero-collapsible {
+          transition: opacity 0.24s ease-out, transform 0.38s cubic-bezier(0.3, 1, 0.4, 1);
+        }
+        .chat-view.hero-sent .hero-collapsible {
+          opacity: 0;
+          transform: translateY(14px) scale(0.985);
+          pointer-events: none;
+        }
+        .hero-collapsible.gone { display: none; }
+        .chat-view:not(.hero-mode) .hero,
+        .chat-view:not(.hero-mode) .suggestion-slot { display: none; }
+
+        .hero {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          width: min(100%, var(--transcript-width));
+          margin: 0 auto;
+          padding: 0 18px;
+        }
+
+        .hero-avatar {
+          width: 72px;
+          height: 72px;
+          border-radius: 20px;
+          background: var(--surface-1);
+          border: 1px solid color-mix(in srgb, var(--surface-2) 72%, transparent);
+          box-shadow:
+            0 14px 34px color-mix(in srgb, #000 14%, transparent),
+            inset 0 0 0 1px rgb(0 0 0 / 0.04);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          margin-bottom: 14px;
+          animation: hero-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+        }
+
+        .hero-avatar .avatar-emoji { font-size: 38px; line-height: 1; }
+        .hero-avatar .avatar-img { width: 100%; height: 100%; object-fit: cover; }
+
+        .hero-one-liner {
+          font-size: 28px;
+          line-height: 34px;
+          font-weight: 600;
+          letter-spacing: -0.01em;
+          text-align: center;
+          margin-bottom: 24px;
+          animation: hero-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both;
+        }
+
+        @keyframes hero-in {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .suggestion-slot {
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 18px;
+          right: 18px;
+          min-height: 106px;
+          display: grid;
+          place-items: center;
+        }
+
+        .hero-no-suggestions {
+          text-align: center;
+          font-size: 13px;
+          color: var(--text-muted);
+        }
+
+        .suggestion-cards {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          width: 100%;
+        }
+
+        .suggestion-cards-lead { display: none; }
 
         .suggestion-card {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          padding: 14px 16px;
+          min-height: 44px;
+          padding: 12px 14px;
+          font-size: 14px;
           color: var(--text-primary);
           font: inherit;
           text-align: left;
@@ -2981,14 +3190,23 @@ export function ChatView() {
           overscroll-behavior: contain;
           -webkit-overflow-scrolling: touch;
           touch-action: pan-y;
+          position: absolute;
+          inset: 0;
           width: min(100%, var(--transcript-width));
           box-sizing: border-box;
           margin: 0 auto;
-          padding: 36px 18px 30px;
+          padding: 36px 18px 150px;
           display: flex;
           flex-direction: column;
           gap: 22px;
           scroll-padding-block: 30px;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.3s ease 0.15s;
+        }
+        .chat-view.hero-sent .messages {
+          opacity: 1;
+          pointer-events: auto;
         }
 
         .messages.drop-target {
@@ -3033,10 +3251,14 @@ export function ChatView() {
         .message.user {
           align-self: flex-end;
           background: var(--user-bg);
-          color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
+          color: #a8c4ff;
           border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--surface-2));
           border-radius: 22px;
           padding: 14px 18px;
+        }
+
+        [data-theme="light"] .chat-view .message.user {
+          color: #1d4ed8;
         }
 
         .message.assistant {
@@ -3573,24 +3795,20 @@ export function ChatView() {
           to { transform: rotate(360deg); }
         }
 
-        .input-area {
-          display: flex;
-          align-items: flex-end;
-          flex-shrink: 0;
-          gap: 10px;
+        .composer-zone {
+          position: relative;
           width: min(100%, var(--transcript-width));
-          box-sizing: border-box;
           margin: 0 auto;
-          padding: 14px 18px 22px;
-          background: color-mix(in srgb, var(--surface-0) 88%, transparent);
-          border-top: 1px solid color-mix(in srgb, var(--surface-2) 54%, transparent);
-          backdrop-filter: blur(18px);
+          padding: 0 18px 22px;
+        }
+
+        .input-area {
+          width: 100%;
         }
 
         .input-area.drop-active {
           background:
-            linear-gradient(180deg, color-mix(in srgb, var(--accent) 3%, transparent), transparent 70%),
-            var(--surface-0);
+            linear-gradient(180deg, color-mix(in srgb, var(--accent) 3%, transparent), transparent 70%);
         }
 
         .file-input {
@@ -3602,20 +3820,13 @@ export function ChatView() {
           align-items: center;
           flex-wrap: wrap;
           gap: 8px;
-          width: min(100%, var(--transcript-width));
-          box-sizing: border-box;
-          margin: 0 auto;
-          padding: 10px 18px 0;
-          background: var(--surface-0);
-          border-top: 1px solid color-mix(in srgb, var(--surface-2) 54%, transparent);
+          width: 100%;
+          padding: 0 0 10px;
         }
 
         .drop-banner {
-          width: min(100%, var(--transcript-width));
-          box-sizing: border-box;
-          margin: 0 auto;
-          padding: 10px 18px 0;
-          background: var(--surface-0);
+          width: 100%;
+          padding: 0 0 10px;
           color: var(--accent);
           font-size: 12px;
           font-weight: 600;
@@ -3673,37 +3884,30 @@ export function ChatView() {
         }
 
         .upload-error {
-          width: min(100%, var(--transcript-width));
-          box-sizing: border-box;
-          margin: 0 auto;
-          padding: 8px 18px 0;
+          width: 100%;
+          padding: 0 0 8px;
           color: var(--error);
-          background: var(--surface-0);
         }
 
-        .attach-btn {
-          width: 44px;
-          height: 44px;
-          border-radius: var(--radius-sm);
-          background: transparent;
+        .pill-btn {
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
           border: 1px solid transparent;
+          background: transparent;
           color: var(--text-secondary);
           cursor: pointer;
           flex-shrink: 0;
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+          transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.18s ease, box-shadow 0.18s ease;
         }
 
-        .attach-btn svg {
-          width: 22px;
-          height: 22px;
-        }
+        .pill-btn svg { width: 18px; height: 18px; }
 
-        .attach-btn:hover:not(:disabled) {
-          background: var(--surface-1);
-          border-color: var(--surface-2);
+        .pill-btn:hover:not(:disabled) {
+          background: color-mix(in srgb, var(--text-primary) 7%, transparent);
           color: var(--text-primary);
         }
 
@@ -3720,17 +3924,19 @@ export function ChatView() {
           cursor: not-allowed;
         }
 
-        .input-wrapper {
-          position: relative;
-          flex: 1;
+        .input-pill {
+          display: flex;
+          align-items: flex-end;
+          gap: 6px;
+          padding: 7px 7px 7px 6px;
           background: var(--surface-1);
           border: 1px solid color-mix(in srgb, var(--surface-2) 82%, transparent);
-          border-radius: 22px;
+          border-radius: 24px;
           box-shadow: 0 12px 38px color-mix(in srgb, #000 8%, transparent);
           transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
 
-        .input-wrapper.drop-target {
+        .input-pill.drop-target {
           border-color: var(--accent);
           box-shadow: 0 0 0 4px var(--accent-glow);
           background:
@@ -3751,7 +3957,7 @@ export function ChatView() {
           text-transform: uppercase;
         }
 
-        .input-wrapper:focus-within {
+        .input-pill:focus-within {
           border-color: color-mix(in srgb, var(--accent) 44%, var(--surface-2));
           box-shadow:
             0 0 0 3px var(--accent-glow),
@@ -3759,13 +3965,14 @@ export function ChatView() {
         }
 
         .input {
-          width: 100%;
-          padding: 13px 18px;
+          flex: 1;
+          min-width: 0;
+          padding: 8px 6px;
           background: transparent;
           border: none;
           color: var(--text-primary);
           font-size: 15px;
-          line-height: 22px;
+          line-height: 18px;
           resize: none;
           outline: none;
           font-family: inherit;
@@ -3782,20 +3989,11 @@ export function ChatView() {
 
         .send-btn,
         .stop-btn {
-          width: 44px;
-          height: 44px;
           border-radius: 50%;
-          border: 1px solid var(--surface-2);
           cursor: pointer;
-          flex-shrink: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
         }
 
         .send-btn {
-          background: var(--surface-1);
           color: var(--text-muted);
         }
 
@@ -3803,7 +4001,7 @@ export function ChatView() {
           background: var(--accent);
           color: #fff;
           border-color: var(--accent);
-          box-shadow: 0 10px 24px var(--accent-glow);
+          box-shadow: 0 6px 16px var(--accent-glow);
         }
 
         .send-btn:not(:disabled):hover,
@@ -3920,7 +4118,7 @@ export function ChatView() {
           }
 
           .messages {
-            padding: 24px 12px 24px;
+            padding: 24px 12px 120px;
             gap: 18px;
           }
 
@@ -3934,7 +4132,11 @@ export function ChatView() {
           }
 
           .input-area {
-            padding: 10px 12px 14px;
+            padding: 0;
+          }
+
+          .composer-zone {
+            padding: 0 12px 14px;
           }
 
           .context-usage {
@@ -3944,8 +4146,8 @@ export function ChatView() {
           .attach-btn,
           .send-btn,
           .stop-btn {
-            width: 42px;
-            height: 42px;
+            width: 38px;
+            height: 38px;
           }
         }
 

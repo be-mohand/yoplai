@@ -22,6 +22,7 @@ Core chat supports:
 - file picker and drag-and-drop uploads
 - stop/abort with partial response preservation
 - explicit sessions and session history
+- empty chats open on a centered hero: avatar, random one-liner, composer, and prompt suggestions (or a note when none are configured); the composer animates to the docked position on first send
 - clicking "Chat" in the Agents catalog always starts a fresh session (new logical session key per click; never the agent's "main" session)
 - `/new`, `/reset`, and `/compact`
 - context usage warning and automatic compaction near limit

@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Web chat now opens on a centered "new chat" hero: agent avatar, a randomly-picked greeting one-liner (from a pool of 30), the composer, and prompt suggestions when configured (or a subtle note when none exist). Sending the first message slides the composer down to its docked position with a smooth ~0.4s animation. The transcript and composer now share one 720px content rail, and attach/send buttons live inside the input pill.
 - Sandboxed agents can now use OAuth-only providers (e.g. `openai-codex`): when an agent has `auth.mode: oauth`, the gateway pre-refreshes the provider's OAuth credential on the host and passes only a short-lived access token into the container, and the runner renews it through a new `POST /internal/oauth-token` gateway endpoint before expiry. Refresh tokens never enter the sandbox. Note: do not configure a OneCLI secret mapping for an OAuth provider's API host — it would overwrite the injected Authorization header.
 - Agents can opt into a single `fallback_model` in `agent.yaml`; after transient primary-model retries are exhausted, a silent, tool-free failed Pi turn retries once with that model.
 - Added `yoplai models refresh` to fetch Pi's latest provider model catalogs into `$YOPLAI_HOME/models-store.json`, allowing newly released models to be used without upgrading Yoplai.
@@ -19,6 +20,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Raised muted-text contrast to WCAG AA across the web UI: `--text-muted` is now `#8a8a8a` (dark) and `#6b6b6b` (light), and user-message text in chat is `#a8c4ff` (dark) / `#1d4ed8` (light) instead of a low-contrast accent mix.
 - Clicking "Chat" on an agent in the web Agents catalog now always starts a fresh chat session instead of resuming the agent's default "main" session. Each click mints a new logical session key; the gateway creates the new session lazily on the first message. Previous sessions remain available from the sidebar session list.
 - Upgraded the pi SDK packages (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`) from 0.80.6 to 0.84.4 across the gateway, agent-runner container, and projects extension. Model and credential resolution now goes through pi's `ModelRuntime`; `yoplai auth login/status/logout` keep the same behavior on the new provider-owned login flow.
 - `ui.tailscale.resetOnExit` now defaults to `false`. The previous default ran `tailscale serve reset` on gateway shutdown/restart, which wipes the machine's entire Tailscale serve config — including entries Yoplai didn't create. Set it to `true` explicitly to opt back in.
