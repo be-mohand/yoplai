@@ -16,6 +16,7 @@ import {
   streamMessage,
   uploadFiles,
   getSessionKey,
+  startNewChat,
   fetchFullHistory,
   fetchAgent,
   fetchAgentSuggestions,
@@ -2266,6 +2267,35 @@ export function ChatView() {
             </button>
           </div>
         </Show>
+        <button
+          class="new-chat-btn"
+          aria-label="Start a new chat"
+          title="New chat"
+          onClick={() => {
+            startNewChat(params.agentId);
+            setSimpleMessages([]);
+            setFullMessages([]);
+            setPendingQueuedMessages([]);
+            clearPendingFiles();
+            setShowInterrupted(false);
+            setInput("");
+            navigate(`/chat/${encodeURIComponent(params.agentId)}`);
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          New chat
+        </button>
       </header>
 
       <div class="chat-body">
@@ -2907,6 +2937,7 @@ export function ChatView() {
 
         .back-btn:focus-visible,
         .taskboard-btn:focus-visible,
+        .new-chat-btn:focus-visible,
         .toggle-btn:focus-visible,
         .attach-btn:focus-visible,
         .send-btn:focus-visible,
@@ -3177,6 +3208,26 @@ export function ChatView() {
           background: var(--surface-3);
           color: var(--text-primary);
           box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface-2) 70%, transparent);
+        }
+
+        .new-chat-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          border-radius: 12px;
+          border: 1px solid color-mix(in srgb, var(--surface-2) 70%, transparent);
+          background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+          color: var(--text-secondary);
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.16s ease, color 0.16s ease;
+        }
+
+        .new-chat-btn:hover {
+          background: var(--surface-3);
+          color: var(--text-primary);
         }
 
         .toggle-btn:hover:not(.active) {

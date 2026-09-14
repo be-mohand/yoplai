@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Chat header now has a "New chat" button (top right, after the Simple/Full toggle) that starts a fresh chat for the agent, showing the empty-chat hero like the Agents page "Chat" action.
 - Web chat now opens on a centered "new chat" hero: agent avatar, a randomly-picked greeting one-liner (from a pool of 30), the composer, and prompt suggestions when configured (or a subtle note when none exist). Sending the first message slides the composer down to its docked position with a smooth ~0.4s animation. The transcript and composer now share one 720px content rail, and attach/send buttons live inside the input pill.
 - Sandboxed agents can now use OAuth-only providers (e.g. `openai-codex`): when an agent has `auth.mode: oauth`, the gateway pre-refreshes the provider's OAuth credential on the host and passes only a short-lived access token into the container, and the runner renews it through a new `POST /internal/oauth-token` gateway endpoint before expiry. Refresh tokens never enter the sandbox. Note: do not configure a OneCLI secret mapping for an OAuth provider's API host — it would overwrite the injected Authorization header.
 - Agents can opt into a single `fallback_model` in `agent.yaml`; after transient primary-model retries are exhausted, a silent, tool-free failed Pi turn retries once with that model.
