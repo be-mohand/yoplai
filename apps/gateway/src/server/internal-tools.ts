@@ -40,8 +40,8 @@ type InternalToolsDeps = {
   getTokenContext: (token: string) => ContainerTokenContext | undefined;
   executeExtensionTool: typeof executeExtensionAgentTool;
   resolveOAuthToken: (
-    agentId: string,
-    provider: string
+    provider: string,
+    allowedProviders: readonly string[]
   ) => Promise<OAuthTokenLookup>;
 };
 
@@ -270,8 +270,8 @@ export function createInternalTools(
     let result: OAuthTokenLookup;
     try {
       result = await deps.resolveOAuthToken(
-        context.agentId,
-        parsed.data.provider
+        parsed.data.provider,
+        context.oauthProviders ?? []
       );
     } catch (error) {
       const message =

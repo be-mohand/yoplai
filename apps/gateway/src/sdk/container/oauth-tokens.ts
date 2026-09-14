@@ -1,6 +1,6 @@
 import path from "node:path";
-import type { AgentConfig } from "@yoplai/shared";
-import { CONFIG_DIR, getAgent } from "../../config/index.js";
+import type { AgentConfig, RequiredModelConfig } from "@yoplai/shared";
+import { CONFIG_DIR } from "../../config/index.js";
 import { logWarn } from "../../logging.js";
 
 // SDK's own OAuth refresh runs inside a 5-min validity window; require more
@@ -63,10 +63,19 @@ const defaultDeps: OAuthTokensDeps = {
   },
 };
 
-function modelProviders(agent: AgentConfig): string[] {
+function modelProviders(
+  agent: AgentConfig,
+  modelOverride?: RequiredModelConfig
+): string[] {
   const providers = new Set<string>();
-  if (agent.model?.provider) providers.add(agent.model.provider);
-  if (agent.fallback_model?.provider) providers.add(agent.fallback_model.provider);
+  if (modelOverride?.provider) {
+    providers.add(modelOverride.provider);
+  } else if (agent.model?.provider) {
+    providers.add(agent.model.provider);
+  }
+  if (agent.auth?.mode === "oauth" && agent.fallback_model?.provider) {
+    providers.add(agent.fallback_model.provider);
+  }
   return [...providers];
 }
 
@@ -114,23 +123,27 @@ function refreshOAuthTokenDeduped(
 }
 
 /**
- * Pre-resolve fresh OAuth access tokens for an oauth-mode agent's model and
- * fallback model providers, for the gateway to hand to a sandboxed container.
- * Returns undefined when the agent isn't in oauth auth mode, or no provider
- * has a stored OAuth credential.
+ * Pre-resolve fresh OAuth access tokens for a run's effective model provider
+ * and any oauth-mode fallback provider, for the gateway to hand to a sandboxed
+ * container. Explicit model overrides infer OAuth from their stored provider
+ * credential; ordinary runs retain the agent's configured auth semantics.
  */
 export async function resolveOAuthTokens(
   agent: AgentConfig,
+  modelOverride?: RequiredModelConfig,
   deps: OAuthTokensDeps = defaultDeps
 ): Promise<Record<string, OAuthTokenEntry> | undefined> {
-  if (agent.auth?.mode !== "oauth") return undefined;
-  const providers = modelProviders(agent);
+  if (!modelOverride && agent.auth?.mode !== "oauth") return undefined;
+  const providers = modelProviders(agent, modelOverride);
   if (providers.length === 0) return undefined;
 
-  const runtime = await deps.createRuntime(deps.authPath);
+  let runtime: OAuthModelRuntime | undefined;
   const tokens: Record<string, OAuthTokenEntry> = {};
   for (const provider of providers) {
     try {
+      const credential = await deps.readCredential(provider, deps.authPath);
+      if (credential?.type !== "oauth") continue;
+      runtime ??= await deps.createRuntime(deps.authPath);
       const entry = await refreshOAuthTokenDeduped(provider, deps, runtime);
       if (entry) tokens[provider] = entry;
     } catch (error) {
@@ -155,25 +168,20 @@ export type OAuthTokenLookup =
   | { status: "forbidden" }
   | { status: "not_found" };
 
-export type ResolveOAuthTokenDeps = OAuthTokensDeps & {
-  getAgent: (id: string) => AgentConfig | undefined;
-};
+export type ResolveOAuthTokenDeps = OAuthTokensDeps;
 
-const defaultResolveDeps: ResolveOAuthTokenDeps = { ...defaultDeps, getAgent };
+const defaultResolveDeps: ResolveOAuthTokenDeps = defaultDeps;
 
 /**
- * Renewal-endpoint variant: resolves a fresh OAuth access token for a single
- * agent/provider pair, validating that the agent is in oauth mode and that
- * `provider` is one of its model/fallback providers before touching storage.
+ * Renewal-endpoint variant: resolves a fresh OAuth access token for a provider
+ * that was authorized and seeded for this specific container run.
  */
 export async function resolveOAuthToken(
-  agentId: string,
   provider: string,
+  allowedProviders: readonly string[],
   deps: ResolveOAuthTokenDeps = defaultResolveDeps
 ): Promise<OAuthTokenLookup> {
-  const agent = deps.getAgent(agentId);
-  if (!agent || agent.auth?.mode !== "oauth") return { status: "forbidden" };
-  if (!modelProviders(agent).includes(provider)) return { status: "forbidden" };
+  if (!allowedProviders.includes(provider)) return { status: "forbidden" };
 
   const runtime = await deps.createRuntime(deps.authPath);
   const entry = await refreshOAuthTokenDeduped(provider, deps, runtime);

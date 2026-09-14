@@ -104,7 +104,7 @@ Without OneCLI, choose network with direct egress and explicitly provide require
 
 OAuth-only providers (e.g. `openai-codex`) cannot use the OneCLI static-key swap. Log in on the host once (`yoplai auth login openai-codex`), then set the agent's auth mode:
 
-```yaml
+````yaml
 sdk: pi
 auth:
   mode: oauth
@@ -113,7 +113,18 @@ model:
   model: gpt-5.6-terra
 sandbox:
   enabled: true
-``` For agents with `auth.mode: oauth`, the gateway pre-refreshes the OAuth credential on the host (from `$YOPLAI_HOME/auth.json`) and passes only a short-lived access token into the container via `ContainerInput.oauthTokens`; the runner renews it through `POST /internal/oauth-token` (same per-run token identity checks as `/internal/tools`) when under 10 minutes of validity remain. Refresh tokens never enter the sandbox. Do not add a OneCLI secret mapping for an OAuth provider's API host — the proxy would overwrite the injected Authorization header.
+````
+
+The gateway also detects OAuth credentials for explicit per-run model
+overrides, so a scheduler job can use an OAuth provider even when the agent's
+default provider uses an API key. The gateway pre-refreshes OAuth credentials
+on the host (from `$YOPLAI_HOME/auth.json`) and passes only short-lived access
+tokens into the container via `ContainerInput.oauthTokens`; the runner renews
+only providers authorized for that run through `POST /internal/oauth-token`
+(with the same per-run identity checks as `/internal/tools`) when under 10
+minutes of validity remain. Refresh tokens never enter the sandbox. Do not add
+a OneCLI secret mapping for an OAuth provider's API host — the proxy would
+overwrite the injected Authorization header.
 
 ## Security notes
 
@@ -123,3 +134,4 @@ sandbox:
 - Startup and shutdown clean orphan containers.
 - Isolation is only as strong as Docker host policy, mounted paths, network config, and callback tools.
 - Never expose Docker socket to agent container.
+````

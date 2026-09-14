@@ -327,14 +327,15 @@ export const piAdapter: SdkAdapter = {
         );
       }
 
-      // Get API key based on auth.mode
-      const authMode = agent.auth?.mode;
+      // Explicit model overrides infer auth from that provider's stored
+      // credential; ordinary runs preserve the agent's configured auth mode.
+      const storedCredential = readStoredCredential(model.provider, authPath);
+      const authMode = params.model ? storedCredential?.type : agent.auth?.mode;
       let apiKey: string | null = null;
 
       if (authMode === "oauth") {
         // OAuth mode: require OAuth credentials
-        const cred = readStoredCredential(model.provider, authPath);
-        if (!cred || cred.type !== "oauth") {
+        if (!storedCredential || storedCredential.type !== "oauth") {
           throw new Error(
             `No OAuth credentials for provider: ${model.provider}. Run 'yoplai auth login ${model.provider}' first.`
           );
@@ -343,9 +344,8 @@ export const piAdapter: SdkAdapter = {
         apiKey = auth?.auth.apiKey ?? null;
       } else if (authMode === "api_key") {
         // API key mode: only use API key credentials or env vars, skip OAuth
-        const cred = readStoredCredential(model.provider, authPath);
-        if (cred?.type === "api_key" && cred.key) {
-          apiKey = cred.key;
+        if (storedCredential?.type === "api_key" && storedCredential.key) {
+          apiKey = storedCredential.key;
         } else {
           apiKey = getEnvApiKey(model.provider) ?? null;
         }

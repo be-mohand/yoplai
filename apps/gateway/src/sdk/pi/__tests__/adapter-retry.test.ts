@@ -8,6 +8,15 @@ import {
 
 const mockCreateAgentSession = vi.fn();
 const mockGetModel = vi.fn((provider: string, model: string) => ({ provider, model }));
+const mockGetAuth = vi.fn(async () => ({ auth: { apiKey: "runtime-key" } }));
+type MockStoredCredential =
+  | { type: "oauth"; access: string; expires: number }
+  | { type: "api_key"; key: string }
+  | undefined;
+const mockReadStoredCredential = vi.fn<
+  (provider: string) => MockStoredCredential
+>(() => undefined);
+const mockSetRuntimeApiKey = vi.fn(async () => undefined);
 const mockGetLoadedExtensions = vi.fn<() => Partial<Extension>[]>(() => []);
 const mockGetExtensionAgentTools = vi.fn<() => Promise<unknown[]>>(
   async () => []
@@ -46,12 +55,12 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   SettingsManager: {
     create: vi.fn(() => ({})),
   },
-  readStoredCredential: vi.fn(() => undefined),
+  readStoredCredential: mockReadStoredCredential,
   ModelRuntime: {
     create: vi.fn(async () => ({
       getModel: mockGetModel,
-      getAuth: vi.fn(async () => ({ auth: { apiKey: "runtime-key" } })),
-      setRuntimeApiKey: vi.fn(async () => undefined),
+      getAuth: mockGetAuth,
+      setRuntimeApiKey: mockSetRuntimeApiKey,
     })),
   },
   DefaultResourceLoader: class {
@@ -144,10 +153,43 @@ function retryWarnings(
 describe("pi adapter transient provider retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockReadStoredCredential.mockReturnValue(undefined);
     clearConfigCacheForTests();
     mockGetLoadedExtensions.mockReturnValue([]);
     mockGetExtensionAgentTools.mockResolvedValue([]);
     mockGetModel.mockClear();
+  });
+
+  it("uses an override provider's stored OAuth credential independently of agent auth", async () => {
+    const agent = makeAgent({ auth: { mode: "api_key" } });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = makeSession();
+    session.prompt.mockImplementationOnce(async () => {
+      session.agent.state.messages.push(successTurn());
+    });
+    mockCreateAgentSession.mockResolvedValue({ session });
+    mockReadStoredCredential.mockImplementation((provider) =>
+      provider === "openai-codex"
+        ? { type: "oauth", access: "access-token", expires: Date.now() + 60_000 }
+        : undefined
+    );
+
+    const { piAdapter } = await import("../adapter.js");
+    const params = makeRunParams(agent);
+    params.model = { provider: "openai-codex", model: "gpt-5" };
+
+    await expect(piAdapter.run(params)).resolves.toEqual({
+      text: "recovered",
+      aborted: false,
+    });
+    expect(mockGetAuth).toHaveBeenCalledWith({
+      provider: "openai-codex",
+      model: "gpt-5",
+    });
+    expect(mockSetRuntimeApiKey).toHaveBeenCalledWith(
+      "openai-codex",
+      "runtime-key"
+    );
   });
 
   it("retries a failed turn that follows tool activity without re-sending the prompt", async () => {

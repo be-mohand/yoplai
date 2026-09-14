@@ -57,6 +57,12 @@ model:
 - `api_key`: use API key/env credentials
 - `proxy`: provider/custom proxy resolution
 
+An explicit per-run model override, such as a scheduler job's `model`, resolves
+credentials for the overridden provider independently of the agent's default
+`auth.mode`. For example, an API-key agent can run a job with `openai-codex`
+after `yoplai auth login openai-codex`; the agent's normal runs keep their
+configured authentication behavior.
+
 ## Extension OAuth connections
 
 Host OAuth framework manages provider authorize/callback/status/disconnect routes per agent. Extensions declare required provider/scopes and receive refreshed access token through runtime context.

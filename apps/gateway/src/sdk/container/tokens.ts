@@ -9,6 +9,7 @@ export type ContainerTokenContext = {
   runId: string;
   containerName: string;
   roots: { workspace: string; data: string; uploads: string };
+  oauthProviders?: string[];
   userId?: string;
   emitProgress?: (event: {
     label: string;

@@ -30,6 +30,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Scheduler model overrides can now use an OAuth provider independently of the agent's configured provider and auth mode, including inside sandboxed runs; OAuth renewal remains scoped to the provider selected for that run.
 - Agent-level Slack config (`slack:` in `agent.yaml`) no longer requires an `agent` field on each `channels` entry; the agent is implied. Previously the agent config failed validation with `slack.channels.<id>.agent: Required`.
 - A chat message is no longer lost when the model run fails before the model starts (unknown model/provider, missing credentials): the message is persisted to session history before the run begins, so it survives reloads and the session stays visible in the sidebar. Also fixes a latent duplicate user entry on thinking-level fallback retries.
 - Extension and MCP tool schemas no longer send regex `pattern` keywords to the model provider. Providers such as opencode-go rejected whole runs with `Invalid JSON schema: regex lookaround is not supported` when an MCP server (e.g. Claap) exposed a Zod v4 `email` pattern. Tools still validate their own inputs.

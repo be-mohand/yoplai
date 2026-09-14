@@ -117,7 +117,7 @@ Key rules:
 - Multi-user mode is enabled with `extensions.multiUser.enabled: true`, not a top-level `multiUser` key.
 - Secrets written by the agent-extension config API become `$env:` references in `agent.yaml`; plaintext values go into the agent `.env`.
 - Host OAuth token persistence requires `oauth.encryptionKey` (typically `$env:OAUTH_ENCRYPTION_KEY`) and fails closed rather than writing plaintext.
-- Sandboxed agents with `auth.mode: oauth`: gateway pre-refreshes provider OAuth creds on the host and passes short-lived access tokens via `ContainerInput.oauthTokens` (`apps/gateway/src/sdk/container/oauth-tokens.ts`); the runner renews through `POST /internal/oauth-token` under a 10-minute threshold. Refresh tokens never enter the container. See `docs/container-isolation.md`.
+- Sandboxed runs using OAuth, whether selected by `agent.yaml` or a per-run model override, have provider credentials pre-refreshed on the host and receive short-lived access tokens via `ContainerInput.oauthTokens` (`apps/gateway/src/sdk/container/oauth-tokens.ts`); the runner renews only providers authorized for that run through `POST /internal/oauth-token` under a 10-minute threshold. Refresh tokens never enter the container. See `docs/container-isolation.md`.
 - `pnpm init-dev-config` creates repo-local `.yoplai/yoplai.json` from `scripts/config-template.json` with free ports.
 
 ## Runtime data

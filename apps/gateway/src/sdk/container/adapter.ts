@@ -298,20 +298,6 @@ export function getContainerAdapter(): SdkAdapter {
         const isFirstRun = await ensureWorkspaceFiles(params.workspaceDir);
 
         agentToken = randomUUID();
-        registerContainerToken(agentToken, {
-          agentId: params.agentId,
-          sessionId: params.sessionId,
-          runId,
-          containerName,
-          roots: {
-            workspace: params.workspaceDir,
-            data: hostDataDir,
-            uploads: launchSpec.hostUploadsDir,
-          },
-          userId: params.userId,
-          emitProgress: (event) =>
-            params.onEvent({ type: "progress", ...event }),
-        });
         const attachmentContext = hasReadableDocumentAttachment(params)
           ? await buildDocumentAttachmentContext(params.attachments)
           : "";
@@ -351,7 +337,22 @@ export function getContainerAdapter(): SdkAdapter {
               )
             )
           : "";
-        const oauthTokens = await resolveOAuthTokens(params.agent);
+        const oauthTokens = await resolveOAuthTokens(params.agent, params.model);
+        registerContainerToken(agentToken, {
+          agentId: params.agentId,
+          sessionId: params.sessionId,
+          runId,
+          containerName,
+          roots: {
+            workspace: params.workspaceDir,
+            data: hostDataDir,
+            uploads: launchSpec.hostUploadsDir,
+          },
+          oauthProviders: Object.keys(oauthTokens ?? {}),
+          userId: params.userId,
+          emitProgress: (event) =>
+            params.onEvent({ type: "progress", ...event }),
+        });
         input = await new ContainerInputBuilder().build(
           {
             ...params,

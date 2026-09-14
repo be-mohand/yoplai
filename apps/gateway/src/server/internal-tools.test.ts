@@ -15,7 +15,8 @@ function registerToken(
   token: string,
   agentId = "agent-1",
   roots = { workspace: "/tmp/workspace", data: "/tmp/data", uploads: "/tmp/uploads" },
-  emitProgress?: (event: { label: string; taskId?: string }) => void
+  emitProgress?: (event: { label: string; taskId?: string }) => void,
+  oauthProviders?: string[]
 ): void {
   registerContainerToken(token, {
     agentId,
@@ -24,6 +25,7 @@ function registerToken(
     containerName: "container-1",
     roots,
     emitProgress,
+    oauthProviders,
   });
   registeredTokens.push(token);
 }
@@ -541,7 +543,9 @@ describe("internal oauth-token renewal endpoint", () => {
       expiresAt: 12345,
     });
     const app = createOAuthDeps(resolveOAuthToken);
-    registerToken("oauth-token-1");
+    registerToken("oauth-token-1", "agent-1", undefined, undefined, [
+      "anthropic",
+    ]);
 
     const response = await postOAuthToken(app, {
       provider: "anthropic",
@@ -556,7 +560,7 @@ describe("internal oauth-token renewal endpoint", () => {
       accessToken: "fresh-token",
       expiresAt: 12345,
     });
-    expect(resolveOAuthToken).toHaveBeenCalledWith("agent-1", "anthropic");
+    expect(resolveOAuthToken).toHaveBeenCalledWith("anthropic", ["anthropic"]);
   });
 
   it("rejects an identity mismatch with 403", async () => {
@@ -590,6 +594,7 @@ describe("internal oauth-token renewal endpoint", () => {
     expect(await response.json()).toEqual({
       error: "Provider is not available for OAuth renewal",
     });
+    expect(resolveOAuthToken).toHaveBeenCalledWith("openai", []);
   });
 
   it("returns 404 when there is no stored oauth credential", async () => {

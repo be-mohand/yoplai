@@ -31,9 +31,14 @@ import type { SdkRunParams } from "../types.js";
 const mockGetExtensionAgentTools = vi.hoisted(() =>
   vi.fn<(agent: unknown) => unknown[]>(() => [])
 );
+const mockResolveOAuthTokens = vi.hoisted(() => vi.fn());
 
 vi.mock("../../extensions/tools.js", () => ({
   getExtensionAgentTools: mockGetExtensionAgentTools,
+}));
+
+vi.mock("./oauth-tokens.js", () => ({
+  resolveOAuthTokens: mockResolveOAuthTokens,
 }));
 
 vi.mock("../../media/describe.js", () => ({
@@ -257,6 +262,7 @@ function mockExecFile(complete = true): MockInstance {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetExtensionAgentTools.mockReturnValue([]);
+  mockResolveOAuthTokens.mockResolvedValue(undefined);
   delete process.env.YOPLAI_HOME;
 });
 
@@ -370,6 +376,37 @@ describe("container adapter", () => {
     expect(params.onEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "done" })
     );
+  });
+
+  it("scopes OAuth renewal to the override provider seeded for the run", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    mockResolveOAuthTokens.mockResolvedValue({
+      "openai-codex": { accessToken: "oauth-token", expiresAt: 12345 },
+    });
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = createParams(agent);
+    params.model = { provider: "openai-codex", model: "gpt-5" };
+
+    const run = getContainerAdapter().run(params);
+    await tick();
+    const dockerProcess = processes[0];
+    const input = JSON.parse(dockerProcess.stdinChunks.join(""));
+
+    expect(mockResolveOAuthTokens).toHaveBeenCalledWith(agent, params.model);
+    expect(input.oauthTokens).toEqual({
+      "openai-codex": { accessToken: "oauth-token", expiresAt: 12345 },
+    });
+    expect(getContainerTokenContext(input.agentToken)?.oauthProviders).toEqual([
+      "openai-codex",
+    ]);
+
+    dockerProcess.emitOutput({ text: "done" });
+    dockerProcess.finish(0);
+    await run;
   });
 
   it("surfaces docker run stderr when extra network attach races a failed container start", async () => {

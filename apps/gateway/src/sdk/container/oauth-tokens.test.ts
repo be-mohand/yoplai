@@ -79,6 +79,7 @@ describe("resolveOAuthTokens", () => {
     });
     const result = await resolveOAuthTokens(
       agent({ auth: { mode: "api_key" } }),
+      undefined,
       deps
     );
     expect(result).toBeUndefined();
@@ -87,6 +88,7 @@ describe("resolveOAuthTokens", () => {
   it("never touches auth storage for a non-oauth agent, so a missing auth.json doesn't block launch", async () => {
     const result = await resolveOAuthTokens(
       agent({ auth: undefined }),
+      undefined,
       unreachableDeps()
     );
     expect(result).toBeUndefined();
@@ -102,6 +104,7 @@ describe("resolveOAuthTokens", () => {
         auth: { mode: "oauth" },
         fallback_model: { provider: "openai", model: "gpt-5" },
       }),
+      undefined,
       deps
     );
     expect(result).toEqual({
@@ -120,6 +123,7 @@ describe("resolveOAuthTokens", () => {
     const deps = makeDeps({ anthropic: { type: "api_key" } });
     const result = await resolveOAuthTokens(
       agent({ auth: { mode: "oauth" } }),
+      undefined,
       deps
     );
     expect(result).toBeUndefined();
@@ -143,6 +147,7 @@ describe("resolveOAuthTokens", () => {
         auth: { mode: "oauth" },
         fallback_model: { provider: "openai", model: "gpt-5" },
       }),
+      undefined,
       deps
     );
     expect(result).toEqual({
@@ -162,6 +167,7 @@ describe("resolveOAuthTokens", () => {
     );
     const result = await resolveOAuthTokens(
       agent({ auth: { mode: "oauth" } }),
+      undefined,
       deps
     );
     expect(result).toBeUndefined();
@@ -190,6 +196,7 @@ describe("resolveOAuthTokens", () => {
 
     const result = await resolveOAuthTokens(
       agent({ auth: { mode: "oauth" } }),
+      undefined,
       deps
     );
 
@@ -197,54 +204,64 @@ describe("resolveOAuthTokens", () => {
       anthropic: { accessToken: "rotated-token", expiresAt: 9999 },
     });
   });
+
+  it("uses an explicit model override's OAuth credential independently of agent auth", async () => {
+    const deps = makeDeps({
+      anthropic: { type: "api_key" },
+      "openai-codex": { type: "oauth", access: "initial", expires: 3000 },
+    });
+
+    const result = await resolveOAuthTokens(
+      agent({ auth: { mode: "api_key" } }),
+      { provider: "openai-codex", model: "gpt-5" },
+      deps
+    );
+
+    expect(result).toEqual({
+      "openai-codex": {
+        accessToken: "openai-codex-fresh-token",
+        expiresAt: 3000,
+      },
+    });
+  });
 });
 
 describe("resolveOAuthToken", () => {
   function makeResolveDeps(
     credentials: Record<string, StoredCred>,
-    agentConfig: AgentConfig | undefined,
     options: Parameters<typeof makeDeps>[1] = {}
   ): ResolveOAuthTokenDeps & { getAuth: ReturnType<typeof vi.fn> } {
-    return {
-      ...makeDeps(credentials, options),
-      getAgent: () => agentConfig,
-    };
+    return makeDeps(credentials, options);
   }
 
-  it("returns forbidden when the agent is not in oauth mode", async () => {
-    const deps = makeResolveDeps(
-      { anthropic: { type: "oauth", access: "initial", expires: 1000 } },
-      agent({ auth: { mode: "api_key" } })
-    );
-    const result = await resolveOAuthToken("agent-1", "anthropic", deps);
+  it("returns forbidden when the provider was not seeded for the run", async () => {
+    const deps = makeResolveDeps({
+      anthropic: { type: "oauth", access: "initial", expires: 1000 },
+    });
+    const result = await resolveOAuthToken("anthropic", [], deps);
     expect(result).toEqual({ status: "forbidden" });
   });
 
-  it("returns forbidden when the provider is not one of the agent's providers", async () => {
-    const deps = makeResolveDeps(
-      { anthropic: { type: "oauth", access: "initial", expires: 1000 } },
-      agent({ auth: { mode: "oauth" } })
-    );
-    const result = await resolveOAuthToken("agent-1", "openai", deps);
+  it("returns forbidden when the provider differs from the run-scoped provider", async () => {
+    const deps = makeResolveDeps({
+      anthropic: { type: "oauth", access: "initial", expires: 1000 },
+    });
+    const result = await resolveOAuthToken("openai", ["anthropic"], deps);
     expect(result).toEqual({ status: "forbidden" });
   });
 
   it("returns not_found when there is no stored oauth credential", async () => {
-    const deps = makeResolveDeps(
-      { anthropic: { type: "api_key" } },
-      agent({ auth: { mode: "oauth" } })
-    );
-    const result = await resolveOAuthToken("agent-1", "anthropic", deps);
+    const deps = makeResolveDeps({ anthropic: { type: "api_key" } });
+    const result = await resolveOAuthToken("anthropic", ["anthropic"], deps);
     expect(result).toEqual({ status: "not_found" });
   });
 
   it("returns a fresh token on success, requesting the 10-minute minimum validity", async () => {
     const deps = makeResolveDeps(
       { anthropic: { type: "oauth", access: "initial", expires: 5000 } },
-      agent({ auth: { mode: "oauth" } }),
       { authPath: "/fake/renewal-success.json" }
     );
-    const result = await resolveOAuthToken("agent-1", "anthropic", deps);
+    const result = await resolveOAuthToken("anthropic", ["anthropic"], deps);
     expect(result).toEqual({
       status: "ok",
       accessToken: "anthropic-fresh-token",
@@ -271,10 +288,9 @@ describe("resolveOAuthToken", () => {
       authPath: "/fake/renewal-atomic-pair.json",
       createRuntime: async () => ({ getAuth }),
       readCredential: async (provider) => credentials[provider],
-      getAgent: () => agent({ auth: { mode: "oauth" } }),
     };
 
-    const result = await resolveOAuthToken("agent-1", "anthropic", deps);
+    const result = await resolveOAuthToken("anthropic", ["anthropic"], deps);
 
     expect(result).toEqual({
       status: "ok",
@@ -286,7 +302,6 @@ describe("resolveOAuthToken", () => {
   it("propagates a refresh failure instead of masking it as not_found", async () => {
     const deps = makeResolveDeps(
       { anthropic: { type: "oauth", access: "initial", expires: 5000 } },
-      agent({ auth: { mode: "oauth" } }),
       {
         authPath: "/fake/renewal-failure.json",
         getAuthImpl: async () => {
@@ -294,7 +309,7 @@ describe("resolveOAuthToken", () => {
         },
       }
     );
-    await expect(resolveOAuthToken("agent-1", "anthropic", deps)).rejects.toThrow(
+    await expect(resolveOAuthToken("anthropic", ["anthropic"], deps)).rejects.toThrow(
       "IdP unreachable"
     );
   });
@@ -309,7 +324,6 @@ describe("resolveOAuthToken", () => {
     };
     const deps = makeResolveDeps(
       credentials,
-      agent({ auth: { mode: "oauth" } }),
       {
         authPath: "/fake/renewal-dedupe.json",
         getAuthImpl: async (provider) => {
@@ -323,8 +337,8 @@ describe("resolveOAuthToken", () => {
     // Fire both requests before either's getAuth call resolves, so the
     // second must observe the first's in-flight refresh instead of starting
     // its own.
-    const firstPromise = resolveOAuthToken("agent-1", "anthropic", deps);
-    const secondPromise = resolveOAuthToken("agent-1", "anthropic", deps);
+    const firstPromise = resolveOAuthToken("anthropic", ["anthropic"], deps);
+    const secondPromise = resolveOAuthToken("anthropic", ["anthropic"], deps);
     await Promise.resolve();
     await Promise.resolve();
     releaseGetAuth();

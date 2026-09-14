@@ -399,6 +399,12 @@ yoplai scheduler rm <agent-id> <job-id>
 yoplai scheduler tail <agent-id> <job-id>
 ```
 
+A job-level model override resolves credentials for its provider independently
+of the agent's default provider and auth mode. OAuth-only overrides such as
+`openai-codex` require a host login (`yoplai auth login openai-codex`); sandboxed
+runs receive only the short-lived access token for the providers authorized by
+that run.
+
 CLI can edit files while scheduler runtime is disabled.
 
 ## Agent tools
