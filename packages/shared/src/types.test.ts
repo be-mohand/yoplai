@@ -46,6 +46,22 @@ describe("AgentConfigSchema openclaw model handling", () => {
     expect(result.reasoning).toBe("max");
   });
 
+  it("accepts agent-level slack channels without an agent field", () => {
+    const result = AgentConfigSchema.safeParse({
+      id: "slack-agent",
+      name: "Slack Agent",
+      workspace: "~/agents/slack",
+      model: { provider: "anthropic", model: "claude" },
+      slack: {
+        token: "xoxb-test",
+        appToken: "xapp-test",
+        channels: { C0123456789: { requireMention: false } },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("rejects invalid reasoning values", () => {
     const result = AgentConfigSchema.safeParse({
       id: "reasoning-agent",

@@ -721,7 +721,9 @@ export type SlackComponentConfig = SlackExtensionConfig;
 export const SlackAgentConfigSchema = z.object({
   token: SecretRefSchema,
   appToken: SecretRefSchema,
-  channels: z.record(z.string(), SlackExtensionChannelConfigSchema).optional(),
+  channels: z
+    .record(z.string(), SlackExtensionChannelConfigSchema.omit({ agent: true }))
+    .optional(),
   dm: SlackExtensionDmConfigSchema.optional(),
   historyLimit: z.number().int().min(0).optional(),
   clearHistoryAfterReply: z.boolean().optional(),

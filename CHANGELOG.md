@@ -29,6 +29,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Agent-level Slack config (`slack:` in `agent.yaml`) no longer requires an `agent` field on each `channels` entry; the agent is implied. Previously the agent config failed validation with `slack.channels.<id>.agent: Required`.
 - A chat message is no longer lost when the model run fails before the model starts (unknown model/provider, missing credentials): the message is persisted to session history before the run begins, so it survives reloads and the session stays visible in the sidebar. Also fixes a latent duplicate user entry on thinking-level fallback retries.
 - Extension and MCP tool schemas no longer send regex `pattern` keywords to the model provider. Providers such as opencode-go rejected whole runs with `Invalid JSON schema: regex lookaround is not supported` when an MCP server (e.g. Claap) exposed a Zod v4 `email` pattern. Tools still validate their own inputs.
 - Sandboxed agent runs now see the refreshed model catalog: the container mounts `$YOPLAI_HOME/models-store.json` (written by `yoplai models refresh`) alongside `models.json`. Previously only host agents picked up refreshed models; sandboxed runs fell back to the Pi SDK's baked-in list and failed with `Model not found` for newly released models.

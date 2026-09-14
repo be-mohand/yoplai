@@ -1626,7 +1626,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     return {
       agent,
       config: slackConfig,
-      channelConfig,
+      channelConfig: channelConfig && { ...channelConfig, agent: agent.id },
       isMainSession: false,
       logPrefix,
     };
@@ -1676,7 +1676,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
       return {
         agent,
         config: slackConfig,
-        channelConfig,
+        channelConfig: { ...channelConfig, agent: agent.id },
         isDm: false,
       };
     }

@@ -419,7 +419,6 @@ describe("per-agent Slack bot inbound event deduplication", () => {
       appToken: "xapp-agent",
       channels: {
         C1: {
-          agent: "main",
           requireMention: false,
           reactionNotifications: "off",
         },
