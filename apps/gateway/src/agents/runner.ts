@@ -301,6 +301,10 @@ export async function runAgent(
     resolvedThinkLevel = params.thinkLevel ?? resolveAgentThinkLevel(agent);
   }
 
+  if (resolvedThinkLevel) {
+    lifecycle.setTraceMetadata({ thinkingLevel: resolvedThinkLevel });
+  }
+
   // An ordinary inbound message must never implicitly interrupt work that is
   // durably active. It remains a conversational follow-up until the agent
   // explicitly changes the task through its lifecycle tools.

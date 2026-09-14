@@ -83,6 +83,14 @@ export class SessionRunLifecycle {
     return isStreaming(this.context.agentId, this.context.sessionId);
   }
 
+  setTraceMetadata(metadata: Record<string, unknown>): void {
+    const trace = this.context.trace;
+    this.context.trace = {
+      ...trace,
+      metadata: { ...trace?.metadata, ...metadata },
+    };
+  }
+
   emit(event: StreamEvent) {
     const sanitizedEvent = sanitizeForStorage(event);
     this.context.onEvent?.(sanitizedEvent);

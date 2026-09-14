@@ -37,6 +37,7 @@ vi.mock("../history/store.js", () => ({
 import { flushUserMessage } from "../history/store.js";
 import { backfillFromPiSession } from "../history/store.js";
 import { SessionRunLifecycle } from "./run-lifecycle.js";
+import { agentEventBus } from "./events.js";
 import {
   getSessionCurrentTurn,
   isStreaming,
@@ -414,5 +415,46 @@ describe("SessionRunLifecycle", () => {
     await expect(
       lifecycle.abortActiveRun(makeAdapter(), nativeCapabilities)
     ).resolves.toBe(false);
+  });
+
+  it("setTraceMetadata merges into subsequent stream and history events, keeping existing keys", () => {
+    const sessionId = `trace-metadata-${Date.now()}`;
+    const lifecycle = new SessionRunLifecycle({
+      agentId: "agent-lifecycle-test",
+      sessionId,
+      trace: { enabled: true, name: "run", metadata: { jobId: "job-1" } },
+    });
+
+    lifecycle.setTraceMetadata({ thinkingLevel: "high" });
+
+    const streamEvents: Array<{ trace?: unknown }> = [];
+    const historyEvents: Array<{ trace?: unknown }> = [];
+    const offStream = agentEventBus.onStreamEvent((event) =>
+      streamEvents.push(event)
+    );
+    const offHistory = agentEventBus.onHistoryEvent((event) =>
+      historyEvents.push(event)
+    );
+
+    lifecycle.emit({ type: "text", data: "hi" });
+    lifecycle.acceptHistoryEvent({
+      type: "user",
+      text: "hi",
+      timestamp: 1,
+    });
+
+    offStream();
+    offHistory();
+
+    expect(streamEvents[0]?.trace).toEqual({
+      enabled: true,
+      name: "run",
+      metadata: { jobId: "job-1", thinkingLevel: "high" },
+    });
+    expect(historyEvents[0]?.trace).toEqual({
+      enabled: true,
+      name: "run",
+      metadata: { jobId: "job-1", thinkingLevel: "high" },
+    });
   });
 });
