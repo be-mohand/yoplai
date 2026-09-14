@@ -79,6 +79,7 @@ This is the path used by scheduled jobs.
 | `slack.send_message` | Post to a channel ID (`C...`) or user ID (`U...`, delivered as a DM). DM sends leave a one-time visibility note for the main session when that user replies. Supports an optional `threadTs` to reply in a thread. Markdown is converted to Slack mrkdwn and long messages are chunked. |
 | `slack.list_channels` | List channel IDs + names (filterable by name substring) so agents can resolve/remember IDs. Backed by the `conversations.list` Web API. |
 | `slack.list_users` | List user IDs + display names (filterable) for DM targeting. Backed by the `users.list` Web API. |
+| `slack.get_channel_history` | Retrieve channel history by conversation ID (`C...`, `D...`, or `G...`) in newest-first order. Page backward by passing the previous result's oldest `ts` as `latest`. Thread metadata is returned, but replies are not expanded. Backed by the `conversations.history` Web API. |
 
 ### Bound thread handoffs
 
@@ -139,7 +140,15 @@ The bot token needs scopes matching the features you use:
 | `slack.create_thread`, `slack.send_message` | `chat:write` (and `chat:write.public` to post to channels the bot has not joined) |
 | `slack.list_channels` | `channels:read` (public), `groups:read` (private) |
 | `slack.list_users` | `users:read` |
+| `slack.get_channel_history` | `channels:history` (public), `groups:history` (private), `im:history` (DM), `mpim:history` (group DM) |
 | Socket Mode events | `app_mentions:read`, `channels:history`, `im:history`, `reactions:read`, plus an app-level token (`xapp-...`) for `connections:write` |
 
 `conversations.list` only returns private channels the bot is a member of.
 Missing scopes surface as a `missing_scope` error in the tool result.
+
+History retrieval also requires the bot to be a member of private channels and
+DMs; scopes alone do not grant access. `conversations.history` accepts
+conversation IDs (`C...`, `D...`, or `G...`), not user IDs, unlike the send
+tools. Slack may restrict page sizes and rate-limit affected commercially
+distributed apps to roughly one request per minute, so large requested limits
+can require multiple API calls.

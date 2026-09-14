@@ -77,7 +77,9 @@ export type SlackWebClient = {
     history(params: {
       channel: string;
       latest?: string;
+      oldest?: string;
       inclusive?: boolean;
+      cursor?: string;
       limit?: number;
     }): Promise<{
       messages?: Array<{
@@ -89,6 +91,8 @@ export type SlackWebClient = {
         reply_count?: number;
         bot_id?: string;
       }>;
+      has_more?: boolean;
+      response_metadata?: { next_cursor?: string };
     }>;
   };
   reactions: {

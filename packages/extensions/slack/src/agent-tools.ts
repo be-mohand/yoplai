@@ -38,6 +38,14 @@ const listUsersSchema = z.object({
   limit: z.number().int().positive().max(200).optional(),
 });
 
+const channelHistorySchema = z.object({
+  channel: z.string().min(1),
+  limit: z.number().int().positive().max(200).optional(),
+  oldest: z.string().min(1).optional(),
+  latest: z.string().min(1).optional(),
+  inclusive: z.boolean().optional(),
+});
+
 function toolError(error: unknown) {
   return {
     ok: false as const,
@@ -370,6 +378,109 @@ export function slackAgentTools(): ExtensionAgentTool[] {
             cursor = page.response_metadata?.next_cursor || undefined;
           } while (cursor && users.length < limit);
           return { ok: true, users };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    },
+    {
+      name: "slack.get_channel_history",
+      description:
+        "Retrieve a channel's recent message history via conversations.history. Provide channel as a conversation ID (C..., D..., or G...); use slack.list_channels to resolve channel IDs. Messages are returned newest-first. To page backward, pass the oldest ts from the previous result as latest. threadTs and replyCount identify reply threads, but thread replies are not expanded.",
+      parameters: {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description: "Conversation ID (C..., D..., or G...), not a user ID.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum messages to return (default 50, max 200).",
+          },
+          oldest: {
+            type: "string",
+            description: "Optional exclusive lower-bound Slack timestamp.",
+          },
+          latest: {
+            type: "string",
+            description: "Optional exclusive upper-bound Slack timestamp.",
+          },
+          inclusive: {
+            type: "boolean",
+            description: "Include messages exactly at oldest/latest boundaries.",
+          },
+        },
+        required: ["channel"],
+        additionalProperties: false,
+      },
+      async execute(args, { agent, config, env }) {
+        try {
+          const input = channelHistorySchema.parse(args);
+          const client = resolveSlackClient(agent, config, env);
+          if (!client) {
+            return toolError("No Slack token is configured for this agent.");
+          }
+          if (!client.conversations?.history) {
+            return {
+              ok: false,
+              error: "Slack channel history is not available for this agent.",
+            };
+          }
+
+          const limit = input.limit ?? 50;
+          const messages: Array<{
+            ts: string;
+            user?: string;
+            username?: string;
+            botId?: string;
+            text?: string;
+            threadTs?: string;
+            replyCount?: number;
+          }> = [];
+          let cursor: string | undefined;
+          let hasMore = false;
+
+          do {
+            const remaining = limit - messages.length;
+            const page = await client.conversations.history({
+              channel: input.channel,
+              latest: input.latest,
+              oldest: input.oldest,
+              inclusive: input.inclusive,
+              cursor,
+              limit: remaining,
+            });
+            const mapped = (page.messages ?? []).flatMap((message) => {
+              if (!message.ts) return [];
+              return [
+                {
+                  ts: message.ts,
+                  ...(message.user !== undefined ? { user: message.user } : {}),
+                  ...(message.username !== undefined
+                    ? { username: message.username }
+                    : {}),
+                  ...(message.bot_id !== undefined
+                    ? { botId: message.bot_id }
+                    : {}),
+                  ...(message.text !== undefined ? { text: message.text } : {}),
+                  ...(message.thread_ts !== undefined
+                    ? { threadTs: message.thread_ts }
+                    : {}),
+                  ...(message.reply_count !== undefined
+                    ? { replyCount: message.reply_count }
+                    : {}),
+                },
+              ];
+            });
+            const accepted = mapped.slice(0, remaining);
+            messages.push(...accepted);
+            const overflow = mapped.length > accepted.length;
+            cursor = page.response_metadata?.next_cursor || undefined;
+            hasMore = overflow || Boolean(cursor) || Boolean(page.has_more);
+          } while (cursor && messages.length < limit);
+
+          return { ok: true, channel: input.channel, messages, hasMore };
         } catch (error) {
           return toolError(error);
         }

@@ -57,12 +57,13 @@ describe("slack agent tools", () => {
     vi.clearAllMocks();
   });
 
-  it("exposes create_thread, send_message, list_channels, and list_users", () => {
+  it("exposes create_thread, send_message, list_channels, list_users, and get_channel_history", () => {
     expect(slackAgentTools().map((t) => t.name)).toEqual([
       "slack.create_thread",
       "slack.send_message",
       "slack.list_channels",
       "slack.list_users",
+      "slack.get_channel_history",
     ]);
   });
 
@@ -230,6 +231,256 @@ describe("slack agent tools", () => {
       { id: "U1", name: "Alice" },
       { id: "U4", name: "Bob R" },
     ]);
+  });
+
+  it("get_channel_history maps compact messages and skips entries without timestamps", async () => {
+    const history = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          ts: "3.0",
+          user: "U1",
+          username: "alice",
+          text: "parent",
+          thread_ts: "3.0",
+          reply_count: 2,
+        },
+        { ts: "2.0", bot_id: "B1", text: "bot reply" },
+        { ts: "1.0", user: "U2" },
+        { user: "U3", text: "missing timestamp" },
+      ],
+    });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toStrictEqual({
+      ok: true,
+      channel: "C123",
+      messages: [
+        {
+          ts: "3.0",
+          user: "U1",
+          username: "alice",
+          text: "parent",
+          threadTs: "3.0",
+          replyCount: 2,
+        },
+        { ts: "2.0", botId: "B1", text: "bot reply" },
+        { ts: "1.0", user: "U2" },
+      ],
+      hasMore: false,
+    });
+  });
+
+  it("get_channel_history paginates to the default limit", async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => ({
+      ts: `${100 - index}.0`,
+      text: `first-${index}`,
+    }));
+    const secondPage = Array.from({ length: 30 }, (_, index) => ({
+      ts: `${80 - index}.0`,
+      text: `second-${index}`,
+    }));
+    const history = vi
+      .fn()
+      .mockResolvedValueOnce({
+        messages: firstPage,
+        response_metadata: { next_cursor: "page-2" },
+      })
+      .mockResolvedValueOnce({ messages: secondPage, has_more: true });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = (await tool("slack.get_channel_history").execute(
+      { channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    )) as { messages: unknown[]; hasMore: boolean };
+
+    expect(result.messages).toHaveLength(50);
+    expect(result.hasMore).toBe(true);
+    expect(history).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ channel: "C123", limit: 50 })
+    );
+    expect(history).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ channel: "C123", cursor: "page-2", limit: 30 })
+    );
+  });
+
+  it("get_channel_history reports more history when an exact-cap page has a cursor", async () => {
+    const history = vi.fn().mockResolvedValue({
+      messages: Array.from({ length: 5 }, (_, index) => ({ ts: `${index}.0` })),
+      response_metadata: { next_cursor: "next" },
+    });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C123", limit: 5 },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toMatchObject({ ok: true, hasMore: true });
+    expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it("get_channel_history reports no more history when an exact-cap page is exhausted", async () => {
+    const history = vi.fn().mockResolvedValue({
+      messages: Array.from({ length: 5 }, (_, index) => ({ ts: `${index}.0` })),
+    });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C123", limit: 5 },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toMatchObject({ ok: true, hasMore: false });
+    expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it("get_channel_history trims an oversized page and reports more history", async () => {
+    const history = vi.fn().mockResolvedValue({
+      messages: Array.from({ length: 8 }, (_, index) => ({ ts: `${index}.0` })),
+    });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = (await tool("slack.get_channel_history").execute(
+      { channel: "C123", limit: 5 },
+      { agent: agent("alpha"), config: config() }
+    )) as { messages: Array<{ ts: string }>; hasMore: boolean };
+
+    expect(result.messages.map((message) => message.ts)).toEqual([
+      "0.0",
+      "1.0",
+      "2.0",
+      "3.0",
+      "4.0",
+    ]);
+    expect(result.hasMore).toBe(true);
+    expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it("get_channel_history honors has_more without a cursor", async () => {
+    const history = vi.fn().mockResolvedValue({
+      messages: [{ ts: "1.0" }],
+      has_more: true,
+    });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toMatchObject({ ok: true, hasMore: true });
+    expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it("get_channel_history follows a cursor after an empty page", async () => {
+    const history = vi
+      .fn()
+      .mockResolvedValueOnce({
+        messages: [],
+        response_metadata: { next_cursor: "page-2" },
+      })
+      .mockResolvedValueOnce({ messages: [{ ts: "1.0", text: "found" }] });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      messages: [{ ts: "1.0", text: "found" }],
+      hasMore: false,
+    });
+    expect(history).toHaveBeenCalledTimes(2);
+  });
+
+  it("get_channel_history returns an empty completed history", async () => {
+    const history = vi.fn().mockResolvedValue({ messages: [] });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      channel: "C123",
+      messages: [],
+      hasMore: false,
+    });
+  });
+
+  it.each([0, 201, 1.5])(
+    "get_channel_history rejects invalid limit %s",
+    async (limit) => {
+      const history = vi.fn();
+      registerMockBot("alpha", { conversations: { history } as never });
+
+      const result = await tool("slack.get_channel_history").execute(
+        { channel: "C123", limit },
+        { agent: agent("alpha"), config: config() }
+      );
+
+      expect(result).toMatchObject({ ok: false });
+      expect(history).not.toHaveBeenCalled();
+    }
+  );
+
+  it("get_channel_history forwards time-window parameters", async () => {
+    const history = vi.fn().mockResolvedValue({ messages: [] });
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    await tool("slack.get_channel_history").execute(
+      {
+        channel: "C123",
+        oldest: "100.0",
+        latest: "200.0",
+        inclusive: true,
+      },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(history).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        oldest: "100.0",
+        latest: "200.0",
+        inclusive: true,
+      })
+    );
+  });
+
+  it("get_channel_history errors when no token is configured", async () => {
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C123" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "No Slack token is configured for this agent.",
+    });
+  });
+
+  it("get_channel_history reports Slack API failures", async () => {
+    const history = vi.fn().mockRejectedValue(new Error("channel_not_found"));
+    registerMockBot("alpha", { conversations: { history } as never });
+
+    const result = await tool("slack.get_channel_history").execute(
+      { channel: "C404" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toEqual({ ok: false, error: "channel_not_found" });
   });
 
   it("falls back to component bot client when agent-specific bot is absent", async () => {
