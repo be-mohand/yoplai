@@ -225,7 +225,7 @@ describe("capability discovery tools", () => {
     expect(reloadExtensions).toHaveBeenCalledWith(config);
   });
 
-  it("merges an MCP server and enables the MCP extension", async () => {
+  it("attaches a confirmed MCP server already enabled on another agent", async () => {
     loadCapabilityCatalog.mockResolvedValue([
       {
         id: "mcp:sheets",
@@ -235,7 +235,7 @@ describe("capability discovery tools", () => {
         tools: [],
         enableTier: "self-enable",
         settingsPath: "/agents/support/extensions/mcp",
-        enabledOnAgents: [],
+        enabledOnAgents: ["casey"],
         enabled: false,
       },
     ]);
@@ -250,10 +250,12 @@ describe("capability discovery tools", () => {
       { role: "user", content: "go ahead", timestamp: Date.now() + 1 },
     ]);
 
-    await tool("capabilities.enable").execute(
-      { id: "mcp:sheets", kind: "mcp-server" },
-      context as never
-    );
+    await expect(
+      tool("capabilities.enable").execute(
+        { id: "mcp:sheets", kind: "mcp-server" },
+        context as never
+      )
+    ).resolves.toMatchObject({ outcome: "enabled" });
 
     expect(mergeMcpServerConfig).toHaveBeenCalledWith(
       "/tmp/support",
@@ -265,5 +267,6 @@ describe("capability discovery tools", () => {
       "mcp",
       { enabled: true }
     );
+    expect(reloadExtensions).toHaveBeenCalledWith(config);
   });
 });

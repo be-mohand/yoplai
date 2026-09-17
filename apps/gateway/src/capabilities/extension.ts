@@ -171,13 +171,6 @@ async function enableCapability(
       outcome: "refused",
       reason: "Capability is not available on this platform.",
     };
-  const others = entry.enabledOnAgents.filter((id) => id !== caller.id);
-  if (others.length > 0) {
-    return {
-      outcome: "redirect",
-      reason: `Already enabled for ${others.join(", ")}. Ask that agent first.`,
-    };
-  }
   if (entry.enabled)
     return { outcome: "enabled", reason: "Capability is already enabled." };
   if (entry.enableTier === "settings-page") return outcomeForUnavailable(entry);
