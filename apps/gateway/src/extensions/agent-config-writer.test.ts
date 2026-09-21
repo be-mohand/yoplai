@@ -25,6 +25,23 @@ model:
 system: You are the Sales test agent.
 `;
 
+const AGENT_WITH_COMMENTS_AND_BLANK_LINES = `id: sales
+name: Sales
+role: Sales Assistant
+description: Handles sales handoffs.
+model:
+  provider: openai
+  model: gpt-4o-mini
+system: You are the Sales test agent.
+sandbox:
+  enabled: true
+  # keep the sandbox writable for local testing
+  workspaceWritable: true
+
+system_files:
+  - path: notes.md
+`;
+
 let workspaceDir: string;
 
 const cloudifiExtension = defineToolExtension({
@@ -106,6 +123,22 @@ describe("updateAgentExtensionConfig", () => {
     expect(await readAgentExtensions()).toEqual({
       "acme-crm": { enabled: true, region: "eu", locale: "fr" },
     });
+  });
+
+  it("preserves comments and blank lines in agent.yaml when enabling a new extension", async () => {
+    await writeFile(
+      path.join(workspaceDir, "agent.yaml"),
+      AGENT_WITH_COMMENTS_AND_BLANK_LINES
+    );
+
+    await updateAgentExtensionConfig(workspaceDir, "acme-crm", {
+      enabled: true,
+    });
+
+    const raw = await readFile(path.join(workspaceDir, "agent.yaml"), "utf8");
+    expect(raw).toContain("# keep the sandbox writable for local testing");
+    expect(raw).toContain("workspaceWritable: true\n\nsystem_files:");
+    expect(AgentYamlConfigSchema.safeParse(yaml.load(raw)).success).toBe(true);
   });
 
   it("does not clobber other extensions", async () => {

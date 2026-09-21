@@ -29,7 +29,11 @@ describe("sanitizeForStorage", () => {
     const sanitized = sanitizeForStorage({
       role: "assistant",
       content: [
-        { type: "thinking", thinking: "reasoning", thinkingSignature: signature },
+        {
+          type: "thinking",
+          thinking: "reasoning",
+          thinkingSignature: signature,
+        },
       ],
     });
 
@@ -83,7 +87,10 @@ describe("sanitizeForStorage", () => {
     expect(sanitized.message).not.toContain(canary);
     expect(sanitized.stack).not.toContain(canary);
     expect(sanitized.cause).toEqual({ authorization: "[REDACTED]" });
-    expect(sanitized).toMatchObject({ status: 401, details: "token=[REDACTED]" });
+    expect(sanitized).toMatchObject({
+      status: 401,
+      details: "token=[REDACTED]",
+    });
   });
 
   it("sanitizes enumerable aggregate errors", () => {
@@ -95,6 +102,20 @@ describe("sanitizeForStorage", () => {
     expect(() => sanitizeForStorage(error)).not.toThrow();
     const sanitized = sanitizeForStorage(error) as Error & { errors: Error[] };
     expect(sanitized.errors[0]?.message).not.toContain(canary);
+  });
+
+  it("leaves URLs without credentials verbatim, even when split across stream deltas", () => {
+    expect(sanitizeSensitiveText("see http://localhost")).toBe(
+      "see http://localhost"
+    );
+    expect(
+      sanitizeSensitiveText(
+        "[Connect](http://localhost:3003/agents/x/extensions/googleDrive)"
+      )
+    ).toBe("[Connect](http://localhost:3003/agents/x/extensions/googleDrive)");
+    expect(sanitizeSensitiveText("https://Example.COM/A?b=1&c=2#frag")).toBe(
+      "https://Example.COM/A?b=1&c=2#frag"
+    );
   });
 
   it("sanitizes event-bus exports", () => {
