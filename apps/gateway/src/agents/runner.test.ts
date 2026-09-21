@@ -12,6 +12,7 @@ const appendSessionMeta = vi.fn();
 const isAbortTrigger = vi.fn(() => false);
 const pauseTaskForControlCommand = vi.fn();
 const getTask = vi.fn();
+const maybeAutoTitleSession = vi.fn();
 
 vi.mock("../config/index.js", () => ({
   CONFIG_DIR: "/tmp/yoplai-runner-test",
@@ -61,6 +62,10 @@ vi.mock("../history/store.js", () => ({
   hasCanonicalHistory: vi.fn(),
   invalidateResolvedHistoryFile: vi.fn(),
   readPiSessionHistory: vi.fn(),
+}));
+
+vi.mock("../maintenance/session-auto-title.js", () => ({
+  maybeAutoTitleSession,
 }));
 
 vi.mock("./events.js", () => ({
@@ -302,6 +307,50 @@ describe("runAgent user message pre-acceptance", () => {
 
     expect(adapter.run).toHaveBeenCalledTimes(2);
     expect(flushUserMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runAgent core session auto-title", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isAbortTrigger.mockReturnValue(false);
+    getTask.mockResolvedValue(undefined);
+  });
+
+  it("starts titling only after the done event", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+    const sawTitleAtDone: boolean[] = [];
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({
+      agentId: "alpha",
+      message: "hello",
+      sessionId: "session-title",
+      onEvent: (event) => {
+        if (event.type === "done") sawTitleAtDone.push(maybeAutoTitleSession.mock.calls.length > 0);
+      },
+    });
+
+    expect(sawTitleAtDone).toEqual([false]);
+    expect(maybeAutoTitleSession).toHaveBeenCalledWith({
+      agentId: "alpha",
+      sessionId: "session-title",
+      userId: undefined,
+    });
+  });
+
+  it("does not title aborted runs", async () => {
+    const adapter = createAdapter();
+    adapter.run.mockResolvedValue({ text: "partial", aborted: true });
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+
+    const { runAgent } = await import("./runner.js");
+    await runAgent({ agentId: "alpha", message: "hello", sessionId: "session-aborted" });
+
+    expect(maybeAutoTitleSession).not.toHaveBeenCalled();
   });
 });
 

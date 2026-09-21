@@ -62,7 +62,10 @@ import { normalizeRunRequest } from "./run-request.js";
 import { compactAgentSession } from "../agents/compact.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
-import { invalidateResolvedHistoryFile } from "../history/store.js";
+import {
+  appendSessionMeta,
+  invalidateResolvedHistoryFile,
+} from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
 import { loadSuggestions } from "../suggestions/loader.js";
@@ -583,14 +586,7 @@ api.patch("/agents/:agentId/sessions/:sessionId", async (c) => {
   if (!filePath) return c.json({ error: "Session not found" }, 404);
   const body = await c.req.json().catch(() => ({}));
   const title = typeof body.title === "string" ? body.title.trim() : "";
-  const line =
-    JSON.stringify({
-      type: "meta",
-      key: "title",
-      value: title,
-      timestamp: Date.now(),
-    }) + "\n";
-  await fs.appendFile(filePath, line, "utf-8");
+  await appendSessionMeta(agentId, sessionId, "title", title, userId);
   invalidateResolvedHistoryFile(agentId, sessionId, userId);
   return c.json({ ok: true, title });
 });
