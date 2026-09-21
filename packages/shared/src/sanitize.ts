@@ -22,17 +22,25 @@ function redactUrl(value: string): string {
     const raw = trailing ? candidate.slice(0, -trailing.length) : candidate;
     try {
       const url = new URL(raw);
+      const hasSensitiveQuery = [...url.searchParams].some(([key]) =>
+        sensitiveQueryKey.test(key)
+      );
+      const credentials = url.username || url.password ? `${REDACTED}@` : "";
+      const hash = url.hash.replace(
+        /((?:access_?token|token)\s*=\s*)[^&\s]+/gi,
+        `$1${REDACTED}`
+      );
+      // Leave untouched URLs verbatim: rebuilding normalizes them (e.g. adds a
+      // trailing "/"), which corrupts URLs split across stream deltas.
+      if (!hasSensitiveQuery && !credentials && hash === url.hash) {
+        return candidate;
+      }
       const query = [...url.searchParams]
         .map(
           ([key, value]) =>
             `${encodeURIComponent(key)}=${encodeURIComponent(sensitiveQueryKey.test(key) ? REDACTED : value)}`
         )
         .join("&");
-      const credentials = url.username || url.password ? `${REDACTED}@` : "";
-      const hash = url.hash.replace(
-        /((?:access_?token|token)\s*=\s*)[^&\s]+/gi,
-        `$1${REDACTED}`
-      );
       return `${url.protocol}//${credentials}${url.host}${url.pathname}${query ? `?${query}` : ""}${hash}${trailing}`;
     } catch {
       return candidate;
