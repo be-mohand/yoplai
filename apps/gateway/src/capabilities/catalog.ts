@@ -26,11 +26,14 @@ export type CapabilityEntry = {
   tools: Array<{ name: string; description: string }>;
   enableTier: CapabilityEnableTier;
   settingsPath: string;
+  settingsUrl: string;
   enabledOnAgents: string[];
   enabled: boolean;
   requiredSecrets?: string[];
   connectPath?: string;
+  connectUrl?: string;
   connection?: { url?: string; command?: string };
+  auth?: "oauth" | "headers" | "none";
 };
 
 export type McpServerConfig = {
@@ -53,10 +56,32 @@ export type CapabilityCatalogInput = {
   agents: AgentConfig[];
   callingAgentId: string;
   mcpServers?: McpServerSource[];
+  /** Public web base URL (no trailing slash) used to build clickable links. */
+  webBaseUrl: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: string | undefined | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Resolve the public web base URL used to build clickable settings/connect
+ * links, matching the resolution order used for auth's trusted origins in
+ * packages/extensions/multi-user/src/auth.ts: the first non-empty of
+ * `server.baseUrl`, `web.baseUrl`, else `http://localhost:<ui.port ?? 3000>`.
+ */
+export function resolveWebBaseUrl(config: GatewayConfig): string {
+  const base =
+    nonEmptyString(config.server?.baseUrl) ??
+    nonEmptyString(config.web?.baseUrl) ??
+    `http://localhost:${config.ui?.port ?? 3000}`;
+  return base.replace(/\/+$/, "");
 }
 
 function enabledForAgent(agent: AgentConfig, extensionId: string): boolean {
@@ -115,6 +140,21 @@ function mcpConnection(
 }
 
 /**
+ * Cheap, static OAuth hint for an MCP server: an http server (`url` set)
+ * with no `headers` is the same shape the `mcp` extension probes and finds
+ * returns 401 for. This never makes a network call.
+ */
+function mcpAuth(
+  config: McpServerConfig
+): "oauth" | "headers" | "none" | undefined {
+  const hasUrl = typeof config.url === "string";
+  const hasHeaders = config.headers !== undefined && config.headers !== null;
+  if (hasUrl) return hasHeaders ? "headers" : "oauth";
+  if (typeof config.command === "string") return "none";
+  return undefined;
+}
+
+/**
  * Pure catalog builder over already-discovered extension definitions, agent
  * configs, and MCP declarations. It never reads credentials or starts tools.
  */
@@ -156,12 +196,18 @@ export async function buildCapabilityCatalog(
       })),
       enableTier: selfEnable ? "self-enable" : "settings-page",
       settingsPath,
+      settingsUrl: `${input.webBaseUrl}${settingsPath}`,
       enabledOnAgents,
       enabled: enabledOnAgents.includes(caller.id),
       ...(selfEnable
         ? {}
         : { requiredSecrets: [...(extension.requiredSecrets ?? [])] }),
-      ...(extension.oauth ? { connectPath: settingsPath } : {}),
+      ...(extension.oauth
+        ? {
+            connectPath: settingsPath,
+            connectUrl: `${input.webBaseUrl}${settingsPath}`,
+          }
+        : {}),
     });
   }
 
@@ -175,6 +221,8 @@ export async function buildCapabilityCatalog(
     const enabledOnAgents = [
       ...new Set(sources.map((source) => source.agentId)),
     ].sort();
+    const settingsPath = `/agents/${encodeURIComponent(caller.id)}/extensions/mcp`;
+    const auth = mcpAuth(sources[0].config);
     entries.push({
       id: `mcp:${name}`,
       displayName: name,
@@ -182,11 +230,19 @@ export async function buildCapabilityCatalog(
       kind: "mcp-server",
       tools: sources[0].tools ?? [],
       enableTier: "self-enable",
-      settingsPath: `/agents/${encodeURIComponent(caller.id)}/extensions/mcp`,
+      settingsPath,
+      settingsUrl: `${input.webBaseUrl}${settingsPath}`,
       enabledOnAgents,
       enabled: enabledOnAgents.includes(caller.id),
       ...(mcpConnection(sources[0].config)
         ? { connection: mcpConnection(sources[0].config) }
+        : {}),
+      ...(auth ? { auth } : {}),
+      ...(auth === "oauth"
+        ? {
+            connectPath: settingsPath,
+            connectUrl: `${input.webBaseUrl}${settingsPath}`,
+          }
         : {}),
     });
   }
@@ -337,5 +393,6 @@ export async function loadCapabilityCatalog(
     agents,
     callingAgentId,
     mcpServers: mcpWithTools,
+    webBaseUrl: resolveWebBaseUrl(config),
   });
 }

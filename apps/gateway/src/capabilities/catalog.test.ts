@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, Extension } from "@yoplai/shared";
-import { buildCapabilityCatalog, listReachableMcpTools } from "./catalog.js";
+import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
+import {
+  buildCapabilityCatalog,
+  listReachableMcpTools,
+  resolveWebBaseUrl,
+} from "./catalog.js";
 
 const agent = (id: string, extensions: Record<string, unknown> = {}) =>
   ({ id, workspace: `/tmp/${id}`, extensions }) as AgentConfig;
@@ -34,6 +38,7 @@ describe("buildCapabilityCatalog", () => {
   it("lists tools without resolving secrets and excludes factory extensions", async () => {
     const catalog = await buildCapabilityCatalog({
       callingAgentId: "support",
+      webBaseUrl: "https://cloudi-fi.example",
       agents: [
         agent("support"),
         agent("casey", { zendesk: { enabled: true } }),
@@ -90,6 +95,8 @@ describe("buildCapabilityCatalog", () => {
           enabledOnAgents: ["casey"],
           requiredSecrets: ["apiKey"],
           tools: [{ name: "zendesk.search", description: "Search tickets." }],
+          settingsUrl:
+            "https://cloudi-fi.example/agents/support/extensions/zendesk/config",
         }),
         expect.objectContaining({
           id: "broken",
@@ -107,6 +114,79 @@ describe("buildCapabilityCatalog", () => {
       ])
     );
     expect(catalog.map((entry) => entry.id)).not.toContain("internal");
+  });
+
+  it("derives the MCP auth hint from server config shape", async () => {
+    const catalog = await buildCapabilityCatalog({
+      callingAgentId: "support",
+      webBaseUrl: "https://cloudi-fi.example",
+      agents: [agent("support")],
+      extensions: [],
+      mcpServers: [
+        {
+          agentId: "support",
+          name: "oauth-server",
+          config: { url: "https://mcp.example.test" },
+        },
+        {
+          agentId: "support",
+          name: "headers-server",
+          config: {
+            url: "https://mcp.example.test",
+            headers: { Authorization: "Bearer token" },
+          },
+        },
+        {
+          agentId: "support",
+          name: "command-server",
+          config: { command: "some-mcp" },
+        },
+      ],
+    });
+
+    expect(catalog).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "mcp:oauth-server",
+          auth: "oauth",
+          connectPath: "/agents/support/extensions/mcp",
+          connectUrl: "https://cloudi-fi.example/agents/support/extensions/mcp",
+        }),
+        expect.objectContaining({
+          id: "mcp:headers-server",
+          auth: "headers",
+        }),
+        expect.objectContaining({
+          id: "mcp:command-server",
+          auth: "none",
+        }),
+      ])
+    );
+    expect(
+      catalog.find((entry) => entry.id === "mcp:headers-server")?.connectPath
+    ).toBeUndefined();
+    expect(
+      catalog.find((entry) => entry.id === "mcp:command-server")?.connectPath
+    ).toBeUndefined();
+  });
+});
+
+describe("resolveWebBaseUrl", () => {
+  it("uses server.baseUrl, stripped of a trailing slash", () => {
+    expect(
+      resolveWebBaseUrl({
+        server: { baseUrl: "https://cloudi-fi.example/" },
+      } as GatewayConfig)
+    ).toBe("https://cloudi-fi.example");
+  });
+
+  it("falls back to http://localhost:<ui.port ?? 3000> when no baseUrl is set", () => {
+    expect(resolveWebBaseUrl({} as GatewayConfig)).toBe(
+      "http://localhost:3000"
+    );
+    expect(
+      resolveWebBaseUrl({ ui: { port: 4100 } } as GatewayConfig)
+    ).toBe("http://localhost:4100");
   });
 });
 

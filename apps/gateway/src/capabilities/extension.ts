@@ -26,14 +26,20 @@ type EnableResult = {
   outcome: "enabled" | "refused" | "redirect";
   reason: string;
   settingsPath?: string;
+  settingsUrl?: string;
   connectPath?: string;
+  connectUrl?: string;
   requiredSecrets?: string[];
+  auth?: "oauth" | "headers" | "none";
 };
 
 const pendingConfirmations = new Map<
   string,
   { capabilityIds: Set<string>; listedAt: number }
 >();
+
+const CONFIRM_REGEX =
+  /\b(yes|confirm|go ahead|enable (it|this|that)|please do|do it)\b/i;
 
 function confirmationKey(
   context: ExtensionAgentToolContext
@@ -42,17 +48,24 @@ function confirmationKey(
   return `${context.agent.id}:${context.userId ?? ""}:${context.sessionId}`;
 }
 
+function mentionsCapability(
+  text: string,
+  entry: CapabilityEntry
+): boolean {
+  const haystack = text.toLowerCase();
+  const needles = [entry.id, entry.displayName, entry.id.replace(/^mcp:/, "")];
+  return needles.some(
+    (needle) => needle.length > 0 && haystack.includes(needle.toLowerCase())
+  );
+}
+
 async function hasChatConfirmation(
-  capabilityId: string,
+  entry: CapabilityEntry,
   context: ExtensionAgentToolContext
 ): Promise<boolean> {
   const key = confirmationKey(context);
   const pending = key ? pendingConfirmations.get(key) : undefined;
-  if (
-    !pending ||
-    !pending.capabilityIds.has(capabilityId) ||
-    !context.sessionId
-  ) {
+  if (!pending || !pending.capabilityIds.has(entry.id) || !context.sessionId) {
     return false;
   }
   const { getSessionHistory } = await import("../agents/index.js");
@@ -64,40 +77,69 @@ async function hasChatConfirmation(
   const latestUserMessage = (history ?? [])
     .filter((message) => message.role === "user")
     .at(-1);
-  return Boolean(
-    latestUserMessage &&
-    latestUserMessage.timestamp > pending.listedAt &&
-    /\b(yes|confirm|go ahead|enable (it|this|that)|please do|do it)\b/i.test(
-      latestUserMessage.content
-    )
+  if (!latestUserMessage) return false;
+
+  if (latestUserMessage.timestamp > pending.listedAt) {
+    return CONFIRM_REGEX.test(latestUserMessage.content);
+  }
+
+  // No later user message exists: this is the message that triggered the
+  // list itself. Only accept it as confirmation when it explicitly names the
+  // capability, e.g. "Yes, enable claap" in the same turn as the lookup.
+  return (
+    CONFIRM_REGEX.test(latestUserMessage.content) &&
+    mentionsCapability(latestUserMessage.content, entry)
   );
 }
+
+const STOPWORDS = new Set([
+  "the",
+  "and",
+  "from",
+  "with",
+  "for",
+  "my",
+  "our",
+  "a",
+  "an",
+  "of",
+  "to",
+  "in",
+  "on",
+  "its",
+  "it",
+  "list",
+  "read",
+  "open",
+  "get",
+  "find",
+]);
 
 function topMatches(
   entries: CapabilityEntry[],
   need: string | undefined
 ): CapabilityEntry[] {
-  const terms = (need ?? "").toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? [];
+  const terms = (
+    (need ?? "").toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? []
+  ).filter((term) => term.length >= 3 && !STOPWORDS.has(term));
   if (terms.length === 0) return entries.slice(0, 3);
   return entries
     .map((entry) => {
-      const haystack = [
-        entry.id,
-        entry.displayName,
-        entry.description,
-        ...entry.tools.map((tool) => `${tool.name} ${tool.description}`),
-      ]
+      const idAndName = `${entry.id} ${entry.displayName}`.toLowerCase();
+      const description = entry.description.toLowerCase();
+      const toolText = entry.tools
+        .map((tool) => `${tool.name} ${tool.description}`)
         .join(" ")
         .toLowerCase();
-      return {
-        entry,
-        score: terms.reduce(
-          (score, term) => score + Number(haystack.includes(term)),
-          0
-        ),
-      };
+      const score = terms.reduce((total, term) => {
+        if (idAndName.includes(term)) return total + 3;
+        if (description.includes(term)) return total + 2;
+        if (toolText.includes(term)) return total + 1;
+        return total;
+      }, 0);
+      return { entry, score };
     })
-    .filter(({ score }) => score > 0)
+    .filter(({ score }) => score >= 2)
     .sort(
       (left, right) =>
         right.score - left.score || left.entry.id.localeCompare(right.entry.id)
@@ -147,17 +189,17 @@ function outcomeForUnavailable(entry: CapabilityEntry): EnableResult {
     outcome: "refused",
     reason: "This capability requires settings configured by an admin.",
     settingsPath: entry.settingsPath,
+    settingsUrl: entry.settingsUrl,
     ...(entry.requiredSecrets
       ? { requiredSecrets: entry.requiredSecrets }
       : {}),
   };
 }
 
-async function enableCapability(
-  raw: unknown,
+async function enableCapabilityResult(
+  args: z.infer<typeof enableArgs>,
   context: ExtensionAgentToolContext
 ): Promise<EnableResult> {
-  const args = enableArgs.parse(raw);
   const config = context.config;
   const caller = config.agents.find((agent) => agent.id === context.agent.id);
   if (!caller)
@@ -174,7 +216,7 @@ async function enableCapability(
   if (entry.enabled)
     return { outcome: "enabled", reason: "Capability is already enabled." };
   if (entry.enableTier === "settings-page") return outcomeForUnavailable(entry);
-  if (!(await hasChatConfirmation(entry.id, context))) {
+  if (!(await hasChatConfirmation(entry, context))) {
     return {
       outcome: "refused",
       reason:
@@ -211,8 +253,29 @@ async function enableCapability(
   return {
     outcome: "enabled",
     reason: "Capability enabled for this agent.",
-    ...(entry.connectPath ? { connectPath: entry.connectPath } : {}),
+    ...(entry.connectPath
+      ? { connectPath: entry.connectPath, connectUrl: entry.connectUrl }
+      : {}),
+    ...(entry.auth ? { auth: entry.auth } : {}),
   };
+}
+
+async function enableCapability(
+  raw: unknown,
+  context: ExtensionAgentToolContext
+): Promise<EnableResult> {
+  const args = enableArgs.parse(raw);
+  const result = await enableCapabilityResult(args, context);
+  logInfo("capability_enable", {
+    agentId: context.agent.id,
+    userId: context.userId,
+    sessionId: context.sessionId,
+    capabilityId: args.id,
+    kind: args.kind,
+    outcome: result.outcome,
+    reason: result.reason,
+  });
+  return result;
 }
 
 export const capabilityDiscoveryExtension: Extension = {
@@ -229,7 +292,7 @@ export const capabilityDiscoveryExtension: Extension = {
   stop: async () => {},
   capabilities: () => [],
   getSystemPromptContributions: () =>
-    "Only call capabilities.list after a genuine dead end: no enabled tool can do the user's task. Do not narrate this lookup or pitch capabilities for work you can already do. If another agent already has a matching capability, redirect the user there first. Otherwise, for a self-enable capability, explain the matching tools and ask for explicit confirmation before calling capabilities.enable. For a settings-page capability, give its exact settings page and required fields, and say an admin must configure it. Never call capabilities.enable without the user's explicit confirmation.",
+    'Only call capabilities.list after a genuine dead end: no enabled tool can do the user\'s task. Do not narrate this lookup or pitch capabilities for work you can already do. Answer in order: (1) if enabledOnAgents lists another agent, tell the user to ask that agent first, before offering anything else. (2) Otherwise, for self-enable, name the matching tools and ask for explicit confirmation before calling capabilities.enable. (3) For settings-page, give its settingsUrl and requiredSecrets field names, and say an admin must configure it. (4) After a successful enable returns connectUrl or auth: "oauth", tell the user to finish the connection at connectUrl before the tools work. Give settings and connect pages as full clickable links (markdown [text](url) in web chat, bare https:// URL in Slack), never a bare path. Never call capabilities.enable without explicit confirmation.',
   getAgentTools(agent) {
     return [
       {
@@ -248,8 +311,17 @@ export const capabilityDiscoveryExtension: Extension = {
           const matches = topMatches(catalog, need);
           const key = confirmationKey(context);
           if (key) {
+            const existing = pendingConfirmations.get(key);
+            const capabilityIds = existing
+              ? new Set(existing.capabilityIds)
+              : new Set<string>();
+            for (const entry of catalog) {
+              if (entry.enableTier === "self-enable") {
+                capabilityIds.add(entry.id);
+              }
+            }
             pendingConfirmations.set(key, {
-              capabilityIds: new Set(matches.map((entry) => entry.id)),
+              capabilityIds,
               listedAt: Date.now(),
             });
           }

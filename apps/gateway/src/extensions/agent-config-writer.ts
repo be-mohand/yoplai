@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import yaml from "js-yaml";
+import { parseDocument } from "yaml";
 import { AgentYamlConfigSchema } from "@yoplai/shared";
 
 /**
@@ -150,7 +150,8 @@ export async function updateAgentExtensionConfig(
 ): Promise<Record<string, unknown>> {
   const agentPath = path.join(workspaceDir, "agent.yaml");
   const raw = await fs.readFile(agentPath, "utf8");
-  const parsed = yaml.load(raw);
+  const doc = parseDocument(raw);
+  const parsed = doc.toJS() as unknown;
   if (!isRecord(parsed)) {
     throw new Error(`Malformed agent.yaml at ${agentPath}`);
   }
@@ -204,12 +205,9 @@ export async function updateAgentExtensionConfig(
     await upsertEnvVars(path.join(workspaceDir, ".env"), envVars);
   }
 
-  const yamlContent = yaml.dump(nextConfig, {
-    noRefs: true,
-    lineWidth: 100,
-    sortKeys: false,
-  });
-  await writeLocked(agentPath, yamlContent);
+  // Mutate the parsed document in place so comments and blank lines survive.
+  doc.setIn(["extensions", extensionId], current);
+  await writeLocked(agentPath, doc.toString());
 
   return nextConfig;
 }
