@@ -228,14 +228,11 @@ describe("failed-run user message persistence (real store)", () => {
       })
     );
 
-    try {
-      await runAgent({
-        agentId: "alpha",
-        message: "fallback msg",
-        sessionId: SID,
-      });
-    } catch (e) {
-      }
+    await runAgent({
+      agentId: "alpha",
+      message: "fallback msg",
+      sessionId: SID,
+    });
 
     expect(attempt).toBe(2);
     const simple = await getSimpleHistory("alpha", SID);
