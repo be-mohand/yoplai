@@ -191,6 +191,8 @@ Use schemas in `packages/shared` and broker code in `apps/gateway/src/server/ws-
 - Container event/output framing constants and schemas live in `packages/shared`.
 - Default `yoplai-agent:latest` rebuilds when build-context content changes; custom images are not rebuilt.
 
+Host and sandbox Pi agents share the Yoplai base system prompt from `packages/shared/src/pi-system-prompt.ts`; sandbox runs append container-specific instructions.
+
 Pi supports extension tools in and out of containers. Sandbox Claude fails loudly when extension tools are present rather than silently omitting them.
 
 ## Extension map

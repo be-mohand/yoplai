@@ -972,6 +972,7 @@ describe("Pi runner", () => {
           }>;
           resourceLoader: {
             options?: {
+              systemPromptOverride?: () => string;
               appendSystemPrompt?: string[];
             };
           };
@@ -1046,8 +1047,10 @@ describe("Pi runner", () => {
         "Use extension tools first.",
       ])
     );
-    expect(createAgentSessionArgs.resourceLoader.options).not.toHaveProperty(
-      "systemPromptOverride"
+    expect(
+      createAgentSessionArgs.resourceLoader.options?.systemPromptOverride?.()
+    ).toContain(
+      "You are an AI agent running inside Yoplai, a self-hosted multi-agent gateway."
     );
 
     await fs.rm(tempDir, { recursive: true, force: true });

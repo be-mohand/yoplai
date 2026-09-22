@@ -22,6 +22,7 @@ import {
   ContainerFileOutputRequestSchema,
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
+  PI_SYSTEM_PROMPT,
   claimAgentToolName,
   findFailedTurn,
   getProviderErrorCategory,
@@ -388,6 +389,7 @@ export async function runAgent(
       agentDir: input.sessionDir,
       settingsManager,
       additionalSkillPaths: [path.join(input.workspaceDir, "skills")],
+      systemPromptOverride: () => PI_SYSTEM_PROMPT,
       appendSystemPrompt: [
         CONTAINER_SYSTEM_PROMPT,
         ...(input.extensionSystemPrompts ?? []),

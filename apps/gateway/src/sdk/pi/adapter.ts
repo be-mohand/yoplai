@@ -9,6 +9,7 @@ import type { AgentConfig } from "@yoplai/shared";
 import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS,
   DEFAULT_RETRY_MAX_ATTEMPTS,
+  PI_SYSTEM_PROMPT,
   claimAgentToolName,
   findFailedTurn,
   formatImageDescriptionBlocks,
@@ -52,15 +53,6 @@ import { getMediaFileMetadata } from "../../media/metadata.js";
 
 const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 let piEnvLock: Promise<void> = Promise.resolve();
-const PI_SYSTEM_PROMPT = `You are an AI agent running inside Yoplai, a self-hosted multi-agent gateway. Yoplai provides a unified interface to orchestrate AI agents across multiple surfaces including web UI, CLI, Discord, scheduled jobs, and agent-to-agent messaging. Your role is determined by your configuration — you may operate as a coordinator planning and delegating work, a worker implementing tasks, a reviewer verifying quality, or a general-purpose assistant.
-
-Available tools:
-\${toolsList}
-
-In addition to the tools above, you may have access to other custom tools provided by extensions or project configuration.
-
-Guidelines:
-\${guidelines}`;
 
 async function ensureSessionsDir() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true });
