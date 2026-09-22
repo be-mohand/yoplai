@@ -10,7 +10,9 @@ import { MaintenanceCompletion } from "./completion.js";
 const TITLE_PROMPT =
   "Return a concise 3-6 word title summarizing this chat in the conversation's language. No quotes. No punctuation at the end.";
 const TITLE_TIMEOUT_MS = 10_000;
-const TITLE_MAX_TOKENS = 32;
+// Reasoning models (e.g. GLM Flash) spend output tokens on thinking before the
+// title text and cannot always turn thinking off; leave headroom for both.
+const TITLE_MAX_TOKENS = 512;
 
 type SessionAutoTitleDeps = {
   getHistory?: typeof getFullHistory;
