@@ -10,6 +10,8 @@ type CompletionModel = Model<Api>;
 
 export type MaintenanceCompletionParams = {
   agentId: string;
+  /** Session the completion belongs to; opencode routes requests by it. */
+  sessionId?: string;
   userId?: string;
   system: string;
   prompt: string;
@@ -66,6 +68,21 @@ function modelFor(
   if (config.maintenance) return config.maintenance;
   if (!agent?.model.provider) return null;
   return { provider: agent.model.provider, model: agent.model.model };
+}
+
+/** Opencode rejects requests that carry no session id (400 MissingSessionID). */
+export function sessionHeaders(
+  model: { provider: string; baseUrl: string },
+  sessionId: string | undefined
+): Record<string, string> | undefined {
+  if (!sessionId) return undefined;
+  const opencode =
+    model.provider === "opencode" ||
+    model.provider === "opencode-go" ||
+    model.baseUrl.includes("opencode.ai");
+  return opencode
+    ? { "x-opencode-session": sessionId, "x-opencode-client": "yoplai" }
+    : undefined;
 }
 
 function responseText(response: Awaited<ReturnType<typeof defaultCompleteSimple>>): string {
@@ -140,6 +157,7 @@ export async function completeMaintenance(
           maxRetries: 0,
           timeoutMs: params.timeoutMs,
           signal: controller.signal,
+          headers: sessionHeaders(model, params.sessionId),
         }
       );
       if (response.stopReason === "error") {

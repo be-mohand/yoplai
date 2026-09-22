@@ -100,6 +100,7 @@ export async function autoTitleSession(
     userId: params.userId,
     system: TITLE_PROMPT,
     prompt: `User: ${userText}\n\nAssistant: ${assistantText}`,
+    sessionId: params.sessionId,
     maxTokens: TITLE_MAX_TOKENS,
     timeoutMs: TITLE_TIMEOUT_MS,
   });

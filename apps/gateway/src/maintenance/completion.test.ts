@@ -3,6 +3,7 @@ import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import {
   completeMaintenance,
   resetMaintenanceCompletionDepsForTests,
+  sessionHeaders,
 } from "./completion.js";
 
 const agent = {
@@ -35,7 +36,32 @@ function params() {
 
 afterEach(() => resetMaintenanceCompletionDepsForTests());
 
+describe("sessionHeaders", () => {
+  it("tags opencode requests with the session id", () => {
+    expect(sessionHeaders({ provider: "opencode-go", baseUrl: "https://opencode.ai/zen/go" }, "s1"))
+      .toEqual({ "x-opencode-session": "s1", "x-opencode-client": "yoplai" });
+    expect(sessionHeaders({ provider: "openrouter", baseUrl: "https://openrouter.ai/api/v1" }, "s1")).toBeUndefined();
+    expect(sessionHeaders({ provider: "opencode-go", baseUrl: "https://opencode.ai/zen/go" }, undefined)).toBeUndefined();
+  });
+});
+
 describe("completeMaintenance", () => {
+  it("passes session headers to the completion", async () => {
+    const modelRuntime = runtime({ provider: "opencode-go", id: "m", baseUrl: "https://opencode.ai/zen/go" });
+    const completeSimple = vi.fn(async () => ({ content: [{ type: "text", text: "topic" }] }));
+
+    await completeMaintenance({ ...params(), sessionId: "s1" }, {
+      getConfig: () => config({ provider: "opencode-go", model: "m" }),
+      getAgent: () => agent,
+      createRuntime: async () => modelRuntime as never,
+      completeSimple: completeSimple as never,
+    });
+
+    expect(completeSimple).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+      headers: { "x-opencode-session": "s1", "x-opencode-client": "yoplai" },
+    }));
+  });
+
   it("uses the configured maintenance model", async () => {
     const modelRuntime = runtime();
     const completeSimple = vi.fn(async () => ({ content: [{ type: "text", text: "  Session topic  " }] }));
