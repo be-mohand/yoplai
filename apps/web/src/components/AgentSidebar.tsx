@@ -76,10 +76,13 @@ function revealTitle(wrap: HTMLElement): void {
   const text = wrap.querySelector<HTMLElement>(".session-title-text");
   const actions = wrap.querySelector<HTMLElement>(".session-actions");
   if (!title || !text) return;
+  // Only titles clipped at rest scroll; a fitting title stays put even if the
+  // hover icons cover its tail.
+  const overflowing = text.scrollWidth > title.clientWidth;
+  wrap.classList.toggle("overflowing", overflowing);
+  if (!overflowing) return;
   const reserve = actions?.offsetWidth ?? 0;
-  const shift = Math.max(0, text.scrollWidth + reserve - title.clientWidth);
-  wrap.classList.toggle("overflowing", shift > 0);
-  if (shift === 0) return;
+  const shift = text.scrollWidth + reserve - title.clientWidth;
   // Forward travel fills 30% of the loop (see keyframes); the rest is pauses and the return.
   const travelMs = Math.max(1200, shift * 16);
   wrap.style.setProperty("--title-shift", `${shift}px`);
