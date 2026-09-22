@@ -19,6 +19,7 @@ import { getMediaFileMetadata } from "../media/metadata.js";
 import { logWarn } from "../logging.js";
 
 const resolvedHistoryFileCache = new Map<string, string>();
+const sessionMetaWrites = new Map<string, Promise<void>>();
 
 function getResolvedHistoryFileCacheKey(
   agentId: string,
@@ -170,10 +171,84 @@ export async function appendSessionMeta(
   value: unknown,
   userId?: string
 ): Promise<void> {
+  await withSessionMetaWrite(agentId, sessionId, userId, async () => {
+    await appendSessionMetaUnlocked(agentId, sessionId, key, value, userId);
+  });
+}
+
+async function appendSessionMetaUnlocked(
+  agentId: string,
+  sessionId: string,
+  key: string,
+  value: unknown,
+  userId?: string
+): Promise<void> {
   const file = await resolveHistoryFile(agentId, sessionId, userId);
   const entry: MetaEntry = { type: "meta", key, value, timestamp: Date.now() };
   const line = JSON.stringify(sanitizeForStorage(entry)) + "\n";
   await fs.appendFile(file, line, "utf-8");
+}
+
+async function withSessionMetaWrite<T>(
+  agentId: string,
+  sessionId: string,
+  userId: string | undefined,
+  write: () => Promise<T>
+): Promise<T> {
+  const lockKey = getResolvedHistoryFileCacheKey(agentId, sessionId, userId);
+  const previous = sessionMetaWrites.get(lockKey) ?? Promise.resolve();
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => pending);
+  sessionMetaWrites.set(lockKey, queued);
+  await previous;
+  try {
+    return await write();
+  } finally {
+    release();
+    if (sessionMetaWrites.get(lockKey) === queued) sessionMetaWrites.delete(lockKey);
+  }
+}
+
+/** Check whether a session has recorded a metadata key, including empty values. */
+export async function hasSessionMeta(
+  agentId: string,
+  sessionId: string,
+  key: string,
+  userId?: string
+): Promise<boolean> {
+  const file = await resolveHistoryFile(agentId, sessionId, userId);
+  try {
+    const content = await fs.readFile(file, "utf-8");
+    return content.split(/\r?\n/).some((line) => {
+      if (!line.trim()) return false;
+      try {
+        const entry = JSON.parse(line) as Partial<MetaEntry>;
+        return entry.type === "meta" && entry.key === key;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** Append metadata only if the key is still absent, serialized with all metadata writes. */
+export async function appendSessionMetaIfAbsent(
+  agentId: string,
+  sessionId: string,
+  key: string,
+  value: unknown,
+  userId?: string
+): Promise<boolean> {
+  return withSessionMetaWrite(agentId, sessionId, userId, async () => {
+    if (await hasSessionMeta(agentId, sessionId, key, userId)) return false;
+    await appendSessionMetaUnlocked(agentId, sessionId, key, value, userId);
+    return true;
+  });
 }
 
 /**

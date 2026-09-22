@@ -1030,6 +1030,7 @@ export const GatewayRootConfigSchema = z.object({
   defaultProjectManager: z.string().optional(),
   sandbox: GlobalSandboxConfigSchema.optional(),
   onecli: OnecliConfigSchema.optional(),
+  maintenance: RequiredModelConfigSchema.optional(),
   imageDescription: z
     .object({
       provider: z.string(),
@@ -1080,6 +1081,7 @@ export const GatewayConfigSchema = z.object({
   defaultProjectManager: z.string().optional(),
   sandbox: GlobalSandboxConfigSchema.optional(),
   onecli: OnecliConfigSchema.optional(),
+  maintenance: RequiredModelConfigSchema.optional(),
   imageDescription: z
     .object({
       provider: z.string(),

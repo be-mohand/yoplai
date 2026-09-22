@@ -70,12 +70,44 @@ function chatRouteSession(pathname: string, search: string): { agentId?: string;
   };
 }
 
+/** Slide an overflowing session title left so its tail clears the hover action icons. */
+function revealTitle(wrap: HTMLElement): void {
+  const title = wrap.querySelector<HTMLElement>(".session-title");
+  const text = wrap.querySelector<HTMLElement>(".session-title-text");
+  const actions = wrap.querySelector<HTMLElement>(".session-actions");
+  if (!title || !text) return;
+  // Only titles clipped at rest scroll; a fitting title stays put even if the
+  // hover icons cover its tail.
+  const overflowing = text.scrollWidth > title.clientWidth;
+  wrap.classList.toggle("overflowing", overflowing);
+  if (!overflowing) return;
+  const reserve = actions?.offsetWidth ?? 0;
+  const shift = text.scrollWidth + reserve - title.clientWidth;
+  // Forward travel fills 30% of the loop (see keyframes); the rest is pauses and the return.
+  const travelMs = Math.max(1200, shift * 16);
+  wrap.style.setProperty("--title-shift", `${shift}px`);
+  wrap.style.setProperty("--title-loop-ms", `${Math.round(travelMs / 0.3)}ms`);
+}
+
+function resetTitle(wrap: HTMLElement): void {
+  wrap.classList.remove("overflowing");
+  wrap.style.removeProperty("--title-shift");
+  wrap.style.removeProperty("--title-loop-ms");
+}
+
 export function AgentSidebar(props: AgentSidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
   const [search, setSearch] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
+  const [listScrolling, setListScrolling] = createSignal(false);
+  let scrollIdleTimer: ReturnType<typeof setTimeout> | undefined;
+  const onListScroll = () => {
+    setListScrolling(true);
+    clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = setTimeout(() => setListScrolling(false), 700);
+  };
 
   let pollStopped = false;
 
@@ -97,6 +129,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
   window.addEventListener("focus", refreshSessions);
   document.addEventListener("visibilitychange", refreshSessions);
   onCleanup(() => {
+    clearTimeout(scrollIdleTimer);
     window.clearInterval(poll);
     window.removeEventListener("focus", refreshSessions);
     document.removeEventListener("visibilitychange", refreshSessions);
@@ -260,7 +293,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 onInput={(event) => setSearch(event.currentTarget.value)}
               />
             </Show>
-            <div class="sessions-list">
+            <div class="sessions-list" classList={{ scrolling: listScrolling() }} onScroll={onListScroll}>
               <For each={groupedSessions()}>
                 {(group) => (
                   <div class="sessions-group">
@@ -272,7 +305,13 @@ export function AgentSidebar(props: AgentSidebarProps) {
                           currentChat().sessionId === session.sessionId;
                         const label = () => session.title || session.firstUserMessage || session.sessionId;
                         return (
-                          <div class="session-row-wrap">
+                          <div
+                            class="session-row-wrap"
+                            onMouseEnter={(e) => revealTitle(e.currentTarget)}
+                            onMouseLeave={(e) => resetTitle(e.currentTarget)}
+                            onFocusIn={(e) => revealTitle(e.currentTarget)}
+                            onFocusOut={(e) => resetTitle(e.currentTarget)}
+                          >
                             <button
                               type="button"
                               class="session-row"
@@ -295,39 +334,43 @@ export function AgentSidebar(props: AgentSidebarProps) {
                                 </Show>
                               </span>
                               <span class="session-main">
-                                <span class="session-title">{label()}</span>
+                                <span class="session-title">
+                                  <span class="session-title-text">{label()}</span>
+                                </span>
                                 <span class="session-meta">
                                   {relativeTime(session.lastActivity)} · {session.agentId}
                                   <Show when={session.isMain}> <b>MAIN</b></Show>
                                 </span>
                               </span>
                             </button>
-                            <button
-                              type="button"
-                              class="session-action"
-                              aria-label="Rename session"
-                              onClick={async () => {
-                                const title = prompt("Session title", session.title ?? session.firstUserMessage);
-                                if (title === null) return;
-                                await renameAgentSession(session.agentId, session.sessionId, title);
-                                refreshSessions();
-                              }}
-                            >
-                              ✎
-                            </button>
-                            <button
-                              type="button"
-                              class="session-action danger"
-                              aria-label="Delete session"
-                              onClick={async () => {
-                                if (!confirm("Delete session?")) return;
-                                await deleteAgentSession(session.agentId, session.sessionId);
-                                setSessions((items) => items.filter((item) => item.sessionId !== session.sessionId || item.agentId !== session.agentId));
-                                if (selected()) navigate(`/chat/${encodeURIComponent(session.agentId)}`);
-                              }}
-                            >
-                              ×
-                            </button>
+                            <span class="session-actions">
+                              <button
+                                type="button"
+                                class="session-action"
+                                aria-label="Rename session"
+                                onClick={async () => {
+                                  const title = prompt("Session title", session.title ?? session.firstUserMessage);
+                                  if (title === null) return;
+                                  await renameAgentSession(session.agentId, session.sessionId, title);
+                                  refreshSessions();
+                                }}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                class="session-action danger"
+                                aria-label="Delete session"
+                                onClick={async () => {
+                                  if (!confirm("Delete session?")) return;
+                                  await deleteAgentSession(session.agentId, session.sessionId);
+                                  setSessions((items) => items.filter((item) => item.sessionId !== session.sessionId || item.agentId !== session.agentId));
+                                  if (selected()) navigate(`/chat/${encodeURIComponent(session.agentId)}`);
+                                }}
+                              >
+                                ×
+                              </button>
+                            </span>
                           </div>
                         );
                       }}
@@ -502,6 +545,26 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: flex;
           flex-direction: column;
           gap: 10px;
+          scrollbar-width: thin;
+          scrollbar-color: transparent transparent;
+          transition: scrollbar-color 300ms ease;
+        }
+
+        .sessions-list::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sessions-list::-webkit-scrollbar-thumb {
+          background: transparent;
+          border-radius: 999px;
+        }
+
+        .sessions-list.scrolling {
+          scrollbar-color: var(--border-default) transparent;
+        }
+
+        .sessions-list.scrolling::-webkit-scrollbar-thumb {
+          background: var(--border-default);
         }
 
         .sessions-group-label {
@@ -511,13 +574,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .session-row-wrap {
-          display: grid;
-          grid-template-columns: 1fr auto auto;
-          align-items: center;
-          gap: 2px;
+          position: relative;
+          min-width: 0;
         }
 
         .session-row {
+          width: 100%;
           min-width: 0;
           display: flex;
           align-items: center;
@@ -574,6 +636,27 @@ export function AgentSidebar(props: AgentSidebarProps) {
           font-size: 12px;
         }
 
+        .session-title-text {
+          display: inline-block;
+        }
+
+        .session-row-wrap.overflowing:hover .session-title-text,
+        .session-row-wrap.overflowing:focus-within .session-title-text {
+          animation: session-title-scroll var(--title-loop-ms, 3000ms) ease-in-out infinite;
+        }
+
+        /* Short pause at the start, slide to the tail, long pause to finish reading, slide back. */
+        @keyframes session-title-scroll {
+          0%, 8% { transform: translateX(0); }
+          38%, 78% { transform: translateX(calc(-1 * var(--title-shift, 0px))); }
+          100% { transform: translateX(0); }
+        }
+
+        .session-row-wrap:hover .session-title,
+        .session-row-wrap:focus-within .session-title {
+          text-overflow: clip;
+        }
+
         .session-meta {
           font-size: 11px;
           color: var(--text-tertiary);
@@ -584,13 +667,37 @@ export function AgentSidebar(props: AgentSidebarProps) {
           font-size: 10px;
         }
 
-        .session-action {
+        .session-actions {
+          position: absolute;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          display: flex;
+          align-items: center;
+          padding-left: 18px;
+          padding-right: 4px;
+          gap: 2px;
           opacity: 0;
+          pointer-events: none;
+          background: linear-gradient(to right, transparent, var(--bg-raised) 40%);
+          border-radius: 0 8px 8px 0;
+        }
+
+        .session-row-wrap:hover .session-actions,
+        .session-row-wrap:focus-within .session-actions {
+          opacity: 1;
+          pointer-events: auto;
+        }
+
+        .session-action {
           padding: 4px;
         }
 
-        .session-row-wrap:hover .session-action {
-          opacity: 1;
+        @media (prefers-reduced-motion: reduce) {
+          .session-row-wrap.overflowing:hover .session-title-text,
+          .session-row-wrap.overflowing:focus-within .session-title-text {
+            animation: none;
+          }
         }
 
         .session-action.danger {

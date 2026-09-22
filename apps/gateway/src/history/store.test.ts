@@ -84,6 +84,43 @@ describe("history store isolation", () => {
     );
   });
 
+  it("recognizes an empty title meta entry as an intentional title", async () => {
+    const { hasSessionMeta } = await import("./store.js");
+    vi.mocked(fs.readFile).mockResolvedValueOnce(
+      `${JSON.stringify({ type: "meta", key: "title", value: "", timestamp: 1 })}\n`
+    );
+
+    await expect(hasSessionMeta("agent-1", "session-1", "title")).resolves.toBe(true);
+  });
+
+  it("does not append an automatic title behind a concurrent manual rename", async () => {
+    const { appendSessionMeta, appendSessionMetaIfAbsent } =
+      await import("./store.js");
+    let finishManual!: () => void;
+    vi.mocked(fs.appendFile).mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        finishManual = resolve;
+      })
+    );
+    vi.mocked(fs.readFile).mockResolvedValueOnce(
+      `${JSON.stringify({ type: "meta", key: "title", value: "Manual", timestamp: 1 })}\n`
+    );
+
+    const manual = appendSessionMeta("agent-1", "session-race", "title", "Manual");
+    await vi.waitFor(() => expect(finishManual).toBeTypeOf("function"));
+    const automatic = appendSessionMetaIfAbsent(
+      "agent-1",
+      "session-race",
+      "title",
+      "Automatic"
+    );
+    finishManual();
+
+    await expect(manual).resolves.toBeUndefined();
+    await expect(automatic).resolves.toBe(false);
+    expect(fs.appendFile).toHaveBeenCalledTimes(1);
+  });
+
   it("caches resolved history files until invalidated", async () => {
     const { resolveSessionDataFile } = await import("../sessions/files.js");
     const { appendSessionMeta, invalidateResolvedHistoryFile } =

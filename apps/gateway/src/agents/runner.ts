@@ -38,6 +38,7 @@ import {
   backfillFromPiSession,
   invalidateResolvedHistoryFile,
 } from "../history/store.js";
+import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 
 export type InternalRunAgentParams = SharedRunAgentParams & {
   userId?: string;
@@ -435,6 +436,13 @@ export async function runAgent(
     const durationMs = Date.now() - started;
     emit({ type: "done", meta: { durationMs, aborted } });
     runCompleted = true;
+    if (!aborted && sdkId === "pi") {
+      maybeAutoTitleSession({
+        agentId: params.agentId,
+        sessionId,
+        userId: params.userId,
+      });
+    }
 
     return {
       payloads: result.text ? [{ text: result.text }] : [],

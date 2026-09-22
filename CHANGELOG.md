@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Core sessions now receive a short automatic sidebar title after their first successful Pi response. Configure the optional root `maintenance: { provider, model }` to select one shared model for gateway-owned LLM work; it uses the model runtime's OAuth, stored-key, or host-environment credential resolution.
+- Sidebar session rows now use the full row width for titles: rename/delete icons overlay the row only on hover, an overflowing title slides horizontally on hover or focus so it can be read in full, and the list scrollbar stays hidden until you scroll.
 - Agents can now discover platform extensions and MCP servers when their enabled tools reach a dead end, redirect to agents that already have a match, and self-enable no-secret capabilities after chat confirmation.
 - Slack agents can now retrieve newest-first channel history with the `slack.get_channel_history` tool, including bounded time windows and pagination metadata.
 - Chat header now has a "New chat" button (top right, after the Simple/Full toggle) that starts a fresh chat for the agent, showing the empty-chat hero like the Agents page "Chat" action.

@@ -1,0 +1,163 @@
+import path from "node:path";
+import type { Api, Context, Model } from "@earendil-works/pi-ai";
+import { completeSimple as defaultCompleteSimple } from "@earendil-works/pi-ai/compat";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AgentConfig, GatewayConfig, RequiredModelConfig } from "@yoplai/shared";
+import { getAgent, loadConfig, CONFIG_DIR } from "../config/index.js";
+import { logWarn } from "../logging.js";
+
+type CompletionModel = Model<Api>;
+
+export type MaintenanceCompletionParams = {
+  agentId: string;
+  userId?: string;
+  system: string;
+  prompt: string;
+  maxTokens: number;
+  timeoutMs: number;
+};
+
+type MaintenanceCompletionDeps = {
+  getConfig?: () => GatewayConfig;
+  getAgent?: (agentId: string) => AgentConfig | undefined;
+  createRuntime?: (signal?: AbortSignal) => Promise<ModelRuntime>;
+  completeSimple?: typeof defaultCompleteSimple;
+  warn?: (message: string, fields?: Record<string, unknown>) => void;
+};
+
+const warned = new Set<string>();
+let testDeps: MaintenanceCompletionDeps = {};
+
+export function setMaintenanceCompletionDepsForTests(
+  deps: MaintenanceCompletionDeps
+): void {
+  testDeps = deps;
+  warned.clear();
+}
+
+export function resetMaintenanceCompletionDepsForTests(): void {
+  testDeps = {};
+  warned.clear();
+}
+
+function warnOnce(
+  key: string,
+  message: string,
+  fields: Record<string, unknown>,
+  deps: MaintenanceCompletionDeps
+): void {
+  if (warned.has(key)) return;
+  warned.add(key);
+  (deps.warn ?? testDeps.warn ?? logWarn)(message, fields);
+}
+
+function createModelRuntime(signal?: AbortSignal): Promise<ModelRuntime> {
+  return ModelRuntime.create({
+    authPath: path.join(CONFIG_DIR, "auth.json"),
+    modelsPath: path.join(CONFIG_DIR, "models.json"),
+    signal,
+  });
+}
+
+function modelFor(
+  config: GatewayConfig,
+  agent: AgentConfig | undefined
+): RequiredModelConfig | null {
+  if (config.maintenance) return config.maintenance;
+  if (!agent?.model.provider) return null;
+  return { provider: agent.model.provider, model: agent.model.model };
+}
+
+function responseText(response: Awaited<ReturnType<typeof defaultCompleteSimple>>): string {
+  return response.content
+    .filter(
+      (part): part is { type: "text"; text: string } => part.type === "text"
+    )
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Run one small gateway-owned completion. Authentication deliberately stays in
+ * ModelRuntime so stored OAuth, stored keys, and host environment keys follow
+ * the same provider-owned resolution path as normal Pi runtime use.
+ */
+export async function completeMaintenance(
+  params: MaintenanceCompletionParams,
+  deps: MaintenanceCompletionDeps = {}
+): Promise<string | null> {
+  const activeDeps = { ...testDeps, ...deps };
+  let ref = "agent-model";
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const timeoutError = new Error(
+      `Maintenance completion timed out after ${params.timeoutMs}ms`
+    );
+    const timedOut = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort(timeoutError);
+        reject(timeoutError);
+      }, params.timeoutMs);
+    });
+    const run = (async () => {
+      const config = (activeDeps.getConfig ?? loadConfig)();
+      const agent = (activeDeps.getAgent ?? getAgent)(params.agentId);
+      const selected = modelFor(config, agent);
+      ref = selected ? `${selected.provider}/${selected.model}` : ref;
+      if (!selected) {
+        throw new Error(`No model configured for agent: ${params.agentId}`);
+      }
+      const runtime = await (activeDeps.createRuntime ?? createModelRuntime)(
+        controller.signal
+      );
+      const model = runtime.getModel(selected.provider, selected.model) as
+        | CompletionModel
+        | undefined;
+      if (!model) throw new Error(`Model not found: ${ref}`);
+      const complete = activeDeps.completeSimple ?? runtime.completeSimple.bind(runtime);
+      const response = await complete(
+        model,
+        {
+          systemPrompt: params.system,
+          messages: [
+            {
+              role: "user",
+              timestamp: Date.now(),
+              content: params.prompt,
+            },
+          ],
+        } satisfies Context,
+        {
+          maxTokens: params.maxTokens,
+          temperature: 0,
+          maxRetries: 0,
+          timeoutMs: params.timeoutMs,
+          signal: controller.signal,
+        }
+      );
+      if (response.stopReason === "error") {
+        throw new Error(response.errorMessage ?? "Maintenance completion failed");
+      }
+      const text = responseText(response);
+      if (!text) throw new Error("Maintenance completion returned no text");
+      return text;
+    })();
+    return await Promise.race([run, timedOut]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warnOnce(
+      `${ref}:${message}`,
+      "[maintenance] completion failed",
+      { agentId: params.agentId, model: ref, error: message },
+      activeDeps
+    );
+    return null;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export const MaintenanceCompletion = { complete: completeMaintenance };

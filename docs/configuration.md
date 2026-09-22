@@ -107,6 +107,7 @@ Core `yoplai.json` fields:
 | `extensions`                         | Built-in/external extension configuration                           |
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |
 | `sandbox`, `onecli`, `oauth`         | Isolation, proxy, and host OAuth settings                           |
+| `maintenance`                        | Model for gateway-owned background LLM tasks                        |
 | `branding`                           | Optional organization name/logo                                     |
 | `agentFab`                           | Enable global quick-chat control                                    |
 | `notifications.channels`             | Named Discord/Slack delivery targets                                |
@@ -115,6 +116,21 @@ Core `yoplai.json` fields:
 | `taskboard`, `projects`, `subagents` | Legacy/compatibility config surfaces; prefer owning extensions      |
 
 Schema in `packages/shared/src/types.ts` is final source of truth. Extension-specific fields belong in [Extensions](extensions.md) and owning package READMEs.
+
+### Maintenance model
+
+Gateway-owned work such as core session titles uses `maintenance` when set:
+
+```json
+{
+  "maintenance": {
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5"
+  }
+}
+```
+
+Both fields are required. The Pi model runtime resolves its credentials from an existing OAuth login, a stored API key, or the provider's host environment key; OneCLI is not used. When omitted, maintenance work uses the session agent's configured model.
 
 ### Session auto-titles
 
