@@ -67,11 +67,37 @@ describe("core session auto-title", () => {
     expect(appendMetaIfAbsent).toHaveBeenCalledOnce();
   });
 
+  it("titles a first turn that used tools across several assistant steps", async () => {
+    const complete = vi.fn(async () => "Zendesk connectivity check");
+    const toolTurn: FullHistoryMessage[] = [
+      firstExchange[0],
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "" }] },
+      { role: "toolResult", timestamp: 3, content: [{ type: "text", text: "ok" }] } as FullHistoryMessage,
+      { role: "assistant", timestamp: 4, content: [{ type: "text", text: "Zendesk is reachable." }] },
+    ];
+
+    await expect(autoTitleSession({ agentId: "agent", sessionId: "session" }, {
+      getHistory: async () => toolTurn,
+      hasTitle: async () => false,
+      complete,
+      appendMetaIfAbsent: async () => true,
+      invalidate: () => {},
+    })).resolves.toBe("Zendesk connectivity check");
+
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("Assistant: Zendesk is reachable."),
+    }));
+  });
+
   it("does not title a later reply", async () => {
     const complete = vi.fn();
 
     await expect(autoTitleSession({ agentId: "agent", sessionId: "session" }, {
-      getHistory: async () => [...firstExchange, { ...firstExchange[1], timestamp: 3 }],
+      getHistory: async () => [
+        ...firstExchange,
+        { ...firstExchange[0], timestamp: 3 },
+        { ...firstExchange[1], timestamp: 4 },
+      ],
       hasTitle: async () => false,
       complete,
     })).resolves.toBeNull();

@@ -89,6 +89,8 @@ export async function completeMaintenance(
 ): Promise<string | null> {
   const activeDeps = { ...testDeps, ...deps };
   let ref = "agent-model";
+  let phase = "start";
+  const startedAt = Date.now();
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -110,9 +112,11 @@ export async function completeMaintenance(
       if (!selected) {
         throw new Error(`No model configured for agent: ${params.agentId}`);
       }
+      phase = "create-runtime";
       const runtime = await (activeDeps.createRuntime ?? createModelRuntime)(
         controller.signal
       );
+      phase = "complete";
       const model = runtime.getModel(selected.provider, selected.model) as
         | CompletionModel
         | undefined;
@@ -143,6 +147,7 @@ export async function completeMaintenance(
       }
       const text = responseText(response);
       if (!text) throw new Error("Maintenance completion returned no text");
+      phase = "done";
       return text;
     })();
     return await Promise.race([run, timedOut]);
@@ -151,7 +156,13 @@ export async function completeMaintenance(
     warnOnce(
       `${ref}:${message}`,
       "[maintenance] completion failed",
-      { agentId: params.agentId, model: ref, error: message },
+      {
+        agentId: params.agentId,
+        model: ref,
+        error: message,
+        phase,
+        elapsedMs: Date.now() - startedAt,
+      },
       activeDeps
     );
     return null;

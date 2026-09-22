@@ -5,11 +5,14 @@ import {
   hasSessionMeta,
   invalidateResolvedHistoryFile,
 } from "../history/store.js";
+import { logWarn } from "../logging.js";
 import { MaintenanceCompletion } from "./completion.js";
 
 const TITLE_PROMPT =
   "Return a concise 3-6 word title summarizing this chat in the conversation's language. No quotes. No punctuation at the end.";
-const TITLE_TIMEOUT_MS = 10_000;
+// Fire-and-forget after the reply, so a generous budget costs the user nothing;
+// reasoning models over OpenRouter occasionally exceed 10s.
+const TITLE_TIMEOUT_MS = 30_000;
 // Reasoning models (e.g. GLM Flash) spend output tokens on thinking before the
 // title text and cannot always turn thinking off; leave headroom for both.
 const TITLE_MAX_TOKENS = 512;
@@ -44,12 +47,7 @@ export function normalizeGeneratedTitle(title: string): string {
   return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated).trim();
 }
 
-function firstText(
-  history: FullHistoryMessage[],
-  role: "user" | "assistant"
-): string {
-  const message = history.find((item) => item.role === role);
-  if (!message) return "";
+function messageText(message: FullHistoryMessage): string {
   return message.content
     .filter(
       (part): part is { type: "text"; text: string } => part.type === "text"
@@ -57,6 +55,25 @@ function firstText(
     .map((part) => part.text)
     .join("\n")
     .trim();
+}
+
+function firstText(
+  history: FullHistoryMessage[],
+  role: "user" | "assistant"
+): string {
+  const message = history.find((item) => item.role === role);
+  return message ? messageText(message) : "";
+}
+
+/** A tool-using turn stores one assistant message per step; the answer is the last one with text. */
+function lastAssistantText(history: FullHistoryMessage[]): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (message.role !== "assistant") continue;
+    const text = messageText(message);
+    if (text) return text;
+  }
+  return "";
 }
 
 /** Title a core Pi session once its first assistant response is durable. */
@@ -71,10 +88,11 @@ export async function autoTitleSession(
   if (await hasTitle(params.agentId, params.sessionId, "title", params.userId)) {
     return null;
   }
-  const assistants = history.filter((message) => message.role === "assistant");
-  if (assistants.length !== 1) return null;
+  // First turn only: a tool-using turn may hold several assistant steps.
+  const users = history.filter((message) => message.role === "user");
+  if (users.length !== 1) return null;
   const userText = firstText(history, "user");
-  const assistantText = firstText(history, "assistant");
+  const assistantText = lastAssistantText(history);
   if (!userText || !assistantText) return null;
 
   const generated = await (activeDeps.complete ?? MaintenanceCompletion.complete)({
@@ -111,5 +129,11 @@ export function maybeAutoTitleSession(params: {
   sessionId: string;
   userId?: string;
 }): void {
-  void autoTitleSession(params).catch(() => undefined);
+  void autoTitleSession(params).catch((error: unknown) => {
+    logWarn("[maintenance] auto-title failed", {
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
