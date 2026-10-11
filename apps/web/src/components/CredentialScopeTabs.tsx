@@ -145,7 +145,7 @@ export const STATUS_PILL_STYLES = `
 .cred-status-pill[data-tone="error"] { --tone: #dc2626; }
 `;
 
-export const CREDENTIAL_SCOPE_TABS_STYLES = `
+const CREDENTIAL_SCOPE_TABS_STYLES = `
 .cred-tabs { --cred-accent: var(--accent, #1a73e8); --cred-radius: 14px; }
 .cred-tabs-list { display: flex; gap: 4px; position: relative; z-index: 1; }
 .cred-tab {

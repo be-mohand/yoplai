@@ -2,7 +2,7 @@ import { API_BASE, apiFetch as fetch } from "./core";
 
 export type TopExtensions = { extensions: string[]; mcp: string[] };
 
-export type TopExtensionCandidates = {
+type TopExtensionCandidates = {
   extensions: { id: string; displayName: string; description: string; iconDataUri?: string }[];
   mcp: { url: string; displayName: string; agentCount: number; iconUrl?: string }[];
 };

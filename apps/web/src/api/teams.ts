@@ -55,10 +55,10 @@ export type AgentFork = {
 // The single action a pool catalog card should offer the current user. Mirrors
 // the gateway pool-catalog resolver: chat (fork exists + chattable/staff),
 // assign_to_team (staff, no fork yet), or none (visible-but-inert).
-export type PoolCatalogAction = "chat" | "assign_to_team" | "none";
+type PoolCatalogAction = "chat" | "assign_to_team" | "none";
 
 // Why action is "none"; null whenever action isn't "none".
-export type PoolCatalogNoneReason = "no_workspace" | "unassigned" | "other_team";
+type PoolCatalogNoneReason = "no_workspace" | "unassigned" | "other_team";
 
 export type PoolCatalogEntry = {
   poolId: string;
