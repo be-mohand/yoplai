@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- `sandbox.gatewayTransport: "socket"` lets sandboxed runs reach the gateway through a read-only mounted Unix socket that serves only `/internal`, instead of `host.docker.internal`. Fixes every gateway tool (`dashboard_link`, scheduler tools, `extract_document`, extension and MCP tools) and OAuth renewal failing with `fetch failed` whenever containers have no route to the host, as under rootless Docker.
+
 ## v0.25.0 — Canvas dashboards, personal credentials + team-scoped admin
 
 Agents can now publish live Canvas dashboards: self-contained HTML pages behind stable, team-authorized links, backed by read-only SQLite queries, a versioned Dashboard Kit, a built-in dashboard skill with templates, version history, and a Dashboards tab per agent. Credentials become personal: Google OAuth, MCP servers, and extension tokens each support **Just me** and **Whole team** connections, personal ones follow you across agents, Slack users can pair their Slack identity with their Yoplai account, and scheduled jobs pick whose credentials they use. Extension and MCP setup gets a full UI overhaul (MCP servers as first-class cards, credential tabs with status pills, a connect prompt, Top extensions, shared MCP servers), extensions now ship their own OAuth providers (Zendesk moves to OAuth). Multi-user mode adds email/password sign-in, auto-approval, private teams, an onboarding tour, a settings audit log, and scopes admins to their teams. Web chat folds thinking and tool calls into lean groups with friendly labels; Slack agents gain thread, Canvas, List, and channel tools plus proactive-DM replies; Discord bots can talk to each other; the scheduler gains one-shot jobs plus pause/delete; Langfuse moves to SDK v5; and sandboxes protect operator files and support rootless Docker.

@@ -3,14 +3,17 @@ import path from "node:path";
 import { Hono } from "hono";
 import { logError } from "../logging.js";
 import { cors } from "hono/cors";
-import { readEnv, resolveBindHost } from "@yoplai/shared";
+import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
 import type { GatewayBindMode, GatewayConfig } from "@yoplai/shared";
 import { api } from "./api.core.js";
 import { internalTools } from "./internal-tools.js";
+import { startInternalSocketServer } from "./internal-socket.js";
 import {
   cleanupOrphanContainers,
   ensureAgentImage,
   ensureNetwork,
+  getGatewaySocketDir,
+  usesGatewaySocket,
 } from "../agents/container.js";
 import { loadConfig } from "../config/index.js";
 import { agentEventBus } from "../agents/index.js";
@@ -377,6 +380,18 @@ export function startServer(
   new WsBroker().attach(server as import("http").Server, wsAuthAdapter);
 
   setupGracefulShutdown(server);
+
+  if (hasSandboxAgents && usesGatewaySocket(config.sandbox ?? {})) {
+    startInternalSocketServer(getGatewaySocketDir(resolveHomeDir()))
+      .then((socket) => {
+        console.log(`Sandbox gateway socket listening on ${socket.socketPath}`);
+        process.once("SIGTERM", () => socket.close());
+        process.once("SIGINT", () => socket.close());
+      })
+      .catch((error) => {
+        logError("[gateway] Sandbox gateway socket failed to start", error);
+      });
+  }
 
   return server;
 }
