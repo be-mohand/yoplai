@@ -17,6 +17,17 @@ const mockReadStoredCredential = vi.fn<
   (provider: string) => MockStoredCredential
 >(() => undefined);
 const mockSetRuntimeApiKey = vi.fn(async () => undefined);
+const mockRuntime = {
+  getModel: mockGetModel,
+  getAuth: mockGetAuth,
+  setRuntimeApiKey: mockSetRuntimeApiKey,
+};
+const mockCreateModelRuntime = vi.fn<
+  () => Promise<
+    typeof mockRuntime | import("@earendil-works/pi-coding-agent").ModelRuntime
+  >
+>(async () => mockRuntime);
+const mockGetEnvApiKey = vi.fn((): string | undefined => "env-api-key");
 const mockGetLoadedExtensions = vi.fn<() => Partial<Extension>[]>(() => []);
 const mockGetExtensionAgentTools = vi.fn<() => Promise<unknown[]>>(
   async () => []
@@ -43,8 +54,8 @@ vi.mock("../../../extensions/tools.js", () => ({
   getExtensionAgentTools: mockGetExtensionAgentTools,
 }));
 
-vi.mock("@earendil-works/pi-ai", () => ({
-  getEnvApiKey: vi.fn(() => "env-api-key"),
+vi.mock("@earendil-works/pi-ai/compat", () => ({
+  getEnvApiKey: mockGetEnvApiKey,
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
@@ -57,11 +68,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   },
   readStoredCredential: mockReadStoredCredential,
   ModelRuntime: {
-    create: vi.fn(async () => ({
-      getModel: mockGetModel,
-      getAuth: mockGetAuth,
-      setRuntimeApiKey: mockSetRuntimeApiKey,
-    })),
+    create: mockCreateModelRuntime,
   },
   DefaultResourceLoader: class {
     async reload() {
@@ -170,6 +177,8 @@ describe("pi adapter transient provider retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockReadStoredCredential.mockReturnValue(undefined);
+    mockGetEnvApiKey.mockReturnValue("env-api-key");
+    mockGetAuth.mockResolvedValue({ auth: { apiKey: "runtime-key" } });
     clearConfigCacheForTests();
     mockGetLoadedExtensions.mockReturnValue([]);
     mockGetExtensionAgentTools.mockResolvedValue([]);
@@ -202,10 +211,161 @@ describe("pi adapter transient provider retry", () => {
       provider: "openai-codex",
       model: "gpt-5",
     });
-    expect(mockSetRuntimeApiKey).toHaveBeenCalledWith(
-      "openai-codex",
-      "runtime-key"
+    expect(mockSetRuntimeApiKey).not.toHaveBeenCalled();
+  });
+
+  it.each(["oauth", "auto", "override", "fallback"] as const)(
+    "preserves real ModelRuntime OAuth credentials for %s auth",
+    async (scenario) => {
+      const { ModelRuntime } = await vi.importActual<
+        typeof import("@earendil-works/pi-coding-agent")
+      >("@earendil-works/pi-coding-agent");
+      const { InMemoryCredentialStore } = await vi.importActual<
+        typeof import("@earendil-works/pi-ai")
+      >("@earendil-works/pi-ai");
+      const credentials = new InMemoryCredentialStore();
+      const oauthCredential = {
+        type: "oauth" as const,
+        access: "dummy-access-token",
+        refresh: "dummy-refresh-token",
+        expires: Date.now() + 3_600_000,
+      };
+      await credentials.modify("openai-codex", async () => oauthCredential);
+      await credentials.modify("anthropic", async () => ({
+        type: "api_key",
+        key: "dummy-primary-key",
+      }));
+      const runtime = await ModelRuntime.create({
+        credentials,
+        modelsPath: null,
+        refreshOnCreate: true,
+        allowModelNetwork: false,
+      });
+      mockCreateModelRuntime.mockResolvedValueOnce(runtime);
+      mockReadStoredCredential.mockImplementation((provider) =>
+        provider === "openai-codex" ? oauthCredential : undefined
+      );
+      const codexModel = runtime.getModels("openai-codex")[0]!;
+      expect(codexModel).toBeDefined();
+      const oauthModel = { provider: "openai-codex", model: codexModel.id };
+      let agent: AgentConfig;
+      if (scenario === "fallback") {
+        agent = makeAgent({
+          model: {
+            provider: "anthropic",
+            model: runtime.getModels("anthropic")[0]!.id,
+          },
+          retryMaxAttempts: 1,
+          fallback_model: oauthModel,
+        });
+      } else if (scenario === "override") {
+        agent = makeAgent({ auth: { mode: "api_key" } });
+      } else {
+        agent = makeAgent({
+          model: oauthModel,
+          ...(scenario === "oauth" ? { auth: { mode: "oauth" } } : {}),
+        });
+      }
+      setLoadedConfig({ agents: [agent] } as GatewayConfig);
+      const session = makeSession();
+      if (scenario === "fallback") {
+        session.prompt.mockImplementationOnce(async () => {
+          session.agent.state.messages.push(erroredTurn());
+        });
+      }
+      session.prompt.mockImplementationOnce(async () => {
+        expect(await runtime.checkAuth("openai-codex")).toMatchObject({
+          type: "oauth",
+        });
+        expect(runtime.hasConfiguredAuth("openai-codex")).toBe(true);
+        expect(runtime.isUsingOAuth("openai-codex")).toBe(true);
+        expect(await runtime.listCredentials()).toContainEqual({
+          providerId: "openai-codex",
+          type: "oauth",
+        });
+        expect((await runtime.getAuth(codexModel))?.auth.apiKey).toBe(
+          "dummy-access-token"
+        );
+        session.agent.state.messages.push(successTurn());
+      });
+      mockCreateAgentSession.mockResolvedValue({ session });
+      const params = makeRunParams(agent);
+      if (scenario === "override") params.model = oauthModel;
+      const { piAdapter } = await import("../adapter.js");
+      await expect(piAdapter.run(params)).resolves.toEqual({
+        text: "recovered",
+        aborted: false,
+      });
+      expect(session.prompt).toHaveBeenCalledTimes(
+        scenario === "fallback" ? 2 : 1
+      );
+      expect((await credentials.read("openai-codex"))?.type).toBe("oauth");
+    }
+  );
+
+  it.each(["stored", "env"] as const)(
+    "enforces explicit API-key mode with the %s key",
+    async (source) => {
+      const agent = makeAgent({ auth: { mode: "api_key" } });
+      setLoadedConfig({ agents: [agent] } as GatewayConfig);
+      mockReadStoredCredential.mockReturnValue(
+        source === "stored"
+          ? { type: "api_key", key: "stored-key" }
+          : {
+              type: "oauth",
+              access: "ignored-token",
+              expires: Date.now() + 60_000,
+            }
+      );
+      const session = makeSession();
+      session.prompt.mockImplementationOnce(async () => {
+        session.agent.state.messages.push(successTurn());
+      });
+      mockCreateAgentSession.mockResolvedValue({ session });
+      const { piAdapter } = await import("../adapter.js");
+      await expect(piAdapter.run(makeRunParams(agent))).resolves.toMatchObject({
+        text: "recovered",
+      });
+      expect(mockGetAuth).not.toHaveBeenCalled();
+      expect(mockSetRuntimeApiKey).toHaveBeenCalledWith(
+        "anthropic",
+        source === "stored" ? "stored-key" : "env-api-key"
+      );
+    }
+  );
+
+  it.each([
+    "missing-oauth",
+    "invalid-oauth",
+    "missing-api-key",
+    "unresolved-auto",
+  ])("keeps the %s auth error before session creation", async (scenario) => {
+    const agent = makeAgent({
+      ...(scenario.endsWith("oauth")
+        ? { auth: { mode: "oauth" } }
+        : scenario === "missing-api-key"
+          ? { auth: { mode: "api_key" } }
+          : {}),
+    });
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    if (scenario === "invalid-oauth") {
+      mockReadStoredCredential.mockReturnValue({
+        type: "api_key",
+        key: "wrong-type",
+      });
+    }
+    mockGetEnvApiKey.mockReturnValue(undefined);
+    mockGetAuth.mockResolvedValue({ auth: { apiKey: "" } });
+    const { piAdapter } = await import("../adapter.js");
+    await expect(piAdapter.run(makeRunParams(agent))).rejects.toThrow(
+      scenario.endsWith("oauth")
+        ? "No OAuth credentials for provider: anthropic. Run 'yoplai auth login anthropic' first."
+        : scenario === "missing-api-key"
+          ? "No API key for provider: anthropic. Set ANTHROPIC_API_KEY env var."
+          : "No API key for provider: anthropic"
     );
+    expect(mockCreateAgentSession).not.toHaveBeenCalled();
+    expect(mockSetRuntimeApiKey).not.toHaveBeenCalled();
   });
 
   it("retries a failed turn that follows tool activity without re-sending the prompt", async () => {

@@ -362,7 +362,11 @@ export const piAdapter: SdkAdapter = {
       if (!apiKey) {
         throw new Error(`No API key for provider: ${model.provider}`);
       }
-      await modelRuntime.setRuntimeApiKey(model.provider, apiKey);
+      // Runtime-resolved auth must retain its credential type (especially OAuth).
+      // Only explicit API-key mode needs an override to exclude stored OAuth.
+      if (authMode === "api_key") {
+        await modelRuntime.setRuntimeApiKey(model.provider, apiKey);
+      }
 
       // Load configured system files
       const systemFiles = await resolveSystemFiles({
@@ -774,11 +778,7 @@ export const piAdapter: SdkAdapter = {
           );
         }
         try {
-          const fallbackAuth = await modelRuntime.getAuth(fallback);
-          const fallbackKey = fallbackAuth?.auth.apiKey;
-          if (fallbackKey) {
-            await modelRuntime.setRuntimeApiKey(fallback.provider, fallbackKey);
-          }
+          await modelRuntime.getAuth(fallback);
           await agentSession.setModel(fallback);
           await resumeAfterFailedTurn(agentSession, () =>
             agentSession.prompt(messageWithAttachments, promptOptions)

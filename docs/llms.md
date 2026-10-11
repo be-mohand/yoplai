@@ -168,6 +168,7 @@ Multi-user mode scopes session maps and canonical history beneath `sessions/user
 4. Ensure missing workspace system files, then resolve prompt/system files.
 5. Collect extension prompt contributions and agent tools.
 6. Select in-process or sandbox adapter and stream normalized history events.
+   - Pi auth invariant: runtime-resolved OAuth/automatic credentials retain their SDK credential type, including model overrides and fallback models. Only explicit `api_key` selection installs a runtime API-key override; never reclassify an OAuth access token as an API key.
 7. Flush canonical history and settle lifecycle state; then drain queued non-native work.
 
 Workspace bootstrap creates missing `AGENTS.md`, `SOUL.md`, and `USER.md` from `docs/templates/` without overwriting existing files. `AGENTS.md` is implicitly prepended; `system_files` controls remaining prompt-file order.
