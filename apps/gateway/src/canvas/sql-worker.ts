@@ -3,22 +3,7 @@ import fs, { constants } from "node:fs";
 import path from "node:path";
 import { isInsideRoot } from "../util/paths.js";
 
-type Request = {
-  root: string;
-  rootDev: number;
-  rootIno: number;
-  snapshotParent: string;
-  snapshotParentDev: number;
-  snapshotParentIno: number;
-  snapshotDirectory: string;
-  snapshotDev: number;
-  snapshotIno: number;
-  database: string;
-  sql: string;
-  bindings: Record<string, string | null>;
-  rowLimit: number;
-  resultByteLimit: number;
-};
+import type { DashboardQueryRequest as Request } from "./sql-protocol.js";
 
 process.on("message", (request: Request) => {
   let database: Database.Database | undefined;

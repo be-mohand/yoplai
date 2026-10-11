@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "@yoplai/shared";
 import { dashboardDatabasePath } from "./dashboard-files.js";
+import type { DashboardQueryRequest } from "./sql-protocol.js";
 import { isInsideRoot } from "../util/paths.js";
 
 export const DASHBOARD_QUERY_ROW_LIMIT = 5_000;
@@ -101,18 +102,22 @@ export function runDashboardQuery(
       const snapshotStat = await fs.stat(snapshotDirectory);
       try {
         return await spawnDashboardQuery(
-          trustedRoot,
-          rootStat.dev,
-          rootStat.ino,
-          snapshotParent,
-          snapshotParentStat.dev,
-          snapshotParentStat.ino,
-          snapshotDirectory,
-          snapshotStat.dev,
-          snapshotStat.ino,
-          database,
-          sql,
-          bindings,
+          {
+            root: trustedRoot,
+            rootDev: rootStat.dev,
+            rootIno: rootStat.ino,
+            snapshotParent,
+            snapshotParentDev: snapshotParentStat.dev,
+            snapshotParentIno: snapshotParentStat.ino,
+            snapshotDirectory,
+            snapshotDev: snapshotStat.dev,
+            snapshotIno: snapshotStat.ino,
+            database,
+            sql,
+            bindings,
+            rowLimit: DASHBOARD_QUERY_ROW_LIMIT,
+            resultByteLimit: DASHBOARD_RESULT_BYTE_LIMIT,
+          },
           timeoutMs
         );
       } finally {
@@ -129,18 +134,7 @@ export function runDashboardQuery(
 }
 
 function spawnDashboardQuery(
-  root: string,
-  rootDev: number,
-  rootIno: number,
-  snapshotParent: string,
-  snapshotParentDev: number,
-  snapshotParentIno: number,
-  snapshotDirectory: string,
-  snapshotDev: number,
-  snapshotIno: number,
-  database: string,
-  sql: string,
-  bindings: Record<string, string | null>,
+  request: DashboardQueryRequest,
   timeoutMs: number
 ): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
@@ -184,22 +178,7 @@ function spawnDashboardQuery(
       if (message.error) finish(new Error(message.error));
       else finish(undefined, message.rows);
     });
-    child.send({
-      root,
-      rootDev,
-      rootIno,
-      snapshotParent,
-      snapshotParentDev,
-      snapshotParentIno,
-      snapshotDirectory,
-      snapshotDev,
-      snapshotIno,
-      database,
-      sql,
-      bindings,
-      rowLimit: DASHBOARD_QUERY_ROW_LIMIT,
-      resultByteLimit: DASHBOARD_RESULT_BYTE_LIMIT,
-    });
+    child.send(request);
   });
 }
 
