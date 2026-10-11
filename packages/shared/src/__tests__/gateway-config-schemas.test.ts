@@ -39,15 +39,18 @@ describe("gateway root and resolved config schemas", () => {
       ...commonSettings,
     });
 
-    const { version: _rv, agents: _ra, ...rootCommon } = root;
-    const { agents: _a, ...resolvedCommon } = resolved;
+    const rootCommon: Record<string, unknown> = { ...root };
+    delete rootCommon.version;
+    delete rootCommon.agents;
+    const resolvedCommon: Record<string, unknown> = { ...resolved };
+    delete resolvedCommon.agents;
     expect(resolvedCommon).toEqual(rootCommon);
     expect(Object.keys(resolvedCommon)).toEqual(Object.keys(rootCommon));
     expect(rootCommon.canvas).toEqual({
       enabled: true,
       baseUrl: "https://canvas.example.com",
     });
-    expect(rootCommon.imageDescription?.enabled).toBe(true);
+    expect(root.imageDescription?.enabled).toBe(true);
   });
 
   it("apply the same defaults to an empty config", () => {
