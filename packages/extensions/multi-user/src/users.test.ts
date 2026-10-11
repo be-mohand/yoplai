@@ -12,6 +12,7 @@ describe("getEligibleAccount", () => {
     insert.run("pending", "P", "p@example.com", 0, "user", 0);
     insert.run("admin", "A", "a@example.com", 0, "admin", 0);
     insert.run("root", "R", "r@example.com", 0, "superadmin", 0);
+    insert.run("combo", "C", "c@example.com", 0, "admin,user", 0);
     insert.run("banned", "B", "b@example.com", 1, "admin", 1);
   });
   afterEach(() => db.close());
@@ -26,5 +27,9 @@ describe("getEligibleAccount", () => {
     expect(getEligibleAccount(db, "nobody")).toBeUndefined();
     expect(getEligibleAccount(db, "pending")).toBeUndefined();
     expect(getEligibleAccount(db, "banned")).toBeUndefined();
+  });
+
+  it("matches roles exactly: unapproved comma-joined roles are not eligible", () => {
+    expect(getEligibleAccount(db, "combo")).toBeUndefined();
   });
 });

@@ -1,4 +1,4 @@
-import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
+import { createProactiveDmNoteStore, ProactiveDmNoteStore } from "./proactive-dm-notes.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -195,6 +195,46 @@ describe("slack agent tools", () => {
     const store = createProactiveDmNoteStore(dataDir);
     expect(store.isTracked("alpha", "D777", "3.3")).toBe(true);
     store.close();
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  it("send_message returns an error when the DM-note store cannot be opened", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
+    const dataDir = path.join(dir, "not-a-dir");
+    await fs.writeFile(dataDir, "x");
+    const postMessage = vi.fn().mockResolvedValue({ ts: "1.2" });
+    registerMockBot("alpha", { chat: { postMessage } as never });
+    const warn = vi.fn();
+    setSlackContext({ getDataDir: () => dataDir, logger: { warn } } as never);
+
+    const result = await tool("slack.send_message").execute(
+      { channel: "U123", text: "hi" },
+      { agent: agent("alpha"), config: config() }
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(warn).not.toHaveBeenCalled();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("send_message stays ok with a warning when the note write fails", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-slack-tools-"));
+    const postMessage = vi.fn().mockResolvedValue({ ts: "1.2" });
+    registerMockBot("alpha", { chat: { postMessage } as never });
+    const warn = vi.fn();
+    setSlackContext({ getDataDir: () => dataDir, logger: { warn } } as never);
+    const spy = vi.spyOn(ProactiveDmNoteStore.prototype, "addNote").mockImplementation(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+
+    const result = await tool("slack.send_message").execute(
+      { channel: "U123", text: "hi" },
+      { agent: agent("alpha"), config: config() }
+    );
+    spy.mockRestore();
+
+    expect(result).toMatchObject({ ok: true, channel: "U123" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("SQLITE_BUSY"));
     await fs.rm(dataDir, { recursive: true, force: true });
   });
 
