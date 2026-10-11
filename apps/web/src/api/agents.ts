@@ -3,7 +3,6 @@ import type {
   AgentStatusResponse,
   CapabilitiesResponse,
   FullHistoryMessage,
-  SimpleHistoryMessage,
   ThinkLevel,
 } from "./types";
 import type { Suggestion } from "@yoplai/shared/types";
@@ -103,25 +102,6 @@ function historyQuery(
   if (sessionId) params.set("sessionId", sessionId);
   else params.set("sessionKey", sessionKey);
   return params.toString();
-}
-
-export async function fetchSimpleHistory(
-  agentId: string,
-  sessionKey: string,
-  sessionId?: string
-): Promise<HistoryResponse<SimpleHistoryMessage>> {
-  const res = await fetch(
-    `${API_BASE}/agents/${agentId}/history?${historyQuery("simple", sessionKey, sessionId)}`
-  );
-  if (!res.ok) return { messages: [] };
-  const data = await res.json();
-  return {
-    messages: data.messages ?? [],
-    sessionId: data.sessionId,
-    thinkingLevel: data.thinkingLevel,
-    isStreaming: data.isStreaming,
-    activeTurn: data.activeTurn ?? null,
-  };
 }
 
 export async function fetchFullHistory(
