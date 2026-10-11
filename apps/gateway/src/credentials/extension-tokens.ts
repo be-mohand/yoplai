@@ -1,36 +1,16 @@
 import { resolveExtensionOAuth, type AgentConfig, type Extension, type GatewayConfig } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
-import { CredentialStore, type CredentialKey } from "./store.js";
+import { deletePersonalShared, EXTENSION_PERSONAL_SENTINEL, getPersonalShared, savePersonalShared, type PersonalFamily } from "./personal.js";
+import { CredentialStore } from "./store.js";
 import { resolveWebBaseUrl } from "../util/web-url.js";
 
 export function extensionTokenIntegration(extensionId: string): string {
   return `extension-config:${extensionId}`;
 }
 
-/**
- * Personal values follow the user across agents, so they live under one
- * credential-store agentId. It starts with NUL, which no agent folder name can contain.
- */
-const PERSONAL_EXTENSION_AGENT_ID = "\0personal-extension-shared";
-
-/** Marks a personal disconnect so stale legacy per-agent rows are not promoted again. */
-interface PersonalTombstone {
-  __tombstone: true;
-  deletedAt: number;
-}
-
-function isTombstone(payload: unknown): payload is PersonalTombstone {
-  return typeof payload === "object" && payload !== null &&
-    (payload as { __tombstone?: unknown }).__tombstone === true;
-}
-
-function personalExtensionTokenKey(userId: string, extensionId: string): CredentialKey {
-  return {
-    agentId: PERSONAL_EXTENSION_AGENT_ID,
-    integration: extensionTokenIntegration(extensionId),
-    scope: { type: "personal", userId },
-  };
+function personalFamily(userId: string, extensionId: string): PersonalFamily {
+  return { sentinel: EXTENSION_PERSONAL_SENTINEL, integration: extensionTokenIntegration(extensionId), userId };
 }
 
 /**
@@ -43,15 +23,7 @@ export function getPersonalExtensionTokens(
   userId: string,
   extensionId: string
 ): PersonalExtensionValues | undefined {
-  const shared = store.get<PersonalExtensionValues | PersonalTombstone>(personalExtensionTokenKey(userId, extensionId));
-  if (isTombstone(shared)) return undefined;
-  if (shared !== undefined) return shared;
-  const legacyKey: CredentialKey = { agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal", userId } };
-  const legacy = store.get<PersonalExtensionValues>(legacyKey);
-  if (legacy === undefined) return undefined;
-  store.save(personalExtensionTokenKey(userId, extensionId), legacy);
-  store.delete(legacyKey);
-  return legacy;
+  return getPersonalShared(store, personalFamily(userId, extensionId), agentId, (payload) => payload as PersonalExtensionValues);
 }
 
 /** Persist the requester's personal values for an extension, overwriting any tombstone. */
@@ -61,7 +33,7 @@ export function storePersonalExtensionTokens(
   extensionId: string,
   values: PersonalExtensionValues
 ): void {
-  store.save(personalExtensionTokenKey(userId, extensionId), values);
+  savePersonalShared(store, personalFamily(userId, extensionId), values);
 }
 
 /** Remove the requester's personal values everywhere; later reads do not resurrect legacy rows. */
@@ -71,9 +43,7 @@ export function deletePersonalExtensionTokens(
   userId: string,
   extensionId: string
 ): void {
-  const tombstone: PersonalTombstone = { __tombstone: true, deletedAt: Date.now() };
-  store.save(personalExtensionTokenKey(userId, extensionId), tombstone);
-  store.delete({ agentId, integration: extensionTokenIntegration(extensionId), scope: { type: "personal", userId } });
+  deletePersonalShared(store, personalFamily(userId, extensionId), agentId);
 }
 
 export function extensionSecretFields(extension: { requiredSecrets?: string[]; configJsonSchema?: Record<string, unknown> | null }): string[] {
