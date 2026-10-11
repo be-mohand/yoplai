@@ -14,7 +14,7 @@ import type {
   SubagentRuntimeCli,
 } from "@yoplai/shared";
 
-export const SUPPORTED_SUBAGENT_CLIS = ["claude", "codex", "pi"] as const;
+const SUPPORTED_SUBAGENT_CLIS = ["claude", "codex", "pi"] as const;
 
 export type StartSubagentInput = {
   cli: SubagentRuntimeCli;
@@ -585,7 +585,7 @@ export function isSupportedSubagentCli(
   return (SUPPORTED_SUBAGENT_CLIS as readonly string[]).includes(value);
 }
 
-export function getUnsupportedSubagentCliError(value: string): string {
+function getUnsupportedSubagentCliError(value: string): string {
   return `Unsupported CLI: ${value}. Supported CLIs: ${SUPPORTED_SUBAGENT_CLIS.join(", ")}.`;
 }
 
