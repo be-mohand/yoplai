@@ -387,7 +387,12 @@ describe("dashboard starter templates", () => {
         const doc = rendered.document;
         expect(doc.querySelector(".dk-error-banner"), file).toBeNull();
         expect(doc.querySelector(".dk-notice"), file).toBeNull();
-        expect(doc.querySelector("[class*='dk-']"), file).not.toBeNull();
+        const text = doc.body.textContent ?? "";
+        const shownValue = Object.values(result.data)
+          .flat()
+          .flatMap((row) => Object.values(row as Record<string, unknown>))
+          .some((value) => typeof value === "string" && value.length > 2 && text.includes(value));
+        expect(shownValue || rendered.charts.length > 0, file).toBe(true);
         expectDrillDowns(file, doc, bindings);
       } finally {
         rendered.close();
