@@ -12,6 +12,7 @@ import { useSession } from "../auth/client";
 import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
 import { CredentialScopeTabs, preferredScope, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 import { navigateOAuthPopup, onOAuthReturn, openOAuthPopup, reserveOAuthPopup } from "../lib/oauth-popup";
+import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "./ScopedConnectionNotes";
 
 type ConnectionState = OAuthConnectionState;
 
@@ -222,19 +223,14 @@ export function OAuthConnectCard(props: {
         <Show when={teamReadOnly()}>
           <p class="oauth-shared-note">
             {connected() || needsGrant()
-              ? "The whole team connection is managed by an admin."
+              ? TEAM_MANAGED_NOTE
               : lifecycle() === "needs_reconnect"
                 ? "The whole team connection needs reconnecting. An admin must reconnect it."
                 : "The whole team connection is not set up. An admin must connect it."}
           </p>
         </Show>
         <Show when={lifecycle() === "needs_reconnect" && !teamReadOnly()}>
-          <div class="oauth-connected-detail">
-            <p class="oauth-warn-text">
-              This connection can no longer refresh. Reconnect to restore
-              access.
-            </p>
-          </div>
+          <ReconnectWarning />
         </Show>
         <Show when={(connected() || needsGrant()) && status()?.account}>
           <div class="oauth-connected-detail">
@@ -245,11 +241,7 @@ export function OAuthConnectCard(props: {
           </div>
         </Show>
         <Show when={connected() || needsGrant()}>
-          <p class="oauth-shared-note">
-            {scope() === "personal"
-              ? "Used only for your requests. Without it, your requests use the team connection when available."
-              : "Used by everyone on this agent who has no personal connection."}
-          </p>
+          <ScopeUsageNote scope={scope()} />
         </Show>
         <Show when={loading() && !status()}>
           <div class="oauth-quiet">Checking connection…</div>

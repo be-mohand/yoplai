@@ -19,6 +19,7 @@ import { McpIcon } from "../components/McpExtensionCard";
 import { OAUTH_CONNECT_CARD_STYLES } from "../components/OAuthConnectCard";
 import { EXTENSION_DETAILS_STYLES } from "./ExtensionDetails";
 import { onOAuthReturn, openOAuthPopup } from "../lib/oauth-popup";
+import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "../components/ScopedConnectionNotes";
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
@@ -178,10 +179,10 @@ export function McpServerDetails() {
                     </Show>
                   </div>
                   <Show when={teamReadOnly()}>
-                    <p class="oauth-shared-note">The whole team connection is managed by an admin.</p>
+                    <p class="oauth-shared-note">{TEAM_MANAGED_NOTE}</p>
                   </Show>
                   <Show when={scopedState() === "needs_reconnect" && !teamReadOnly()}>
-                    <div class="oauth-connected-detail"><p class="oauth-warn-text">This connection can no longer refresh. Reconnect to restore access.</p></div>
+                    <ReconnectWarning />
                   </Show>
                   <Show when={scopedState() === "connected"}>
                     <Show when={scope() === "personal" ? server()?.personalAccount : server()?.teamAccount}>
@@ -192,11 +193,7 @@ export function McpServerDetails() {
                         </div>
                       )}
                     </Show>
-                    <p class="oauth-shared-note">
-                      {scope() === "personal"
-                        ? "Used only for your requests. Without it, your requests use the team connection when available."
-                        : "Used by everyone on this agent who has no personal connection."}
-                    </p>
+                    <ScopeUsageNote scope={scope()} />
                   </Show>
                 </CredentialScopeTabs>
               </Show>
