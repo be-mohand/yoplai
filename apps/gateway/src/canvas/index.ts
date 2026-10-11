@@ -18,6 +18,7 @@ import {
 } from "./store.js";
 import { lintDashboardHtml } from "./lint.js";
 import { executeDashboardQueries } from "./sql.js";
+import { serializeByKey } from "../util/serialize.js";
 import { isInsideRoot } from "../util/paths.js";
 
 let extensionContext: ExtensionContext | undefined;
@@ -262,23 +263,9 @@ async function writeDashboardFile(
   content: string
 ): Promise<void> {
   const candidate = path.join(dashboardDirectory(agent), slug);
-  const previous = dashboardWrites.get(candidate) ?? Promise.resolve();
-  const current = previous.then(
-    () => replaceDashboardFile(agent, slug, content),
-    () => replaceDashboardFile(agent, slug, content)
+  await serializeByKey(dashboardWrites, candidate, () =>
+    replaceDashboardFile(agent, slug, content)
   );
-  const settled = current.then(
-    () => undefined,
-    () => undefined
-  );
-  dashboardWrites.set(candidate, settled);
-  try {
-    await current;
-  } finally {
-    if (dashboardWrites.get(candidate) === settled) {
-      dashboardWrites.delete(candidate);
-    }
-  }
 }
 
 async function dashboardDiagnostics(agent: AgentConfig, html: string) {
