@@ -115,19 +115,3 @@ export async function lookupReactionMessage(
     return undefined;
   }
 }
-
-export function clearThreadParentCache(channel?: string, threadTs?: string): void {
-  if (channel && threadTs) {
-    threadParentCache.delete(cacheKey(channel, threadTs));
-    return;
-  }
-  if (channel) {
-    for (const key of threadParentCache.keys()) {
-      if (key.startsWith(`${channel}:`)) {
-        threadParentCache.delete(key);
-      }
-    }
-    return;
-  }
-  threadParentCache.clear();
-}
