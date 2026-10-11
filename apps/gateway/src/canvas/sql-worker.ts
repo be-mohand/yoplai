@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import fs, { constants } from "node:fs";
 import path from "node:path";
+import { isInsideRoot } from "../util/paths.js";
 
 type Request = {
   root: string;
@@ -157,7 +158,7 @@ function linkAnchored(
 function assertSnapshotDirectory(request: Request, root: string): void {
   const directory = fs.realpathSync(request.snapshotDirectory);
   const parent = fs.realpathSync(request.snapshotParent);
-  if (path.dirname(directory) !== parent || isConfined(root, directory)) {
+  if (path.dirname(directory) !== parent || isInsideRoot(root, directory)) {
     throw new Error("Query snapshot directory must be outside agent data");
   }
   const stat = fs.lstatSync(directory);
@@ -171,16 +172,7 @@ function assertSnapshotDirectory(request: Request, root: string): void {
   }
 }
 
-function isConfined(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
-}
-
 function assertConfined(root: string, candidate: string): void {
-  if (!isConfined(root, candidate))
+  if (!isInsideRoot(root, candidate))
     throw new Error("Database path escapes the agent data directory");
 }

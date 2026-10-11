@@ -18,6 +18,7 @@ import {
 } from "./store.js";
 import { lintDashboardHtml } from "./lint.js";
 import { executeDashboardQueries } from "./sql.js";
+import { isInsideRoot } from "../util/paths.js";
 
 let extensionContext: ExtensionContext | undefined;
 let extensionRegistry: DashboardRegistry | undefined;
@@ -139,16 +140,13 @@ export async function openDashboardFile(
         fs.lstat(directory),
         fs.realpath(candidate),
       ]);
-    const relative = path.relative(realDirectory, realCandidate);
     if (
       !openedStat.isFile() ||
       !candidateStat.isFile() ||
       !directoryStatAfter.isDirectory() ||
       openedStat.dev !== candidateStat.dev ||
       openedStat.ino !== candidateStat.ino ||
-      relative === ".." ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
+      !isInsideRoot(realDirectory, realCandidate)
     ) {
       throw new DashboardNotFoundError(notFound);
     }

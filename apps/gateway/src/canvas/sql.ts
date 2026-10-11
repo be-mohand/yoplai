@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "@yoplai/shared";
 import { dashboardDatabasePath } from "./index.js";
+import { isInsideRoot } from "../util/paths.js";
 
 export const DASHBOARD_QUERY_ROW_LIMIT = 5_000;
 export const DASHBOARD_QUERY_TIMEOUT_MS = 2_000;
@@ -74,12 +75,7 @@ export async function resolveDashboardDatabase(
   const location = dashboardDatabasePath(agent, database);
   const realRoot = await fs.realpath(location.root);
   const realDatabase = await fs.realpath(location.path);
-  const relative = path.relative(realRoot, realDatabase);
-  if (
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  ) {
+  if (!isInsideRoot(realRoot, realDatabase)) {
     throw new Error("Database path escapes the agent workspace");
   }
   return { root: realRoot, database: realDatabase };
