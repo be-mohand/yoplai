@@ -39,24 +39,26 @@ function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
 }
 
-type DashboardNode = { dashboard: AgentDashboard; children: DashboardNode[] };
-
-function dashboardTree(dashboards: AgentDashboard[]) {
+function dashboardSections(dashboards: AgentDashboard[]) {
   const bySlug = new Map(dashboards.map((dashboard) => [dashboard.slug, dashboard]));
-  const reached = new Set<string>();
-  const build = (dashboard: AgentDashboard, ancestors: string[]): DashboardNode => {
-    reached.add(dashboard.slug);
-    const chain = [...ancestors, dashboard.slug];
-    const children = dashboard.linksTo.flatMap((slug) => {
-      const child = bySlug.get(slug);
-      return child?.params.length && !chain.includes(slug) ? [build(child, chain)] : [];
-    });
-    return { dashboard, children };
-  };
-  const roots = dashboards.filter((dashboard) => dashboard.params.length === 0)
-    .map((dashboard) => build(dashboard, []));
-  const orphans = dashboards.filter((dashboard) => !reached.has(dashboard.slug));
-  return { roots, orphans };
+  const top = dashboards.filter((dashboard) => dashboard.params.length === 0);
+  const usedBy = new Map<string, AgentDashboard[]>();
+  for (const root of top) {
+    const seen = new Set<string>();
+    const visit = (dashboard: AgentDashboard) => {
+      for (const slug of dashboard.linksTo) {
+        const child = bySlug.get(slug);
+        if (!child?.params.length || seen.has(slug)) continue;
+        seen.add(slug);
+        usedBy.set(slug, [...(usedBy.get(slug) ?? []), root]);
+        visit(child);
+      }
+    };
+    visit(root);
+  }
+  const sub = dashboards.filter((dashboard) => dashboard.params.length > 0)
+    .map((dashboard) => ({ dashboard, usedBy: usedBy.get(dashboard.slug) ?? [] }));
+  return { top, sub };
 }
 
 const STAFF_ROLES = ["admin", "superadmin"];
@@ -229,7 +231,7 @@ export function EditAgent() {
     fetchAgentDashboards
   );
   const [copiedSlug, setCopiedSlug] = createSignal<string | null>(null);
-  const tree = createMemo(() => dashboardTree(dashboards.loading || dashboards.error ? [] : dashboards() ?? []));
+  const sections = createMemo(() => dashboardSections(dashboards.loading || dashboards.error ? [] : dashboards() ?? []));
   const copyDashboardLink = async (slug: string, link: string) => {
     try {
       await navigator.clipboard.writeText(new URL(link, window.location.origin).href);
@@ -238,32 +240,19 @@ export function EditAgent() {
       setCopiedSlug(null);
     }
   };
-  const DashboardRow = (props: { dashboard: AgentDashboard; message?: string }) => (
+  const DashboardRow = (props: { dashboard: AgentDashboard }) => (
     <div class="edit-agent-dashboard-row">
       <div>
         <strong>{props.dashboard.title}</strong>
-        <span>{props.dashboard.slug}<Show when={!props.message}> · Updated {new Date(props.dashboard.updatedAt).toLocaleString()}</Show></span>
-        <Show when={props.message}><span>{props.message}</span></Show>
+        <span>Updated {new Date(props.dashboard.updatedAt).toLocaleString()}</span>
       </div>
-      <Show when={!props.message}>
-        <div class="edit-agent-dashboard-actions">
-          <a href={props.dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
-          <button type="button" onClick={() => void copyDashboardLink(props.dashboard.slug, props.dashboard.link)}>
-            {copiedSlug() === props.dashboard.slug ? "Copied" : "Copy link"}
-          </button>
-        </div>
-      </Show>
+      <div class="edit-agent-dashboard-actions">
+        <a href={props.dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
+        <button type="button" onClick={() => void copyDashboardLink(props.dashboard.slug, props.dashboard.link)}>
+          {copiedSlug() === props.dashboard.slug ? "Copied" : "Copy link"}
+        </button>
+      </div>
     </div>
-  );
-  const DashboardBranch = (props: { node: DashboardNode }) => (
-    <li class="edit-agent-dashboard">
-      <DashboardRow dashboard={props.node.dashboard} message={props.node.dashboard.params.length ? "Opened from within the parent dashboard." : undefined} />
-      <Show when={props.node.children.length}>
-        <ul class="edit-agent-dashboard-list edit-agent-dashboard-children">
-          <For each={props.node.children}>{(node) => <DashboardBranch node={node} />}</For>
-        </ul>
-      </Show>
-    </li>
   );
 
   const [extensions, { refetch: refetchExtensions }] =
@@ -496,17 +485,27 @@ export function EditAgent() {
             </Show>
             <Show when={!dashboards.error}>
               <ul class="edit-agent-dashboard-list">
-                <For each={tree().roots}>{(node) => <DashboardBranch node={node} />}</For>
+                <For each={sections().top}>{(dashboard) => <li class="edit-agent-dashboard"><DashboardRow dashboard={dashboard} /></li>}</For>
               </ul>
-              <Show when={tree().orphans.length}>
-                <h2 class="edit-agent-section-title">Needs parameters</h2>
-                <ul class="edit-agent-dashboard-list">
-                  <For each={tree().orphans}>{(dashboard) => (
-                    <li class="edit-agent-dashboard">
-                      <DashboardRow dashboard={dashboard} message="Opened from another dashboard with parameters." />
-                    </li>
-                  )}</For>
-                </ul>
+              <Show when={sections().sub.length}>
+                <div class="edit-agent-subpages">
+                  <h2 class="edit-agent-section-title">Detail pages</h2>
+                  <p>These pages need dynamic arguments in the URL, so open them from their parent dashboard.</p>
+                  <ul>
+                    <For each={sections().sub}>{(item) => (
+                      <li>
+                        <strong>{item.dashboard.title}</strong>
+                        {" — "}
+                        <Show when={item.usedBy.length} fallback={<span>not linked from any top page</span>}>
+                          used by{" "}
+                          <For each={item.usedBy}>{(parent, i) => (
+                            <>{i() > 0 ? ", " : ""}<a href={parent.link} target="_blank" rel="noopener noreferrer">{parent.title}</a></>
+                          )}</For>
+                        </Show>
+                      </li>
+                    )}</For>
+                  </ul>
+                </div>
               </Show>
             </Show>
           </section>
@@ -691,7 +690,11 @@ export function EditAgent() {
           border-bottom: 1px solid var(--border-default);
         }
 
-        .edit-agent-dashboard-children { margin: 0 0 0 24px; }
+        .edit-agent-subpages { margin-top: 20px; font-size: 13px; color: var(--text-secondary); }
+        .edit-agent-subpages p { margin: 4px 0 8px; font-size: 12px; }
+        .edit-agent-subpages ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+        .edit-agent-subpages strong { color: var(--text-primary); }
+        .edit-agent-subpages span { font-size: 12px; }
 
         .edit-agent-dashboard strong, .edit-agent-dashboard span { display: block; }
         .edit-agent-dashboard strong { color: var(--text-primary); }
