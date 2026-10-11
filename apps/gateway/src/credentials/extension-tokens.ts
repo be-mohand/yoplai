@@ -1,5 +1,6 @@
 import { resolveExtensionOAuth, type AgentConfig, type Extension, type GatewayConfig } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
+import { isEnvRef, resolveEnvRefSync } from "../config/secrets.js";
 import { getOAuthService } from "../oauth/service.js";
 import { deletePersonalShared, EXTENSION_PERSONAL_SENTINEL, getPersonalShared, savePersonalShared, type PersonalFamily } from "./personal.js";
 import { CredentialStore } from "./store.js";
@@ -71,9 +72,9 @@ export function extensionPersonalFields(extension: { requiredSecrets?: string[];
 export function isValidPersonalValue(extension: Extension, field: string, value: unknown): boolean {
   if (!extensionPersonalFields(extension).includes(field)) return false;
   if (extensionSecretFields(extension).includes(field)) {
-    return typeof value === "string" && !!value && value !== "********" && !value.startsWith("$env:");
+    return typeof value === "string" && !!value && value !== "********" && !isEnvRef(value);
   }
-  if (typeof value === "string") return !value.startsWith("$env:");
+  if (typeof value === "string") return !isEnvRef(value);
   return typeof value === "number" || typeof value === "boolean";
 }
 
@@ -186,9 +187,9 @@ function overlayExtensionValues(
     const secret = fields.includes(field);
     const personalValue = personal?.[field];
     let value: unknown = personalValue ?? rawAgent[field] ?? root?.[field];
-    if (secret && typeof value === "string" && value.startsWith("$env:")) {
+    if (secret && isEnvRef(value)) {
       // Personal tokens are literal credentials, never references to host secrets.
-      value = personalValue !== undefined ? undefined : env[value.slice(5)];
+      value = personalValue !== undefined ? undefined : resolveEnvRefSync(value, env);
     }
     if (value === undefined || value === null || value === "") {
       delete agentConfig[field];
