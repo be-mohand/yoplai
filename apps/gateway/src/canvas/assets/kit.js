@@ -24,11 +24,21 @@
     if (document.body) render();
     else document.addEventListener("DOMContentLoaded", render, { once: true });
   }
-  global.addEventListener("error", (event) =>
-    showError(event.message, event.lineno)
-  );
+  // Browser extensions can inject scripts into the page; in this sandboxed
+  // document they often throw (e.g. reading sessionStorage). Those errors are
+  // not the dashboard's, so they must not raise the banner.
+  const EXTENSION_SOURCE =
+    /(?:chrome|moz|safari-web|safari|ms-browser)-extension:\/\//;
+  const fromExtension = (source) =>
+    typeof source === "string" && EXTENSION_SOURCE.test(source);
+  global.addEventListener("error", (event) => {
+    if (fromExtension(event.filename)) return;
+    if (fromExtension(event.error && event.error.stack)) return;
+    showError(event.message, event.lineno);
+  });
   global.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason;
+    if (fromExtension(reason && reason.stack)) return;
     showError(reason && reason.message ? reason.message : String(reason));
   });
   const SVG_NS = "http://www.w3.org/2000/svg";

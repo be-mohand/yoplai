@@ -876,6 +876,46 @@ describe("dashboard kit assets", () => {
     ]);
   });
 
+  it("ignores errors thrown by browser extensions injected into the page", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const dom = new JSDOM("<main></main>", {
+      runScripts: "outside-only",
+      url: "https://yoplai.test",
+    });
+    dom.window.eval(await (await routes.request("/v2/kit.js")).text());
+    // Seen in Chrome with the Jimo extension: its main-world script reads
+    // sessionStorage, which the sandboxed dashboard document forbids.
+    const storageError =
+      "Uncaught SecurityError: Failed to read the 'sessionStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.";
+    for (const filename of [
+      "chrome-extension://fchhipkldmfpfiocdoehmnnkcclmhbpg/jimo-extension.js",
+      "moz-extension://1b2c3d/content.js",
+      "safari-web-extension://ABC/inject.js",
+    ]) {
+      dom.window.dispatchEvent(
+        new dom.window.ErrorEvent("error", { message: storageError, filename, lineno: 1 })
+      );
+    }
+    const extensionRejection = new dom.window.Event("unhandledrejection") as Event & { reason?: unknown };
+    extensionRejection.reason = Object.assign(new Error("ext failed"), {
+      stack: "Error: ext failed\n    at chrome-extension://abc/inject.js:1:10",
+    });
+    dom.window.dispatchEvent(extensionRejection);
+    expect(dom.window.document.querySelector(".dk-error-banner")).toBeNull();
+
+    // The page's own errors still surface.
+    dom.window.dispatchEvent(
+      new dom.window.ErrorEvent("error", {
+        message: "boom",
+        filename: "https://yoplai.test/d/abc",
+        lineno: 3,
+      })
+    );
+    expect(
+      dom.window.document.querySelector(".dk-error-banner div")?.textContent
+    ).toBe("This dashboard hit an error: boom (line 3)");
+  });
+
   it("formats values, caps tables, and degrades charts without ECharts", async () => {
     const routes = createDashboardAssetRoutes(() => config);
     const dom = new JSDOM(

@@ -12,6 +12,9 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - `sandbox.gatewayTransport: "socket"` lets sandboxed runs reach the gateway through a read-only mounted Unix socket that serves only `/internal`, instead of `host.docker.internal`. Fixes every gateway tool (`dashboard_link`, scheduler tools, `extract_document`, extension and MCP tools) and OAuth renewal failing with `fetch failed` whenever containers have no route to the host, as under rootless Docker.
+### Fixed
+
+- Canvas dashboards no longer show "This dashboard hit an error" for errors thrown by browser extensions injected into the page (e.g. an extension reading `sessionStorage`, which the sandboxed dashboard document forbids). Errors whose source is a `chrome-extension://`, `moz-extension://` or `safari-web-extension://` script are ignored; the page's own errors still surface.
 
 ## v0.25.0 — Canvas dashboards, personal credentials + team-scoped admin
 
