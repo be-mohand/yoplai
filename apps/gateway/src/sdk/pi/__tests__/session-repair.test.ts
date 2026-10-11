@@ -7,22 +7,43 @@ type ToolResultMessage = AgentMessage & {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  content?: Array<{ type: string; text?: string }>;
 };
 
+/**
+ * Real in-memory Pi session: messages are seeded through SessionManager and
+ * the agent state is the provider projection, refreshed the way AgentSession
+ * refreshes it.
+ */
 function makeSession(messages: AgentMessage[]) {
-  const state = { messages };
-  return {
-    agent: {
-      state,
-    },
-  };
+  const sessionManager = SessionManager.inMemory(process.cwd());
+  for (const message of messages) {
+    sessionManager.appendMessage(
+      message as Parameters<typeof sessionManager.appendMessage>[0]
+    );
+  }
+  const state = { messages: sessionManager.buildSessionProjection().messages };
+  const refreshContext = vi.fn(() => {
+    state.messages = sessionManager.buildSessionProjection().messages;
+  });
+  return { agent: { state }, sessionManager, refreshContext };
+}
+
+function context(session: ReturnType<typeof makeSession>) {
+  return session.sessionManager.buildSessionProjection().messages;
+}
+
+function expectUnchanged(session: ReturnType<typeof makeSession>, length: number) {
+  expect(context(session)).toHaveLength(length);
+  expect(session.agent.state.messages).toEqual(context(session));
+  expect(session.refreshContext).not.toHaveBeenCalled();
 }
 
 describe("repairOrphanedToolCalls", () => {
   it("no-ops on empty session", () => {
     const session = makeSession([]);
     repairOrphanedToolCalls(session);
-    expect(session.agent.state.messages).toHaveLength(0);
+    expectUnchanged(session, 0);
   });
 
   it("no-ops when session has only user messages", () => {
@@ -30,23 +51,25 @@ describe("repairOrphanedToolCalls", () => {
       {
         role: "user",
         content: [{ type: "text", text: "hello" }],
+        timestamp: 1,
       } as AgentMessage,
     ]);
     repairOrphanedToolCalls(session);
-    expect(session.agent.state.messages).toHaveLength(1);
+    expectUnchanged(session, 1);
   });
 
   it("no-ops when last assistant has stopReason endTurn", () => {
     const session = makeSession([
-      { role: "user", content: [{ type: "text", text: "hi" }] } as AgentMessage,
+      { role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 } as AgentMessage,
       {
         role: "assistant",
         stopReason: "endTurn",
         content: [{ type: "text", text: "Hello!" }],
+        timestamp: 2,
       } as unknown as AgentMessage,
     ]);
     repairOrphanedToolCalls(session);
-    expect(session.agent.state.messages).toHaveLength(2);
+    expectUnchanged(session, 2);
   });
 
   it("no-ops when toolResult already present after toolUse", () => {
@@ -54,93 +77,76 @@ describe("repairOrphanedToolCalls", () => {
       {
         role: "assistant",
         stopReason: "toolUse",
-        content: [{ type: "toolCall", id: "tc1", name: "bash" }],
-      } as AgentMessage,
+        content: [{ type: "toolCall", id: "tc1", name: "bash", arguments: {} }],
+        timestamp: 1,
+      } as unknown as AgentMessage,
       {
         role: "toolResult",
         toolCallId: "tc1",
+        toolName: "bash",
         content: [{ type: "text", text: "output" }],
+        isError: false,
+        timestamp: 2,
       } as AgentMessage,
     ]);
     repairOrphanedToolCalls(session);
-    expect(session.agent.state.messages).toHaveLength(2);
+    expectUnchanged(session, 2);
   });
 
-  it("repairs single orphaned tool call", () => {
+  it("repairs single orphaned tool call in the provider context", () => {
     const session = makeSession([
       {
         role: "user",
         content: [{ type: "text", text: "run it" }],
+        timestamp: 1,
       } as AgentMessage,
       {
         role: "assistant",
         stopReason: "toolUse",
-        content: [{ type: "toolCall", id: "tc_abc", name: "bash" }],
-      } as AgentMessage,
+        content: [{ type: "toolCall", id: "tc_abc", name: "bash", arguments: {} }],
+        timestamp: 2,
+      } as unknown as AgentMessage,
     ]);
     repairOrphanedToolCalls(session);
 
-    const result = session.agent.state.messages;
-    expect(result).toHaveLength(3);
-    expect(result[2].role).toBe("toolResult");
-    expect((result[2] as ToolResultMessage).toolCallId).toBe("tc_abc");
-    expect((result[2] as ToolResultMessage).toolName).toBe("bash");
-    expect((result[2] as ToolResultMessage).isError).toBe(true);
+    const result = context(session);
+    expect(result.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+    ]);
+    const repaired = result[2] as ToolResultMessage;
+    expect(repaired.toolCallId).toBe("tc_abc");
+    expect(repaired.toolName).toBe("bash");
+    expect(repaired.isError).toBe(true);
+    expect(repaired.content?.[0]?.text).toBe(
+      "[Session interrupted — tool result unavailable. The gateway was restarted while this tool call was pending.]"
+    );
+    expect(session.refreshContext).toHaveBeenCalledTimes(1);
+    expect(session.agent.state.messages).toEqual(result);
   });
 
-  it("repairs multiple orphaned tool calls", () => {
+  it("repairs multiple orphaned tool calls in the provider context", () => {
     const session = makeSession([
       {
         role: "assistant",
         stopReason: "toolUse",
         content: [
-          { type: "toolCall", id: "tc1", name: "bash" },
-          { type: "toolCall", id: "tc2", name: "read" },
+          { type: "toolCall", id: "tc1", name: "bash", arguments: {} },
+          { type: "toolCall", id: "tc2", name: "read", arguments: {} },
         ],
-      } as AgentMessage,
+        timestamp: 1,
+      } as unknown as AgentMessage,
     ]);
     repairOrphanedToolCalls(session);
 
-    const result = session.agent.state.messages;
+    const result = context(session) as ToolResultMessage[];
     expect(result).toHaveLength(3);
-    expect(result[1].role).toBe("toolResult");
-    expect((result[1] as ToolResultMessage).toolCallId).toBe("tc1");
-    expect(result[2].role).toBe("toolResult");
-    expect((result[2] as ToolResultMessage).toolCallId).toBe("tc2");
-    expect((result[1] as ToolResultMessage).isError).toBe(true);
-    expect((result[2] as ToolResultMessage).isError).toBe(true);
-  });
-
-  it("uses canonical session manager append when available", () => {
-    const session = makeSession([
-      {
-        role: "user",
-        content: [{ type: "text", text: "run it" }],
-      } as AgentMessage,
-      {
-        role: "assistant",
-        stopReason: "toolUse",
-        content: [{ type: "toolCall", id: "tc_abc", name: "bash" }],
-      } as AgentMessage,
+    expect(result.slice(1).map((m) => [m.role, m.toolCallId, m.toolName, m.isError])).toEqual([
+      ["toolResult", "tc1", "bash", true],
+      ["toolResult", "tc2", "read", true],
     ]);
-    const appendMessage = vi.fn();
-    const refreshContext = vi.fn();
-
-    repairOrphanedToolCalls({
-      ...session,
-      sessionManager: { appendMessage },
-      refreshContext,
-    });
-
-    expect(appendMessage).toHaveBeenCalledTimes(1);
-    expect(appendMessage.mock.calls[0]?.[0]).toMatchObject({
-      role: "toolResult",
-      toolCallId: "tc_abc",
-      toolName: "bash",
-      isError: true,
-    });
-    expect(refreshContext).toHaveBeenCalledTimes(1);
-    expect(session.agent.state.messages).toHaveLength(2);
+    expect(session.agent.state.messages).toEqual(result);
   });
 
   it("repairs canonical provider context when a later user message exists", () => {
@@ -230,9 +236,10 @@ describe("repairOrphanedToolCalls", () => {
         role: "assistant",
         stopReason: "toolUse",
         content: [{ type: "text", text: "thinking..." }],
-      } as AgentMessage,
+        timestamp: 1,
+      } as unknown as AgentMessage,
     ]);
     repairOrphanedToolCalls(session);
-    expect(session.agent.state.messages).toHaveLength(1);
+    expectUnchanged(session, 1);
   });
 });
