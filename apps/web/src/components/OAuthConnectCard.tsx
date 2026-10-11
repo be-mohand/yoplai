@@ -9,18 +9,10 @@ import {
   type JSX,
 } from "solid-js";
 import { useSession } from "../auth/client";
+import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
 import { CredentialScopeTabs, preferredScope, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 
-type ConnectionState = "connected" | "needs_reconnect" | "disconnected";
-
-type OAuthStatus = {
-  state?: ConnectionState;
-  connected: boolean;
-  provider: string;
-  account?: string;
-  scopes?: string[];
-  canConfigureTeam?: boolean;
-};
+type ConnectionState = OAuthConnectionState;
 
 const OAUTH_POPUP_MESSAGE_TYPES = new Set(["yoplai-oauth", "aihub-oauth"]);
 
@@ -77,14 +69,8 @@ export function OAuthConnectCard(props: {
     setLoading(true);
     try {
       // Both scopes are loaded so each tab can show its own state.
-      const load = async (target: CredentialScope): Promise<OAuthStatus> => {
-        const response = await fetch(
-          `/api/oauth/${encodeURIComponent(props.provider)}/status?agent=${encodeURIComponent(props.agentId)}&scope=${target}`
-        );
-        return response.ok
-          ? ((await response.json()) as OAuthStatus)
-          : { connected: false, provider: props.provider };
-      };
+      const load = (target: CredentialScope): Promise<OAuthStatus> =>
+        fetchOAuthStatus(props.agentId, props.provider, target);
       const [team, personal] = await Promise.all([
         load("team"),
         session().data?.user ? load("personal") : undefined,
@@ -149,12 +135,8 @@ export function OAuthConnectCard(props: {
   // Non-admins can see, but not change, the admin-managed team connection.
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
-  const authorizeUrl = (target: CredentialScope, scopes: string[]) => {
-    const query = new URLSearchParams({ agent: props.agentId });
-    if (scopes.length) query.set("scopes", scopes.join(","));
-    query.set("scope", target);
-    return `/api/oauth/${encodeURIComponent(props.provider)}/authorize?${query.toString()}`;
-  };
+  const authorizeUrl = (target: CredentialScope, scopes: string[]) =>
+    oauthAuthorizeUrl(props.agentId, props.provider, target, scopes);
 
   const connect = async () => {
     if (!props.agentId) return;
@@ -177,10 +159,7 @@ export function OAuthConnectCard(props: {
   };
 
   const disconnect = async () => {
-    await fetch(
-      `/api/oauth/${encodeURIComponent(props.provider)}/disconnect?agent=${encodeURIComponent(props.agentId)}&scope=${scope()}`,
-      { method: "POST" }
-    );
+    await disconnectOAuth(props.agentId, props.provider, scope());
     await refreshStatus();
   };
 
