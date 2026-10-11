@@ -33,6 +33,7 @@ import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
 import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
 import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
+import { onOAuthReturn, reserveOAuthPopup } from "../lib/oauth-popup";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -293,16 +294,7 @@ export function EditAgent() {
   });
 
   createEffect(() => {
-    const onReturn = () => { void refetchMcpServers(); };
-    const onMessage = (event: MessageEvent) => {
-      if (event.data?.extension === "mcp" && ["yoplai-oauth", "aihub-oauth"].includes(event.data.type)) onReturn();
-    };
-    window.addEventListener("focus", onReturn);
-    window.addEventListener("message", onMessage);
-    onCleanup(() => {
-      window.removeEventListener("focus", onReturn);
-      window.removeEventListener("message", onMessage);
-    });
+    onCleanup(onOAuthReturn(() => { void refetchMcpServers(); }, { extension: "mcp" }));
   });
 
   const addCustomExtension = async (event: SubmitEvent) => {
@@ -325,7 +317,7 @@ export function EditAgent() {
     // Reserve the popup in the click event; browsers block windows opened after fetch.
     // Skipped when a shared personal grant already covers this URL.
     const alreadyConnected = mcpScope() === "personal" && connectedMcpHref() === url.href;
-    const popup = alreadyConnected ? null : window.open("", "yoplai-oauth", "width=520,height=640");
+    const popup = alreadyConnected ? null : reserveOAuthPopup();
     setMcpBusy(true);
     setMcpError(undefined);
     try {

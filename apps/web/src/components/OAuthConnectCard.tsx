@@ -11,10 +11,9 @@ import {
 import { useSession } from "../auth/client";
 import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
 import { CredentialScopeTabs, preferredScope, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
+import { navigateOAuthPopup, onOAuthReturn, openOAuthPopup, reserveOAuthPopup } from "../lib/oauth-popup";
 
 type ConnectionState = OAuthConnectionState;
-
-const OAUTH_POPUP_MESSAGE_TYPES = new Set(["yoplai-oauth", "aihub-oauth"]);
 
 function stateOf(status: OAuthStatus | undefined): ConnectionState {
   if (!status) return "disconnected";
@@ -22,9 +21,7 @@ function stateOf(status: OAuthStatus | undefined): ConnectionState {
 }
 
 function providerLabel(provider: string): string {
-  return provider === "google"
-    ? "Google"
-    : provider.charAt(0).toUpperCase() + provider.slice(1);
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
 export function OAuthConnectCard(props: {
@@ -96,22 +93,7 @@ export function OAuthConnectCard(props: {
   });
 
   createEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (
-        event.data &&
-        typeof event.data === "object" &&
-        OAUTH_POPUP_MESSAGE_TYPES.has(event.data.type)
-      ) {
-        void refreshStatus();
-      }
-    };
-    const onFocus = () => void refreshStatus();
-    window.addEventListener("message", onMessage);
-    window.addEventListener("focus", onFocus);
-    onCleanup(() => {
-      window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", onFocus);
-    });
+    onCleanup(onOAuthReturn(() => void refreshStatus()));
   });
 
   const status = () => statuses()[scope()];
@@ -142,15 +124,14 @@ export function OAuthConnectCard(props: {
     if (!props.agentId) return;
     const target = scope();
     if (!props.hasUnsavedSettings?.()) {
-      window.open(authorizeUrl(target, scopesFor(target)), "yoplai-oauth", "width=520,height=640");
+      openOAuthPopup(authorizeUrl(target, scopesFor(target)));
       return;
     }
     // Reserve the popup in the click event; browsers block windows opened after fetch.
-    const popup = window.open("", "yoplai-oauth", "width=520,height=640");
+    const popup = reserveOAuthPopup();
     try {
       const url = authorizeUrl(target, (await props.saveSettings?.()) ?? scopesFor(target));
-      if (popup && !popup.closed) popup.location.replace(url);
-      else window.location.assign(url);
+      navigateOAuthPopup(popup, url);
       setError(undefined);
     } catch (cause) {
       popup?.close();

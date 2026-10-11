@@ -18,6 +18,7 @@ import { CredentialScopeTabs, preferredScope, type ScopeStatus } from "../compon
 import { McpIcon } from "../components/McpExtensionCard";
 import { OAUTH_CONNECT_CARD_STYLES } from "../components/OAuthConnectCard";
 import { EXTENSION_DETAILS_STYLES } from "./ExtensionDetails";
+import { onOAuthReturn, openOAuthPopup } from "../lib/oauth-popup";
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
@@ -47,16 +48,7 @@ export function McpServerDetails() {
   let scopePicked = false;
 
   createEffect(() => {
-    const onReturn = () => { void refetch(); };
-    const onMessage = (event: MessageEvent) => {
-      if (event.data?.extension === "mcp" && ["yoplai-oauth", "aihub-oauth"].includes(event.data.type)) onReturn();
-    };
-    window.addEventListener("focus", onReturn);
-    window.addEventListener("message", onMessage);
-    onCleanup(() => {
-      window.removeEventListener("focus", onReturn);
-      window.removeEventListener("message", onMessage);
-    });
+    onCleanup(onOAuthReturn(() => { void refetch(); }, { extension: "mcp" }));
   });
 
   const tabStatus = (target: McpScope): ScopeStatus | undefined => {
@@ -76,10 +68,8 @@ export function McpServerDetails() {
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
   const connect = () => {
-    window.open(
-      `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}`,
-      "yoplai-oauth",
-      "width=520,height=640"
+    openOAuthPopup(
+      `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}`
     );
   };
 
