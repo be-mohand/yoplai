@@ -51,8 +51,7 @@ import {
 } from "./utils/dedupe.js";
 import { clearHistory, getHistory, recordMessage } from "./utils/history.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
-import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
-import { createSlackThreadSessionBindingStore } from "./thread-session-bindings.js";
+import { withProactiveDmNotes, withThreadBindings } from "./store-scope.js";
 import {
   buildSlackHistoryKey,
   buildSlackSessionKey,
@@ -331,17 +330,14 @@ function claimProactiveReply(
 ): boolean {
   if (!data.thread_ts) return false;
   try {
-    const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
-    try {
-      return store.claimReply(
+    return withProactiveDmNotes(getSlackContext().getDataDir(), (store) =>
+      store.claimReply(
         target.agent.id,
         data.channel,
-        data.thread_ts,
+        data.thread_ts!,
         target.dmConfig?.proactiveReplies?.maxReplies
-      );
-    } finally {
-      store.close();
-    }
+      )
+    );
   } catch (err) {
     console.debug(`${target.logPrefix} Proactive reply check failed:`, err);
     return false;
@@ -354,12 +350,9 @@ function isTrackedProactiveMessage(
   ts: string
 ): boolean {
   try {
-    const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
-    try {
-      return store.isTracked(agentId, channel, ts);
-    } finally {
-      store.close();
-    }
+    return withProactiveDmNotes(getSlackContext().getDataDir(), (store) =>
+      store.isTracked(agentId, channel, ts)
+    );
   } catch {
     return false;
   }
@@ -981,18 +974,12 @@ async function handleSlackMessage(
   let boundSessionId: string | undefined;
   if (data.thread_ts && data.thread_ts !== data.ts) {
     try {
-      const store = createSlackThreadSessionBindingStore(
-        getSlackContext().getDataDir()
+      boundSessionId = withThreadBindings(
+        getSlackContext().getDataDir(),
+        (store) =>
+          store.getBinding(data.channel, data.thread_ts!, target.agent.id)
+            ?.sessionId
       );
-      try {
-        boundSessionId = store.getBinding(
-          data.channel,
-          data.thread_ts,
-          target.agent.id
-        )?.sessionId;
-      } finally {
-        store.close();
-      }
     } catch (err) {
       console.debug(`${target.logPrefix} Thread binding lookup failed:`, err);
     }
@@ -1291,12 +1278,9 @@ function takeProactiveDmNotes(
   userId: string | undefined,
   channelId: string
 ) {
-  const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
-  try {
-    return store.takeNotes(agentId, userId, channelId);
-  } finally {
-    store.close();
-  }
+  return withProactiveDmNotes(getSlackContext().getDataDir(), (store) =>
+    store.takeNotes(agentId, userId, channelId)
+  );
 }
 
 async function handleSlackReaction(
