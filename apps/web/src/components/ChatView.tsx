@@ -999,7 +999,6 @@ export function ChatView() {
   let skipNextHistoryRefresh = false;
   let fileDragDepth = 0;
   const noAnimIds = new Set<string>();
-  const noAnimFullMessageKeys = new Set<string>();
 
   const [searchParams] = useSearchParams();
   const sessionKey = () => getSessionKey(params.agentId);
@@ -1095,16 +1094,6 @@ export function ChatView() {
     )
   );
 
-  const fullMessageKey = (message: FullHistoryMessage) =>
-    `${message.role}:${message.timestamp}:${message.content
-      .map((block) => {
-        if (block.type === "text") return block.text;
-        if (block.type === "thinking") return block.thinking;
-        if (block.type === "toolCall") return `${block.id}:${block.name}`;
-        return block.fileId;
-      })
-      .join("|")
-      .slice(0, 80)}`;
 
   const [autoScrollPinned, setAutoScrollPinned] = createSignal(true);
   const SCROLL_THRESHOLD = 40;
@@ -2008,7 +1997,6 @@ export function ChatView() {
           : [{ type: "text", text: content }],
       timestamp,
     };
-    noAnimFullMessageKeys.add(fullMessageKey(assistantMessage));
     setFullMessages((prev) => [...prev, assistantMessage, ...toolResults]);
     return true;
   };
