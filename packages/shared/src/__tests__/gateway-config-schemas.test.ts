@@ -46,6 +46,14 @@ describe("gateway root and resolved config schemas", () => {
     delete resolvedCommon.agents;
     expect(resolvedCommon).toEqual(rootCommon);
     expect(Object.keys(resolvedCommon)).toEqual(Object.keys(rootCommon));
+    expect(Object.keys(rootCommon)).toEqual(Object.keys(commonSettings));
+    expect(rootCommon).toMatchObject({
+      defaultProjectManager: "pom",
+      extensionsPath: "./extensions",
+      agentFab: true,
+      env: { FOO: "bar" },
+      gateway: { port: 4000, bind: "lan" },
+    });
     expect(rootCommon.canvas).toEqual({
       enabled: true,
       baseUrl: "https://canvas.example.com",
