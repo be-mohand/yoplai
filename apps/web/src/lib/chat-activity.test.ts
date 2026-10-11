@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   groupActivityItems,
   lastFiveWords,
@@ -86,15 +86,39 @@ describe("streamingActivityItems", () => {
     ]);
   });
 
+  afterEach(() => vi.useRealTimers());
+
   it("closes last thinking when not streaming and omits tool details in simple mode", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1234);
     const items = streamingActivityItems(blocks, segment, false, false);
     expect(items[2]).toMatchObject({ active: false });
-    expect(typeof (items[2] as { endedAt: number }).endedAt).toBe("number");
+    expect((items[2] as { endedAt: number }).endedAt).toBe(1234);
     expect(items[1]).toEqual({
       type: "tool",
       name: "t",
       arguments: { x: 1 },
       at: 20,
     });
+  });
+
+  it("ends thinking at the next block timestamp for a nonzero-offset segment", () => {
+    const offsetBlocks = [
+      { type: "text", timestamp: 5 },
+      { type: "thinking", thinking: "x", timestamp: 40 },
+      { type: "file", timestamp: 50 },
+    ];
+    const offsetSegment = groupActivityItems(
+      offsetBlocks,
+      (block) => block.type === "thinking"
+    )[1] as Extract<
+      ReturnType<typeof groupActivityItems<(typeof offsetBlocks)[number]>>[number],
+      { kind: "activity" }
+    >;
+    expect(
+      streamingActivityItems(offsetBlocks, offsetSegment, true, false)
+    ).toEqual([
+      { type: "thinking", content: "x", startedAt: 40, endedAt: 50, active: false },
+    ]);
   });
 });
