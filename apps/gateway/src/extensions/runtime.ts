@@ -48,6 +48,28 @@ function withOAuthConnectLink(
   };
 }
 
+function needsCallTimeRebind(extension: Extension): boolean {
+  return Boolean(extension.oauth) || extensionSecretFields(extension).length > 0;
+}
+
+function rebindAtCallTime(extension: Extension, tool: ExtensionAgentTool): ExtensionAgentTool["execute"] {
+  return async (args: unknown, context: ExtensionAgentToolContext) => {
+    const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
+    if (current.missing.length) {
+      const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
+      return {
+        error: "extension_credentials_required",
+        message: `Add your own token using Just me at [Configure ${extension.displayName}](${connectUrl}) before using this tool. An admin can also configure Whole team credentials.`,
+        connectUrl,
+      };
+    }
+    const callTools = await extension.getAgentTools?.(current.agent, buildHookContext(current.agent, current.config, context.userId));
+    const callTool = callTools?.find((candidate) => candidate.name === tool.name);
+    if (!callTool) return { error: "extension_tool_unavailable", connectUrl: current.connectUrl };
+    return callTool.execute(args, { ...context, agent: current.agent, config: current.config });
+  };
+}
+
 export type LoadedExtensionAgentTool = ExtensionAgentTool & {
   extensionId: string;
 };
@@ -214,21 +236,7 @@ export class ExtensionRuntime {
             ...tool,
             extensionId: extension.id,
             // Rebuild at call time: credentials, and for OAuth the grant deciding personal vs team settings, may have changed.
-            execute: withOAuthConnectLink(extension, extensionSecretFields(extension).length === 0 && !extension.oauth ? tool.execute : async (args: unknown, context: ExtensionAgentToolContext) => {
-              const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
-              if (current.missing.length) {
-                const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
-                return {
-                  error: "extension_credentials_required",
-                  message: `Add your own token using Just me at [Configure ${extension.displayName}](${connectUrl}) before using this tool. An admin can also configure Whole team credentials.`,
-                  connectUrl,
-                };
-              }
-              const callTools = await extension.getAgentTools?.(current.agent, buildHookContext(current.agent, current.config, context.userId));
-              const callTool = callTools?.find((candidate) => candidate.name === tool.name);
-              if (!callTool) return { error: "extension_tool_unavailable", connectUrl: current.connectUrl };
-              return callTool.execute(args, { ...context, agent: current.agent, config: current.config });
-            }),
+            execute: withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute),
           }));
         } catch (error) {
           console.warn("Skipping extension tools", {
