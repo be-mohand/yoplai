@@ -7,7 +7,7 @@ import {
   registerOAuthProvider,
   resetOAuthProviders,
 } from "./providers.js";
-import { googleProvider, zendeskProvider } from "./test-providers.js";
+import { googleProvider, zendeskProvider } from "./__tests__/providers.fixture.js";
 
 describe("oauth provider registry", () => {
   afterEach(() => {
