@@ -4,7 +4,7 @@ import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "@yoplai/shared";
-import { dashboardDatabasePath } from "./index.js";
+import { dashboardDatabasePath } from "./dashboard-files.js";
 import { isInsideRoot } from "../util/paths.js";
 
 export const DASHBOARD_QUERY_ROW_LIMIT = 5_000;
@@ -26,7 +26,7 @@ const workerWaiters: Array<{
 export type DashboardQuery = { name: string; database: string; sql: string };
 export type DashboardQueryError = { name: string; error: string };
 
-function attributes(source: string): Map<string, string> {
+export function attributes(source: string): Map<string, string> {
   return new Map(
     [...source.matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/gs)].map((match) => [
       match[1].toLowerCase(),
