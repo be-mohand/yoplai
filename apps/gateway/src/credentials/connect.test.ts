@@ -1,25 +1,43 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { registerCredentialOAuthConnector, type CredentialOAuthConnectorOptions } from "@yoplai/shared";
+import { listSettingsChanges } from "../audit/store.js";
 import { credentialConnectHost } from "./connect.js";
+import { getPersonalExtensionTokens } from "./extension-tokens.js";
+import { CredentialStore } from "./store.js";
 
-const state = vi.hoisted(() => ({
-  agent: { id: "sales", extensions: { fixture: { enabled: true } } },
-  extension: {
-    id: "fixture", requiredSecrets: ["apiToken"],
-    configJsonSchema: { properties: { apiToken: { title: "API token", writeOnly: true }, optional: { writeOnly: true } } },
-  },
-  start: vi.fn(async () => ({ authorizeUrl: "https://provider.test/authorize" })),
-  save: vi.fn(),
-  audit: vi.fn(),
-  before: {} as Record<string, string>,
+const state = vi.hoisted(() => {
+  // Real config dir, credential store, extension tokens and audit DB live under a temp home.
+  const home = `${process.env.TMPDIR ?? "/tmp"}/connect-test-${process.pid}`;
+  process.env.YOPLAI_HOME = home;
+  return {
+    home,
+    agent: { id: "sales", name: "sales", workspace: "/tmp/sales", extensions: { fixture: { enabled: true } } },
+    extension: {
+      id: "fixture", requiredSecrets: ["apiToken"],
+      configJsonSchema: {
+        required: ["username"],
+        properties: { apiToken: { title: "API token", writeOnly: true }, optional: { writeOnly: true }, username: { type: "string" } },
+      },
+    },
+    start: vi.fn(async (_options: Record<string, unknown>) => ({ authorizeUrl: "https://provider.test/authorize" })),
+  };
+});
+vi.mock("../config/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../config/index.js")>()),
+  getAgent: (id: string) => id === "sales" ? state.agent : undefined,
+  loadConfig: () => ({ extensions: {} }),
 }));
-vi.mock("../config/index.js", () => ({ getAgent: (id: string) => id === "sales" ? state.agent : undefined, loadConfig: () => ({ extensions: {} }) }));
 vi.mock("../extensions/registry.js", () => ({ getLoadedExtensions: () => [state.extension], isExtensionLoaded: () => false }));
 vi.mock("../oauth/service.js", () => ({ getOAuthService: () => ({ startAuthorization: state.start }) }));
-vi.mock("./extension-tokens.js", () => ({ extensionSecretFields: () => ["apiToken", "optional"], getPersonalExtensionTokens: () => state.before, resolveExtensionTokenConfig: () => ({ missing: ["apiToken", "username"] }), savePersonalExtensionTokens: state.save }));
-vi.mock("./store.js", () => ({ CredentialStore: class { get() { return state.before; } } }));
-vi.mock("../audit/store.js", () => ({ recordSettingsChange: state.audit }));
-afterEach(() => { vi.clearAllMocks(); state.before = {}; });
+vi.mock("../oauth/encryption.js", async () => {
+  const { TokenCipher } = await import("../oauth/crypto.js");
+  return { resolveTokenCipher: () => new TokenCipher("connect-test-secret") };
+});
+const store = () => new CredentialStore();
+afterEach(() => { vi.clearAllMocks(); fs.rmSync(path.join(state.home, "credentials"), { recursive: true, force: true }); });
+afterAll(() => fs.rmSync(state.home, { recursive: true, force: true }));
 
 describe("host single-pass credential connector", () => {
   it("starts host OAuth for the verified personal user with the completion callback", async () => {
@@ -28,18 +46,23 @@ describe("host single-pass credential connector", () => {
     expect(state.start).toHaveBeenCalledWith({ ...options, provider: "google", scopes: ["gmail"], scope: "personal", onComplete: expect.any(Function) });
     const start = state.start.mock.calls[0] as unknown as [{ onComplete: () => Promise<void> }];
     await start[0].onComplete();
-    expect(state.audit).toHaveBeenCalledWith(expect.objectContaining({ actorUserId: "alice", action: "oauth.connect", scope: "personal" }));
+    expect(listSettingsChanges({ action: "oauth.connect" }).entries).toEqual([
+      expect.objectContaining({ actorUserId: "alice", agentId: "sales", targetId: "google", scope: "personal" }),
+    ]);
     expect(options.onComplete).toHaveBeenCalledOnce();
   });
   it("uses declared form fields and the validated personal writer", async () => {
     expect(await credentialConnectHost.fields("sales", "fixture")).toEqual([
-      { name: "username", label: "username", required: false, secret: false },
+      { name: "username", label: "username", required: true, secret: false },
       { name: "apiToken", label: "API token", required: true, secret: true },
       { name: "optional", label: "optional", required: false, secret: true },
     ]);
-    await credentialConnectHost.save("sales", "fixture", "alice", { apiToken: "fixture-value" });
-    expect(state.save).toHaveBeenCalledWith(state.extension, state.agent, { extensions: {} }, "alice", { apiToken: "fixture-value" }, expect.any(Object));
-    expect(state.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "extension.personal_update", changes: [{ field: "apiToken", secret: "set" }] }));
+    await credentialConnectHost.save("sales", "fixture", "alice", { apiToken: "fixture-value", username: "alice-name" });
+    expect(getPersonalExtensionTokens(store(), "sales", "alice", "fixture")).toEqual({ apiToken: "fixture-value", username: "alice-name" });
+    expect(listSettingsChanges({ action: "extension.personal_update" }).entries).toEqual([
+      expect.objectContaining({ actorUserId: "alice", agentId: "sales", targetId: "fixture", changes: expect.arrayContaining([{ field: "apiToken", secret: "set" }]) }),
+    ]);
+    await expect(credentialConnectHost.save("sales", "fixture", "alice", { apiToken: "" })).rejects.toThrow("Invalid personal credential fields");
     await expect(credentialConnectHost.save("sales", "unavailable", "alice", {})).rejects.toThrow("unavailable");
     await expect(credentialConnectHost.fields("missing", "fixture")).rejects.toThrow("unavailable");
   });
@@ -60,8 +83,10 @@ describe("host single-pass credential connector", () => {
     await expect(credentialConnectHost.start({ kind: "extension-oauth", extensionId: "fixture", targetId: "server-a" }, options)).rejects.toThrow("does not support");
   });
   it("does not audit an unchanged personal token", async () => {
-    state.before = { apiToken: "unchanged" };
-    await credentialConnectHost.save("sales", "fixture", "alice", { apiToken: "unchanged" });
-    expect(state.audit).not.toHaveBeenCalled();
+    const values = { apiToken: "unchanged", username: "alice-name" };
+    await credentialConnectHost.save("sales", "fixture", "alice", values);
+    const audited = listSettingsChanges({ action: "extension.personal_update" }).entries.length;
+    await credentialConnectHost.save("sales", "fixture", "alice", values);
+    expect(listSettingsChanges({ action: "extension.personal_update" }).entries).toHaveLength(audited);
   });
 });
