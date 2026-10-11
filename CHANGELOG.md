@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Preserve assistant text replay signatures in persisted Pi sessions so subsequent OpenAI Responses turns do not fail with an invalid message ID, while continuing to redact credentials.
 - Preserve Pi OAuth credentials during initial authentication, per-run model overrides, and fallback model selection instead of converting access tokens into API-key overrides that break OAuth-only providers such as `openai-codex`.
 
 ## v0.25.0 — Canvas dashboards, personal credentials + team-scoped admin

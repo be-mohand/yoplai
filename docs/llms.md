@@ -156,7 +156,7 @@ Unless noted, paths are under `$YOPLAI_HOME`:
 | `projects.json`                    | Project numeric ID counter                                 |
 | `tool-labels.json`                 | Maintenance-model-generated friendly tool-call label templates (`GET /api/tool-labels`) |
 
-Canonical history drives history APIs, web UI, Langfuse, compaction, channel context, and media blocks. Pi session files are SDK-owned runtime state; code may use them only for resume/backfill/fallback behavior.
+Canonical history drives history APIs, web UI, Langfuse, compaction, channel context, and media blocks. Pi session files are SDK-owned runtime state; code may use them only for resume/backfill/fallback behavior. Session sanitization must preserve assistant text-block `textSignature` replay metadata (OpenAI Responses item ID/phase) verbatim; this session-only exception must not exempt credential fields from general storage redaction.
 
 Multi-user mode scopes session maps and canonical history beneath `sessions/users/<userId>/`. There is no automatic migration from existing single-user history into user ownership.
 
