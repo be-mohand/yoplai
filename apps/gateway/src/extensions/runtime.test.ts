@@ -96,6 +96,51 @@ describe("ExtensionRuntime", () => {
     } finally { unregister(); resolveToken.mockRestore(); }
   });
 
+  it("pins the OAuth refusal payload, the no-link fallback and provider_not_configured passthrough", async () => {
+    const execute = vi.fn(async () => "ran");
+    const oauth = { provider: "google", scopes: ["gmail"] };
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "sample", oauth, getAgentTools: async () => [{ name: "sample_send", description: "Send", parameters: {}, execute }] })]);
+    const resolveToken = vi.spyOn(getOAuthService(), "resolveToken");
+    const unregister = registerCredentialConnectLinkProvider(async () => "<link>");
+    try {
+      resolveToken.mockResolvedValue({ connected: false, provider: "google", reason: "insufficient_scope", message: "Reconnect" });
+      expect((await runtime.executeTool(agent, "sample_send", {}, config, "s")).result).toEqual({
+        error: "oauth_connection_required", connected: false, reason: "insufficient_scope", authorizeUrl: "<link>",
+        message: "Connect your personal google account at <link>, then try again.",
+      });
+      resolveToken.mockResolvedValue({ connected: false, provider: "google", reason: "not_connected", message: "nc" });
+      expect((await runtime.executeTool(agent, "sample_send", {}, config, "s")).result).toEqual({
+        error: "oauth_connection_required", authorizeUrl: "<link>",
+        message: "Connect your personal google account at <link>, then try again.",
+      });
+      expect(execute).not.toHaveBeenCalled();
+      resolveToken.mockResolvedValue({ connected: false, provider: "google", reason: "provider_not_configured", message: "pnc" });
+      expect((await runtime.executeTool(agent, "sample_send", {}, config, "s")).result).toBe("ran");
+      unregister();
+      resolveToken.mockResolvedValue({ connected: false, provider: "google", reason: "not_connected", message: "nc" });
+      expect((await runtime.executeTool(agent, "sample_send", {}, config, "s")).result).toBe("ran");
+    } finally { unregister(); resolveToken.mockRestore(); }
+  });
+
+  it("rebuilds the extension tool at call time so a changed token config applies after mount", async () => {
+    const seen: unknown[] = [];
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({
+      id: "sample",
+      requiredSecrets: ["token"],
+      getAgentTools: async (a) => [{ name: "sample_send", description: "Send", parameters: {}, execute: async () => { seen.push((a as AgentConfig).extensions?.sample); return "ok"; } }],
+    })]);
+    const withToken = { ...agent, extensions: { sample: { enabled: true, token: "t1" } } };
+    const mounted = await runtime.getTool(withToken, "sample_send", config);
+    const other = { ...agent, extensions: { sample: { enabled: true, token: "t2" } } };
+    const result = await mounted!.execute({}, { agent: other, config, env: {}, sessionId: "s" });
+    expect(result).toBe("ok");
+    expect(seen).toEqual([expect.objectContaining({ token: "t2" })]);
+    const missing = await mounted!.execute({}, { agent: { ...agent, extensions: { sample: { enabled: true } } }, config, env: {}, sessionId: "s" });
+    expect(missing).toMatchObject({ error: "extension_credentials_required" });
+  });
+
   it("owns loaded extension state and capabilities", () => {
     const runtime = new ExtensionRuntime();
     runtime.load(

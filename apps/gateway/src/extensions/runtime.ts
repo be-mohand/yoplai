@@ -8,7 +8,7 @@ import type {
   OAuthRequirement,
   ResolvedOAuth,
 } from "@yoplai/shared";
-import { requestCredentialConnectLink, resolveExtensionOAuth, extensionConfigFieldNames, registerOAuthProviders } from "@yoplai/shared";
+import { oauthConnectionRefusal, requestCredentialConnectLink, resolveExtensionOAuth, extensionConfigFieldNames, registerOAuthProviders } from "@yoplai/shared";
 import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
@@ -42,10 +42,8 @@ function withOAuthConnectLink(
     const requirement = resolveExtensionOAuth(extension, scoped.config, scoped.agent, resolveAgentEnv(scoped.agent, scoped.config));
     if (!requirement) return execute(args, context);
     const oauth = await getOAuthService().resolveToken(context.agent.id, requirement, context.userId);
-    if (!oauth.connected && oauth.reason !== "provider_not_configured") {
-      const link = await requestCredentialConnectLink(context, { kind: "oauth", ...requirement });
-      if (link) return { error: "oauth_connection_required", ...(oauth.reason === "insufficient_scope" ? { connected: false, reason: oauth.reason } : {}), authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
-    }
+    const refusal = await oauthConnectionRefusal(context, requirement, oauth);
+    if (refusal) return refusal;
     return execute(args, context);
   };
 }
