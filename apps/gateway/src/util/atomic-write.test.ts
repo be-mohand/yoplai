@@ -18,10 +18,8 @@ describe("atomic write", () => {
     expect(await fs.readdir(path.dirname(file))).toEqual(["b.json"]);
   });
 
-  it("failed write keeps the previous file and leaves no .tmp", async () => {
+  it("failed write leaves the destination directory and no .tmp", async () => {
     const file = path.join(dir, "f.txt");
-    await fs.writeFile(file, "old");
-    await fs.rm(file);
     await fs.mkdir(file); // rename onto a directory fails
     await expect(writeFileAtomic(file, "new")).rejects.toThrow();
     expect((await fs.readdir(dir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
