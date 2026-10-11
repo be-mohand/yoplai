@@ -10,25 +10,12 @@ import {
 import { fetchUsers, startImpersonation, updateUser } from "../../api/admin";
 import { useSession } from "../../auth/client";
 import AdminLayout from "./AdminLayout";
+import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from "../../lib/roles";
 
 type SessionUser = {
   id?: string;
   role?: string | string[] | null;
 };
-
-const STAFF_ROLES = ["admin", "superadmin"];
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
-}
-
-function hasSuperadminRole(
-  role: string | string[] | null | undefined
-): boolean {
-  if (Array.isArray(role)) return role.includes("superadmin");
-  return role === "superadmin";
-}
 
 function normalizeRole(role: string | string[] | null | undefined): string {
   const value = Array.isArray(role) ? role[0] : role;

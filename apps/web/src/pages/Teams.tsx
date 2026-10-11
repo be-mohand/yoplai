@@ -24,11 +24,7 @@ import {
 } from "../api/teams";
 import { fetchUsers, type AdminUser } from "../api/admin";
 import { useSession } from "../auth/client";
-
-function hasSuperadminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.includes("superadmin");
-  return role === "superadmin";
-}
+import { isSuperadmin as hasSuperadminRole } from "../lib/roles";
 
 // Curated palette + Font Awesome icons for the pickers. Both are optional; the
 // backend supplies grey / fa-users defaults when left unset.

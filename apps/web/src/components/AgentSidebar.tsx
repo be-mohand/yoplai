@@ -22,6 +22,7 @@ import {
   UnauthenticatedError,
 } from "../api";
 import type { SessionSummary } from "../api/types";
+import { hasStaffRole as hasAdminRole } from "../lib/roles";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
@@ -31,13 +32,6 @@ type AgentSidebarProps = {
 const LazySidebarAccountPanel = lazy(
   () => import("../auth/SidebarAccountPanel")
 );
-
-const STAFF_ROLES = ["admin", "superadmin"];
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
-}
 
 function relativeTime(timestamp: number): string {
   const diff = Math.max(0, Date.now() - timestamp);

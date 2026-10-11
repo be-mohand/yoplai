@@ -32,6 +32,7 @@ import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
 import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
+import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -59,13 +60,6 @@ function dashboardSections(dashboards: AgentDashboard[]) {
   const sub = dashboards.filter((dashboard) => dashboard.params.length > 0)
     .map((dashboard) => ({ dashboard, usedBy: usedBy.get(dashboard.slug) ?? [] }));
   return { top, sub };
-}
-
-const STAFF_ROLES = ["admin", "superadmin"];
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
 }
 
 // Team assignment for the edit page: assign a never-forked pool agent to a
@@ -180,7 +174,7 @@ export function EditAgent() {
   // Superadmins see every agent; admins are scoped to their teams.
   const isSuperadmin = createMemo(() => {
     const role = (session().data?.user as { role?: string | string[] } | undefined)?.role;
-    return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
+    return isSuperadminRole(role);
   });
 
   const [agents] = createResource(() =>
