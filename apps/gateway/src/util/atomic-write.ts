@@ -14,7 +14,7 @@ export async function writeFileAtomic(
     await fs.writeFile(temporary, data);
     await fs.rename(temporary, file);
   } catch (error) {
-    await fs.rm(temporary, { force: true });
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
     throw error;
   }
 }
