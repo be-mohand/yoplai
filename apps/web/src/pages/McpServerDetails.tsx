@@ -14,7 +14,7 @@ import {
   type McpScope,
   type McpServer,
 } from "../api/mcp-servers";
-import { CredentialScopeTabs, preferredScope, type ScopeStatus } from "../components/CredentialScopeTabs";
+import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type ScopeStatus } from "../components/CredentialScopeTabs";
 import { McpIcon } from "../components/McpExtensionCard";
 import { OAUTH_CONNECT_CARD_STYLES } from "../components/OAuthConnectCard";
 import { EXTENSION_DETAILS_STYLES } from "./ExtensionDetails";
@@ -55,8 +55,8 @@ export function McpServerDetails() {
   const tabStatus = (target: McpScope): ScopeStatus | undefined => {
     const state = target === "personal" ? server()?.personalState : server()?.teamState;
     if (!server()) return undefined;
-    if (state === "needs_reconnect") return { tone: "error", label: "Reconnect" };
-    return state === "connected" ? { tone: "ok", label: "Connected" } : { tone: "off", label: "Not set up" };
+    if (state === "needs_reconnect") return STATUS_RECONNECT;
+    return state === "connected" ? STATUS_CONNECTED : STATUS_NOT_SET_UP;
   };
 
   createEffect(() => {

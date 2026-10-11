@@ -10,7 +10,7 @@ import {
 } from "solid-js";
 import { useSession } from "../auth/client";
 import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
-import { CredentialScopeTabs, preferredScope, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
+import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
 import { navigateOAuthPopup, onOAuthReturn, openOAuthPopup, reserveOAuthPopup } from "../lib/oauth-popup";
 import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "./ScopedConnectionNotes";
 
@@ -108,10 +108,10 @@ export function OAuthConnectCard(props: {
     const current = statuses()[target];
     if (!current) return undefined;
     const state = stateOf(current);
-    if (state === "needs_reconnect") return { tone: "error", label: "Reconnect" };
-    if (state !== "connected") return { tone: "off", label: "Not set up" };
+    if (state === "needs_reconnect") return STATUS_RECONNECT;
+    if (state !== "connected") return STATUS_NOT_SET_UP;
     return scopesFor(target).every((required) => current.scopes?.includes(required))
-      ? { tone: "ok", label: "Connected" }
+      ? STATUS_CONNECTED
       : { tone: "error", label: "Not granted" };
   };
 

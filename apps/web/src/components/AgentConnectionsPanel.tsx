@@ -8,7 +8,7 @@ import {
 } from "../api/connections";
 import type { ExtensionCatalogEntry } from "../api/extensions";
 import { useSession } from "../auth/client";
-import { ScopeIcon, STATUS_PILL_STYLES, StatusPill, type ScopeStatus } from "./CredentialScopeTabs";
+import { ScopeIcon, STATUS_PILL_STYLES, StatusPill, STATUS_CONNECTED, STATUS_NOT_CONNECTED } from "./CredentialScopeTabs";
 
 export function AgentConnectionsPanel(props: {
   agentId: string;
@@ -128,7 +128,7 @@ export function AgentConnectionsPanel(props: {
                   <ScopeIcon scope="personal" class="agent-connection-scope-icon" />
                   <span class="agent-connection-scope-text">
                     <span class="agent-connection-scope-label">Just me</span>
-                    <StatusPill status={connection.personal ? CONNECTED : NOT_CONNECTED} />
+                    <StatusPill status={connection.personal ? STATUS_CONNECTED : STATUS_NOT_CONNECTED} />
                   </span>
                   <Show when={connection.personal}>
                     <button
@@ -147,7 +147,7 @@ export function AgentConnectionsPanel(props: {
                   <ScopeIcon scope="team" class="agent-connection-scope-icon" />
                   <span class="agent-connection-scope-text">
                     <span class="agent-connection-scope-label">Whole team</span>
-                    <StatusPill status={connection.team ? CONNECTED : NOT_CONNECTED} />
+                    <StatusPill status={connection.team ? STATUS_CONNECTED : STATUS_NOT_CONNECTED} />
                   </span>
                 </div>
               </li>
@@ -158,9 +158,6 @@ export function AgentConnectionsPanel(props: {
     </section>
   );
 }
-
-const CONNECTED: ScopeStatus = { tone: "ok", label: "Connected" };
-const NOT_CONNECTED: ScopeStatus = { tone: "error", label: "Not connected" };
 
 const KIND_LABELS: Record<AgentConnection["kind"], string> = {
   oauth: "Account sign-in",
