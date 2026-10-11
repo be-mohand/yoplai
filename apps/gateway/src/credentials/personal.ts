@@ -11,25 +11,19 @@ export const EXTENSION_PERSONAL_SENTINEL = "\0personal-extension-shared";
 
 /**
  * Written at the shared key on disconnect so stale legacy per-agent rows are not
- * re-promoted. Carries both historical flags (`tombstone` from OAuth, `__tombstone`
- * from extension tokens) so either generation of code recognises it.
+ * re-promoted. The flag is family-specific (`tombstone` for OAuth records,
+ * `__tombstone` for extension values) so a user's own `tombstone` setting is data.
  */
-interface Tombstone {
-  tombstone: true;
-  __tombstone: true;
-  integration: string;
-  userId: string;
-  deletedAt: number;
-}
+export type TombstoneFlag = "tombstone" | "__tombstone";
 
-function isTombstone(payload: unknown): boolean {
+function isTombstone(payload: unknown, flag: TombstoneFlag): boolean {
   if (typeof payload !== "object" || payload === null) return false;
-  const flags = payload as { tombstone?: unknown; __tombstone?: unknown };
-  return flags.tombstone === true || flags.__tombstone === true;
+  return (payload as Record<string, unknown>)[flag] === true;
 }
 
 export interface PersonalFamily {
   sentinel: string;
+  tombstoneFlag: TombstoneFlag;
   integration: string;
   userId: string;
 }
@@ -56,7 +50,7 @@ export function getPersonalShared<T>(
   acceptLegacy: (value: T) => boolean = () => true
 ): T | undefined {
   const stored = store.get<unknown>(sharedKey(family));
-  if (isTombstone(stored)) return undefined;
+  if (isTombstone(stored, family.tombstoneFlag)) return undefined;
   const shared = stored === undefined ? undefined : parse(stored);
   if (shared !== undefined) return shared;
   const key = legacyKey(family, legacyAgentId);
@@ -75,9 +69,8 @@ export function savePersonalShared(store: CredentialStore, family: PersonalFamil
 
 /** Remove the shared value and this agent's legacy row; later reads do not resurrect other legacy rows. */
 export function deletePersonalShared(store: CredentialStore, family: PersonalFamily, legacyAgentId: string): void {
-  const tombstone: Tombstone = {
-    tombstone: true,
-    __tombstone: true,
+  const tombstone = {
+    [family.tombstoneFlag]: true,
     integration: family.integration,
     userId: family.userId,
     deletedAt: Date.now(),

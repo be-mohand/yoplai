@@ -11,7 +11,7 @@ export function extensionTokenIntegration(extensionId: string): string {
 }
 
 function personalFamily(userId: string, extensionId: string): PersonalFamily {
-  return { sentinel: EXTENSION_PERSONAL_SENTINEL, integration: extensionTokenIntegration(extensionId), userId };
+  return { sentinel: EXTENSION_PERSONAL_SENTINEL, tombstoneFlag: "__tombstone", integration: extensionTokenIntegration(extensionId), userId };
 }
 
 /**

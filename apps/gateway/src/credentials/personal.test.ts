@@ -56,6 +56,11 @@ describe("personal credentials written by the previous code", () => {
     expect(getPersonalExtensionTokens(credentials, "sally", "alice", "zendesk")).toEqual({ apiKey: "new" });
   });
 
+  it("treats an ordinary extension setting named `tombstone` as data, not a tombstone", () => {
+    storePersonalExtensionTokens(credentials, "alice", "zendesk", { apiKey: "k", tombstone: true });
+    expect(getPersonalExtensionTokens(credentials, "sally", "alice", "zendesk")).toEqual({ apiKey: "k", tombstone: true });
+  });
+
   it("keeps the two sentinels independent", () => {
     credentials.save({ agentId: OAUTH_SENTINEL, integration: extensionTokenIntegration("zendesk"), scope: alice }, { apiKey: "wrong" });
     expect(getPersonalExtensionTokens(credentials, "sally", "alice", "zendesk")).toBeUndefined();

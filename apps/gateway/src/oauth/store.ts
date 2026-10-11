@@ -86,7 +86,7 @@ export class OAuthConnectionStore {
   }
 
   #personal(provider: string, userId: string): PersonalFamily {
-    return { sentinel: OAUTH_PERSONAL_SENTINEL, integration: provider, userId };
+    return { sentinel: OAUTH_PERSONAL_SENTINEL, tombstoneFlag: "tombstone", integration: provider, userId };
   }
 
   get(
