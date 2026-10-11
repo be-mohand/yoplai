@@ -66,6 +66,7 @@ import {
   groupActivityItems,
   lastFiveWords,
   type ActivitySegment,
+  streamingActivityItems,
 } from "../lib/chat-activity";
 
 function isEmoji(str: string): boolean {
@@ -3084,43 +3085,16 @@ export function ChatView() {
                               segment().endIndex ===
                                 streamingBlocks().length - 1
                             }
-                            items={activityItems(segment()).map(
-                              (block, itemIndex) =>
-                                block.type === "thinking"
-                                  ? {
-                                      type: "thinking" as const,
-                                      content: block.thinking,
-                                      startedAt: block.timestamp,
-                                      endedAt:
-                                        streamingBlocks()[
-                                          segment().startIndex + itemIndex + 1
-                                        ]?.timestamp ??
-                                        (isStreaming() &&
-                                        segment().endIndex ===
-                                          streamingBlocks().length - 1
-                                          ? undefined
-                                          : Date.now()),
-                                      active:
-                                        isStreaming() &&
-                                        segment().endIndex ===
-                                          streamingBlocks().length - 1 &&
-                                        itemIndex ===
-                                          activityItems(segment()).length - 1,
-                                    }
-                                  : (() => {
-                                      const tool = block as Extract<
-                                        StreamingBlock,
-                                        { type: "toolCall" }
-                                      >;
-                                      return {
-                                        type: "tool" as const,
-                                        name: tool.name,
-                                        arguments: tool.arguments,
-                                        result: tool.result,
-                                        status: tool.status,
-                                        at: tool.timestamp,
-                                      };
-                                    })()
+                            items={streamingActivityItems<
+                              StreamingBlock,
+                              FullToolResultMessage
+                            >(
+                              streamingBlocks(),
+                              segment() as ActivitySegment<StreamingBlock> & {
+                                kind: "activity";
+                              },
+                              isStreaming(),
+                              true
                             )}
                           />
                         )}
@@ -3208,45 +3182,16 @@ export function ChatView() {
                             isStreaming() &&
                             segment().endIndex === streamingBlocks().length - 1
                           }
-                          items={activityItems(segment()).map(
-                            (block, itemIndex) =>
-                              block.type === "thinking"
-                                ? {
-                                    type: "thinking" as const,
-                                    content: block.thinking,
-                                    startedAt: block.timestamp,
-                                    endedAt:
-                                      streamingBlocks()[
-                                        segment().startIndex + itemIndex + 1
-                                      ]?.timestamp ??
-                                      (isStreaming() &&
-                                      segment().endIndex ===
-                                        streamingBlocks().length - 1
-                                        ? undefined
-                                        : Date.now()),
-                                    active:
-                                      isStreaming() &&
-                                      segment().endIndex ===
-                                        streamingBlocks().length - 1 &&
-                                      itemIndex ===
-                                        activityItems(segment()).length - 1,
-                                  }
-                                : {
-                                    type: "tool" as const,
-                                    name: (
-                                      block as Extract<
-                                        StreamingBlock,
-                                        { type: "toolCall" }
-                                      >
-                                    ).name,
-                                    arguments: (
-                                      block as Extract<
-                                        StreamingBlock,
-                                        { type: "toolCall" }
-                                      >
-                                    ).arguments,
-                                    at: block.timestamp,
-                                  }
+                          items={streamingActivityItems<
+                            StreamingBlock,
+                            FullToolResultMessage
+                          >(
+                            streamingBlocks(),
+                            segment() as ActivitySegment<StreamingBlock> & {
+                              kind: "activity";
+                            },
+                            isStreaming(),
+                            false
                           )}
                         />
                       )}

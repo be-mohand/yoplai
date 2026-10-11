@@ -44,3 +44,79 @@ export function lastFiveWords(text: string): string {
   if (words.length > 1 && !/\s$/.test(text)) words.pop();
   return words.length ? `${words.slice(-5).join(" ")}…` : "";
 }
+
+type StreamingThinkingBlock = {
+  type: "thinking";
+  thinking: string;
+  timestamp: number;
+};
+type StreamingToolBlock<R> = {
+  type: "toolCall";
+  name: string;
+  arguments: unknown;
+  status: "running" | "done" | "error";
+  timestamp: number;
+  result?: R;
+};
+type StreamingBlockLike = { type: string; timestamp: number };
+
+export type StreamingActivityItem<R> =
+  | {
+      type: "thinking";
+      content: string;
+      startedAt: number;
+      endedAt: number | undefined;
+      active: boolean;
+    }
+  | {
+      type: "tool";
+      name: string;
+      arguments: unknown;
+      result?: R;
+      status?: "running" | "done" | "error";
+      at: number;
+    };
+
+/**
+ * Projects an activity segment of streaming blocks to display items.
+ * Thinking ends at the next block's timestamp; the last block of a still
+ * streaming turn stays open (`endedAt` undefined) and its final thinking item
+ * is active. Tool result/status are included only when `toolDetails` is set.
+ */
+export function streamingActivityItems<B extends StreamingBlockLike, R>(
+  blocks: readonly B[],
+  segment: Extract<ActivitySegment<B>, { kind: "activity" }>,
+  streaming: boolean,
+  toolDetails: boolean
+): StreamingActivityItem<R>[] {
+  const working = streaming && segment.endIndex === blocks.length - 1;
+  return segment.items.map((block, itemIndex) => {
+    if (block.type === "thinking") {
+      return {
+        type: "thinking",
+        content: (block as unknown as StreamingThinkingBlock).thinking,
+        startedAt: block.timestamp,
+        endedAt:
+          blocks[segment.startIndex + itemIndex + 1]?.timestamp ??
+          (working ? undefined : Date.now()),
+        active: working && itemIndex === segment.items.length - 1,
+      };
+    }
+    const tool = block as unknown as StreamingToolBlock<R>;
+    return toolDetails
+      ? {
+          type: "tool",
+          name: tool.name,
+          arguments: tool.arguments,
+          result: tool.result,
+          status: tool.status,
+          at: tool.timestamp,
+        }
+      : {
+          type: "tool",
+          name: tool.name,
+          arguments: tool.arguments,
+          at: tool.timestamp,
+        };
+  });
+}
