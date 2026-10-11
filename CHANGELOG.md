@@ -9,168 +9,154 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
-### Changed
+## v0.25.0 — Canvas dashboards, personal credentials + team-scoped admin
 
-- OAuth providers now ship with extensions: extensions declare `oauthProviders` descriptors and the gateway registers them at load (equivalent duplicates are fine, conflicting ones fail the load). Google and Zendesk descriptors are no longer built into the platform.
+Agents can now publish live Canvas dashboards: self-contained HTML pages behind stable, team-authorized links, backed by read-only SQLite queries, a versioned Dashboard Kit, a built-in dashboard skill with templates, version history, and a Dashboards tab per agent. Credentials become personal: Google OAuth, MCP servers, and extension tokens each support **Just me** and **Whole team** connections, personal ones follow you across agents, Slack users can pair their Slack identity with their Yoplai account, and scheduled jobs pick whose credentials they use. Extension and MCP setup gets a full UI overhaul (MCP servers as first-class cards, credential tabs with status pills, a connect prompt, Top extensions, shared MCP servers), extensions now ship their own OAuth providers (Zendesk moves to OAuth). Multi-user mode adds email/password sign-in, auto-approval, private teams, an onboarding tour, a settings audit log, and scopes admins to their teams. Web chat folds thinking and tool calls into lean groups with friendly labels; Slack agents gain thread, Canvas, List, and channel tools plus proactive-DM replies; Discord bots can talk to each other; the scheduler gains one-shot jobs plus pause/delete; Langfuse moves to SDK v5; and sandboxes protect operator files and support rootless Docker.
 
-### Added
+### Upgrade notes
 
-- Scheduled jobs tab: delete button with a confirmation dialog. Team jobs can only be deleted by admins and superadmins (also enforced for the API and chat tool).
-- Scheduled jobs tab: on/off switch to pause or resume a job. Team jobs can only be paused/resumed by admins and superadmins (also enforced for the API and chat tool).
-- OAuth descriptors support `tokenAuth: "basic"` (HTTP Basic client credentials at token/refresh/revoke) and `accountFromTokenResponse` (account label taken from the token response).
-- OAuth descriptors support `tokenRequestFormat: "json"` (JSON token, refresh and revoke request bodies, e.g. Notion); default stays form-encoded.
-
-### Fixed
-
-- Chat: removed the blinking text cursor on streaming messages. It sometimes showed up in the middle of a turn, before later thinking or tool traces, and the spinner already shows that a turn is running.
-- Connect prompt: "Enable" shows a spinner while enabling, and extensions whose provider account is linked without their own scopes (e.g. Calendar after Gmail) show "Grant permissions" instead of "Connected".
-- Team scheduled jobs are now shared with everyone on the agent; Mine jobs stay private. Switching modes updates ownership, Team cards show the original creator, and scheduler guidance explains when to choose each mode.
-
-- OAuth extensions sharing one provider account (e.g. Gmail and Google Drive on Google) no longer show as set up on the agent page until their own scopes are granted.
+- **Admins are scoped to their teams.** Only superadmins see every agent and create or delete teams; make sure each admin is a member of the teams they manage.
+- **New users are auto-approved** unless `extensions.multiUser.autoApprove: false` is set, and join public teams at sign-up unless `extensions.multiUser.autoJoinPublicTeams: false`. Existing teams become private once on upgrade; new teams default to public.
+- **Slack threads need a mention** in `requireMention` channels; set `threadUnlock: true` to keep the old "one mention unlocks the thread" behavior.
+- **OAuth providers come from extensions.** Google and Zendesk descriptors are no longer built in; upgrade the external Gmail/Google Drive/Zendesk extensions together with the platform.
+- **Zendesk defaults to OAuth.** Configure `oauth.providers.zendesk` (with `subdomain`), or set `mode: api_key` on the extension to keep API-token auth.
+- **Sandboxed agents can no longer write `AGENTS.md` or `agent.yaml`**, and `SOUL.md`/`USER.md` templates are no longer re-seeded into existing workspaces.
 
 ### Added
 
-- "Connect <agent> to your tools" prompt: the first time you open each agent's chat, a dialog lists the extensions and MCP servers your admin recommends, showing which are already connected and letting you connect, enable, or set up the rest — API-key extensions (Notion, Jira, …) are set up right inside the dialog with your own credentials, so you stay in the chat. It never overlaps the onboarding tour: it waits while a tour step is shown in the chat. Reopen it anytime with **Connect tools** next to **Restart tour** (shown once a superadmin has starred something).
-- Superadmins can star "top" extensions and MCP servers on the new **Top extensions** tab of the Admin page (next to **User management**, with extension and MCP icons); starred items sort first in every agent's extension list and feed the connect prompt.
-- Google Drive's write setting is now separate for Just me and Whole team, the setting sits inside the connect card and saves as soon as you toggle it, and Connect requests the matching scopes.
-- Adding a custom extension now shows a confirmation toast with the server name.
-
-### Changed
-
-- Dashboard skill now separates a strict technical contract from design guidance and offers layout archetypes (monitor, brief, worklist, profile, compare, guide), so dashboards vary in shape instead of repeating one skeleton.
-- `dashboard_link` now flags `YOPLAI.link` targets that do not exist in `data/dashboards/`, which otherwise break the page when it renders.
-- Slack: when a long run completes, the progress bubble is deleted instead of being left as a "Completed." message above the reply; failed and interrupted runs still keep their status line.
-- Adding a custom extension "Just me" no longer flashes an OAuth popup when you are already connected to that server from another agent.
-- A personal Google connection now works on every agent where the extension is enabled, with no reconnecting per agent. Team connections stay per agent, and reconnecting keeps scopes already granted.
-- Personal extension tokens and settings (e.g. Zendesk, Notion, Pipedrive) now follow you across agents: set them once and they apply on every agent where the extension is enabled. Team values stay per agent.
-- "Mine" scheduled jobs now also use personal connections made on another agent, and these take priority over the team connection.
-- **⚠ BREAKING** Admins are now scoped to their teams: they only see, chat with, and configure agents of teams they belong to, and only add/remove members of those teams. Only superadmins see everything and create or delete teams.
-- Whole-team extension setup (shared credentials, team OAuth connections, shared MCP server config) is admin-only again; other users see it read-only and can still set up their own connection (adding a custom extension no longer offers them a team choice).
-
-### Fixed
-
-- Connecting an account (e.g. Gmail) on an extension's page now turns the extension on for the agent for anyone who connects, not only admins; regular members previously connected successfully but the extension stayed off.
-- Non-admins no longer see the "Remove server" button on MCP server pages; a rejected removal now says only admins can remove the server.
-- Returning to the agent extensions tab, or navigating between the extension list and MCP server pages, no longer blanks the page while MCP server status loads.
-
-### Changed
-
-- Servers added from the UI get a readable key from their site (`mcp.linear.app` → `linear`, then `linear_2`), and cards show the server-reported name and description (`serverInfo.title`/`description`; sentence-like titles are split at the first colon or dash) once connected, saved as `displayName`/`description` on UI-added `mcp.json` entries. Any server entry, stdio included, may set optional `displayName` and `description` to override the card label (yoplai-only keys; other MCP clients ignore them). Servers without an icon show the official MCP logo.
-- MCP servers on the Edit Agent extensions list now look and behave like normal extensions: sorted alphabetically with them, whole card links to a config page (`/agents/:agentId/mcp-servers/:serverName`) with Just me / Whole team connect for OAuth servers, a JSON config editor (secrets masked) for non-OAuth HTTP servers, and Remove.
-- HTTP MCP extension cards show the server's website icon (host, then root domain), cached in `$YOPLAI_HOME/mcp/icons.json`.
-- Agent catalog hides agents a non-admin can't chat (e.g. private-team agents) instead of showing an inert card with the team name. Admins still see every agent, and `/pool-actions` no longer returns team names for agents the user can't access.
-- Credential tab captions clarified: Just me "Only used by you", Whole team "Can be used by the whole team".
-
-### Added
-
-- Remote MCP servers appear as individual extension cards; agent members can add HTTP servers with immediate personal/team OAuth, disconnect credentials, and remove shared servers with confirmation.
-- Private teams with creation controls, list badges, and a one-click Private/Public toggle. New users join public teams as removable members at sign-up by default; set `extensions.multiUser.autoJoinPublicTeams: false` for manual membership. Existing teams become private once on upgrade; new teams default to public, so mark sensitive new teams private. Privacy changes keep current members and catalog visibility unchanged; All users rules and pending-user approval gates remain intact.
-
-- Append-only settings audit in gateway-owned `audit.db`, with redacted secret changes and an admin-only `/api/audit/settings` API.
-- First-run onboarding tour (driver.js) for multi-user logins: walks through the agent grid, agent settings, extensions, connections, dashboards and a first chat. Skippable at every step (Esc/overlay too); status is saved per user in `auth.db` via `GET/PUT/DELETE /api/me/onboarding`, and existing users see it once on next login. A discreet "Restart tour" link sits in the sidebar footer. The welcome title uses `branding.name` when set.
-- Multi-user `autoApprove` setting (default `true`) controls whether new sign-ups are approved immediately or wait for admin approval. **⚠ BREAKING**: new users are now auto-approved unless `autoApprove: false` is set.
-
-- Slack agent tools `slack.join_channel` and `slack.leave_channel` let an agent join a public channel on demand and leave channels (require `channels:join`, `channels:manage`/`groups:write` scopes and app reinstall).
-- Extensions can choose OAuth scopes from merged root/agent settings; missing grants return a reconnect link requesting those scopes.
-- Extension settings without Just me/Whole team tabs render in a bordered panel; checkbox settings align their description under the label.
-
-- Slack channel option `threadUnlock` (default `false`). Set `threadUnlock: true` alongside `requireMention: true` to let one mention unlock a thread so later replies there need no mention.
-
-- Extension settings forms can unset credentials: **Remove my credentials** on Just me, and **Remove team credentials** on Whole team for admins (`DELETE /api/agents/:id/extensions/:extensionId/credentials`). Non-secret settings are kept.
-
-- Agent **My connections** lists your personal OAuth, MCP and extension token connections alongside team availability; disconnect removes your credentials immediately. Account settings list your Slack pairings and let you unpair.
-
-- Scheduled jobs record their creator and let chat and web users choose owner or team credentials; existing jobs continue using team credentials, and unusable personal connections produce a delivered reconnect error.
-
-- External extensions can request Slack connection links and register OAuth completion hooks through the host context; connector registration is restricted to the extension's own ID.
-
-- Slack credential refusals now provide one personal connection link that pairs an unpaired sender and connects Google OAuth, an extension token, or extension-owned OAuth for a specific resource, with reconnect links and a confirmation in the original thread.
-
-- Slack users can link existing Yoplai accounts with private, single-use, ten-minute `!pair` links; each sender's requests use their own personal credentials, with team-only credentials for unpaired users. Agents are told when a Slack sender is unpaired, and can call the new `slack.pair` tool to get a pairing link for that sender and share it in their reply, so users never need to type `!pair`. The pairing page uses the platform theme (`theme.css`, Inter) and `branding.name`/logo, defaulting to Yoplai.
-
-- Extension API tokens support **Just me** credentials encrypted per requester, with existing team credentials as fallback and a configuration link when missing. Admins can select **Whole team**; existing configs remain shared.
-
-- Remote MCP OAuth connections support personal ("Just me") and shared ("Whole team") credentials, with requester-specific reconnect links and existing grants retained as team.
-
-- Google OAuth connections can be personal ("Just me") or shared ("Whole team"); web tool calls use the requester's personal account, then the team account, otherwise a connect link. Existing connections remain shared.
-- Web chat shows friendly tool-call lines (e.g. "Listed Claap workspaces") in activity groups. Labels come instantly from the tool name and key arguments, and are refined by per-tool templates the maintenance model generates once and stores in `tool-labels.json`. Consecutive tool calls inside a group collapse into a "Ran commands" / "Called tools" sub-section (collapsed by default); bash commands in labels render in monospace and full-view bash output shows as a terminal-style code block.
-- Slack agents can find Slack Lists and read, create, update, and delete their items with dedicated agent tools.
-- Slack agents can list, create, read, find sections in, edit, share, and delete Slack Canvases with dedicated agent tools.
-- `dashboard_link` now lints each dashboard page without running its code and returns a `problems` list: script syntax errors, top-level names that collide with browser globals (`top`, `window`, `document`, `location`) or other scripts, echarts.js/kit.js load order, `/d-assets/v1/` use, undeclared `YOPLAI.data` names, inline `on*=` handlers next to module scripts, and queries returning 0 rows. Dashboard Kit also shows a banner when a page throws at runtime, and the dashboard skill and templates now put page code in `<script type="module">`. Dashboard assets are now cached for a week instead of a year.
-- Dashboard Kit v2 (`/d-assets/v2/`): "needs attention" callouts, KPI strips with number/currency/percent formatting, deltas and sparklines, status pills, segmented filters, table column formatters, pills, links, severity dots and a show-all row cap, a `format` helper, and calmer chart theming (faint grids, area fills, readable heatmaps for skewed data). The dashboard skill now ships design rules agents follow. Existing `/d-assets/v1/` pages keep working and pick up the refreshed styles.
-- Slack agents can read thread parents and replies with `slack.get_thread_replies`, including cursor paging and time windows.
-- Discord can allow all or selected bot users to trigger agents with explicit mentions through `extensions.discord.allowBots`, with self/webhook protection, history capture, and gateway loop guarding.
-- Discord replies to other bots are posted once, complete, instead of streamed by editing. Bots only read a message when it is first posted, so a streamed reply reached them half-written. Replies to humans still follow `streamReplies`.
-- Discord agents can @-mention other bots: `discord.list_users` now includes bot accounts (flagged `bot: true`), and the message sender, recent history, and thread starter show each author as `name (<@id>)`, with `, bot` added for bots.
-- Agents can return exactly `NO_REPLY` to keep a turn in conversation history without delivering text on any channel; web chat hides it in simple view and shows the raw token in full view.
-- Agent-authored runs support configurable consecutive-turn and hop-count loop guards through global or per-agent `agentLoop` settings.
-- Scheduler jobs now support one-shot `runAt` times through the API, CLI, and agent tools. Missed jobs fire after restart, then disable themselves while retaining output and history.
-- Agents can fully remove Canvas dashboards with `dashboard_delete`, clearing the HTML file, stable link registration, and saved versions while preserving shared databases.
-- Agents now discover a built-in dashboard skill with ten cloneable HR, OKR, and customer-success Canvas templates, seeded SQLite schemas, and a rebuildable CS wiki workflow.
-- Canvas keeps the latest 20 observed copies of dashboards outside Git workspaces and provides a `dashboard_versions` tool to list or restore them without changing their links.
-- Each accessible agent now has a Dashboards tab with dashboard titles, last updates, and Open/Copy link actions.
-
-- Canvas dashboards now have a versioned public Dashboard Kit with light/dark and A4 print themes (dark follows the OS `prefers-color-scheme`, overridable with `data-theme="light"`/`"dark"`), common interactive components, sanitized Markdown, CSV export, and vendored ECharts charting.
-
-- Canvas dashboards can run confined read-only SQLite queries on every load with bound viewer/URL parameters, capped results, drill-down links, and visible query diagnostics. `data-db` paths are relative to the agent workspace root (e.g. `data/app.db`); sandboxed agents can only query databases under `data/`.
-- Multi-user mode supports email/password sign-in (`extensions.multiUser.emailAndPassword.enabled`), with a sign-in / create-account form on the login page.
+#### Canvas dashboards
 
 - Agents can publish self-contained HTML files from their `data/dashboards/` directory through stable, team-authorized, CSP-sandboxed Canvas links using the `dashboard_link` tool.
+- Canvas dashboards can run confined read-only SQLite queries on every load with bound viewer/URL parameters, capped results, drill-down links, and visible query diagnostics. `data-db` paths are relative to the agent workspace root (e.g. `data/app.db`); sandboxed agents can only query databases under `data/`.
+- Canvas dashboards have a versioned public Dashboard Kit with light/dark and A4 print themes (dark follows the OS `prefers-color-scheme`, overridable with `data-theme="light"`/`"dark"`), common interactive components, sanitized Markdown, CSV export, and vendored ECharts charting.
+- Dashboard Kit v2 (`/d-assets/v2/`): "needs attention" callouts, KPI strips with number/currency/percent formatting, deltas and sparklines, status pills, segmented filters, table column formatters, pills, links, severity dots and a show-all row cap, a `format` helper, and calmer chart theming (faint grids, area fills, readable heatmaps for skewed data). The dashboard skill now ships design rules agents follow. Existing `/d-assets/v1/` pages keep working and pick up the refreshed styles.
+- Agents discover a built-in dashboard skill with cloneable HR, OKR, and customer-success Canvas templates, seeded SQLite schemas, and a rebuildable CS wiki workflow. OKR starters form their own shareable template family.
+- `dashboard_link` lints each dashboard page without running its code and returns a `problems` list: script syntax errors, top-level names that collide with browser globals (`top`, `window`, `document`, `location`) or other scripts, echarts.js/kit.js load order, `/d-assets/v1/` use, undeclared `YOPLAI.data` names, inline `on*=` handlers next to module scripts, queries returning 0 rows, and `YOPLAI.link` targets that do not exist in `data/dashboards/`. Dashboard Kit also shows a banner when a page throws at runtime, and the skill and templates put page code in `<script type="module">`.
+- Canvas keeps the latest 20 observed copies of dashboards outside Git workspaces and provides a `dashboard_versions` tool to list or restore them without changing their links.
+- Agents can fully remove Canvas dashboards with `dashboard_delete`, clearing the HTML file, stable link registration, and saved versions while preserving shared databases.
+- Each accessible agent has a Dashboards tab with dashboard titles, last updates, and Open/Copy link actions. Dashboards declaring required URL arguments (`yoplai:params`) nest beneath their linking parents without Open/Copy actions; unlinked ones appear under **Needs parameters**.
 
+#### Credentials and connections
+
+- Google OAuth connections can be personal ("Just me") or shared ("Whole team"); tool calls use the requester's personal account, then the team account, otherwise a connect link. Existing connections remain shared.
+- Remote MCP OAuth connections support personal and shared credentials, with requester-specific reconnect links and existing grants retained as team.
+- Extension API tokens support **Just me** credentials encrypted per requester, with existing team credentials as fallback and a configuration link when missing. The **Just me** tab lets you set every field, not only the token (e.g. your own Jira email, subdomain or project keys); fields left at the team value keep following it.
+- Extension settings forms can unset credentials: **Remove my credentials** on Just me, and **Remove team credentials** on Whole team for admins (`DELETE /api/agents/:id/extensions/:extensionId/credentials`). Non-secret settings are kept.
+- Agent **My connections** tab lists your personal OAuth, MCP, and extension token connections with a **Just me** and a **Whole team** status column per service; **Disconnect** removes only your personal credentials. Account settings list your Slack pairings and let you unpair.
+- Slack users can link existing Yoplai accounts with private, single-use, ten-minute `!pair` links; each paired sender's requests use their own personal credentials, with team-only credentials for unpaired users. Agents are told when a Slack sender is unpaired and can call the new `slack.pair` tool to share a pairing link, so users never need to type `!pair`. The pairing page uses the platform theme and `branding.name`/logo.
+- Slack credential refusals provide one personal connection link that pairs an unpaired sender and connects Google OAuth, an extension token, or extension-owned OAuth for a specific resource, with reconnect links and a confirmation in the original thread. Forwarded links are refused before the form is shown.
+- External extensions can request Slack connection links and register OAuth completion hooks through the host context; connector registration is restricted to the extension's own ID.
+- Extensions declare their own OAuth providers (`oauthProviders` descriptors), registered by the gateway at load (equivalent duplicates are fine, conflicting ones fail the load). Descriptors support `tokenAuth: "basic"` (HTTP Basic client credentials), `accountFromTokenResponse` (account label from the token response), and `tokenRequestFormat: "json"` (JSON token/refresh/revoke bodies, e.g. Notion).
+- Extensions can choose OAuth scopes from merged root/agent settings; missing grants return a reconnect link requesting those scopes. OAuth extensions sharing one provider account (e.g. Gmail and Google Drive) each get a Connect card requesting their own scopes.
+- Extensions can offer OAuth instead of API keys: in OAuth mode the agent page shows only the Connect button. Zendesk connects via OAuth (provider URLs take `{subdomain}` from `oauth.providers.zendesk`; rotating refresh tokens are refreshed single-flight).
+- Google Drive's write setting is separate for Just me and Whole team, sits inside the connect card, saves as soon as you toggle it, and Connect requests the matching scopes.
+- Scheduled jobs record their creator and let chat and web users choose **Mine** (owner) or **Team** credentials. Mine jobs also use personal connections made on another agent, ahead of the team connection; unusable personal connections produce a delivered reconnect error.
+
+#### Extensions and MCP servers
+
+- Remote MCP servers appear as individual extension cards. Members can add HTTP servers with immediate OAuth, disconnect credentials, and (admins) remove shared servers with confirmation.
+- MCP servers look and behave like normal extensions: sorted alphabetically with them, the whole card links to a config page (`/agents/:agentId/mcp-servers/:serverName`) with Just me / Whole team connect for OAuth servers (showing the connected account), a JSON config editor (secrets masked) for non-OAuth HTTP servers, and Remove.
+- Servers added from the UI get a readable key from their site (`mcp.linear.app` → `linear`, then `linear_2`), and cards show the server-reported name and description once connected, saved as `displayName`/`description` on UI-added `mcp.json` entries. Any server entry, stdio included, may set optional `displayName` and `description`. Servers without an icon show the official MCP logo; HTTP servers show their website icon (cached in `$YOPLAI_HOME/mcp/icons.json`).
+- Adding a custom extension shows a confirmation toast with the server name, and a warning toast when the server is already added.
+- Superadmins have an **MCP servers** admin tab (`/admin/mcp-servers`) to add a shared MCP server for all agents, shown as a card grid; agent pages get Enable/Disable for shared servers and a superadmin-only form to edit their name and description.
+- Superadmins can star "top" extensions and MCP servers (including shared ones) on the **Top extensions** admin tab; starred items sort first in every agent's extension list and feed the connect prompt.
+- "Connect <agent> to your tools" prompt: the first time you open each agent's chat, a dialog lists recommended extensions and MCP servers with descriptions, shows which are connected, and lets you connect, enable, grant missing permissions, or set up the rest — API-key extensions (Notion, Jira, …) are set up inside the dialog. It waits while an onboarding tour step is shown. Reopen it with **Connect tools** next to **Restart tour**.
+
+#### Multi-user and admin
+
+- Email/password sign-in (`extensions.multiUser.emailAndPassword.enabled`), with a sign-in / create-account form on the login page. `oauth.google` is no longer required; `/api/capabilities` reports `authMethods`.
+- **⚠ BREAKING** Multi-user `autoApprove` setting (default `true`) controls whether new sign-ups are approved immediately or wait for admin approval.
+- Private teams with creation controls, list badges, and a one-click Private/Public toggle. New users join public teams as removable members at sign-up by default (`extensions.multiUser.autoJoinPublicTeams: false` for manual membership). Existing teams become private once on upgrade; new teams default to public.
+- First-run onboarding tour (driver.js) for multi-user logins: walks through the agent grid, agent settings, extensions, connections, dashboards, and a first chat. Skippable at every step; status is saved per user via `GET/PUT/DELETE /api/me/onboarding`, and existing users see it once on next login. A "Restart tour" link sits in the sidebar footer.
+- Append-only settings audit in gateway-owned `audit.db`, with redacted secret changes and an admin-only `/api/audit/settings` API.
+
+#### Chat
+
+- Web chat shows friendly tool-call lines (e.g. "Listed Claap workspaces"). Labels come instantly from the tool name and key arguments, refined by per-tool templates the maintenance model generates once and stores in `tool-labels.json`. Consecutive tool calls collapse into a "Ran commands" / "Called tools" sub-section; bash commands render in monospace and full-view bash output as a terminal-style block.
+- Agents can return exactly `NO_REPLY` to keep a turn in history without delivering text on any channel; web chat hides it in simple view and shows the raw token in full view.
+
+#### Slack
+
+- Slack agents can read thread parents and replies with `slack.get_thread_replies`, including cursor paging and time windows.
+- Slack agents can list, create, read, find sections in, edit, share, and delete Slack Canvases, and find, read, create, update, and delete Slack List items, with dedicated agent tools.
+- Slack agent tools `slack.join_channel` and `slack.leave_channel` (require `channels:join`, `channels:manage`/`groups:write` scopes and app reinstall).
+- Slack DMs support `dm.proactiveReplies` (`enabled`, `maxReplies`): users outside `dm.allowFrom` can reply in the thread of a DM the agent sent them, e.g. an HR agent reaching out to employees. `dm.reactionNotifications` lets DM reactions reach the agent; reaction turns include the reacted message text and post replies in its thread, and channel context exposes `conversation_id`.
+- Slack channel option `threadUnlock` (default `false`): with `requireMention: true`, one mention unlocks a thread so later replies there need no mention.
+
+#### Discord
+
+- Discord can allow all or selected bot users to trigger agents with explicit mentions through `extensions.discord.allowBots`, with self/webhook protection, history capture, and gateway loop guarding.
+- Discord agents can @-mention other bots: `discord.list_users` includes bot accounts (flagged `bot: true`), and sender, history, and thread starter show each author as `name (<@id>)`, with `, bot` for bots. Replies to other bots are posted once, complete, instead of streamed.
+
+#### Scheduler, agents and runtime
+
+- Scheduler jobs support one-shot `runAt` times through the API, CLI, and agent tools. Missed jobs fire after restart, then disable themselves while retaining output and history.
 - Agents can trigger a manual run of their own scheduler jobs with the `scheduler.run_job` tool.
+- Scheduled jobs tab: on/off switch to pause or resume a job, and a delete button with a confirmation dialog. Team jobs can only be paused, resumed, or deleted by admins and superadmins (also enforced for the API and chat tool).
+- Agent-authored runs support configurable consecutive-turn and hop-count loop guards through global or per-agent `agentLoop` settings.
+- Sandboxed agents can run under rootless Docker: `YOPLAI_CONTAINER_USER` sets the container `uid:gid` (default: the gateway process uid, correct for a rootful daemon).
+- Langfuse generations show the provider/model.
 
 ### Changed
 
-- The agent Dashboards tab nests dashboards declaring required URL arguments (`yoplai:params`) beneath their linking parents without Open/Copy actions; unlinked ones appear under **Needs parameters**.
-
-- Agent edit page: extension cards use two columns, and the on/off toggle is gone. A card shows a checkmark once credentials exist for Just me or Whole team (secrets or an OAuth connection), otherwise a "+" linking to its config page. Saving personal credentials or connecting OAuth now turns the extension on for the agent; extensions without settings are enabled/disabled from their details page. Same-team members (not only admins) can now edit Whole team settings and credentials, connect/disconnect team OAuth, and enable/disable extensions. Removing credentials is how a credentialed extension is turned off.
-
+- **⚠ BREAKING** Admins are scoped to their teams: they only see, chat with, and configure agents of teams they belong to, and only add/remove members of those teams. Only superadmins see everything and create or delete teams.
+- **⚠ BREAKING** OAuth providers ship with extensions: Google and Zendesk descriptors are no longer built into the platform.
+- **⚠ BREAKING** Zendesk defaults to OAuth; set `mode: api_key` with `subdomain`, `email`, and `apiKey` to keep the API-token setup.
 - **⚠ BREAKING** Slack channels with `requireMention` no longer auto-unlock threads after a mention; every thread message needs a mention unless the channel sets `threadUnlock: true`.
-
-- Agent **My connections** tab redesigned: each service shows its extension icon, a **Just me** and a **Whole team** column with a green/red status pill, and **Disconnect** sits in the Just me column so it is clear only your personal connection is removed.
-
-- Agent **Scheduled jobs** tab is now a read-only list: recurrence reads in plain language ("Monday and Thursday at 07:30") with the time zone, a prompt preview, a paused marker, and a Mine/Team switch for credentials. The create-job form is removed; ask the agent in chat to create jobs.
-
-- Extension pages (settings forms, OAuth and MCP) all open on the same credential tab: **Just me** if it is set up, otherwise **Whole team** if that is set up, otherwise **Just me**.
-
-- Clicking an extension card now opens one page with the extension details and its settings form; the separate **Configure** step is gone. Old `/agents/<id>/extensions/<ext>/config` links open the same page.
-
-- Credential **Just me** / **Whole team** tabs now show a status pill for each scope: green when connected or configured, red when a connection needs reconnecting or is missing access, gray when not set up. The OAuth card's separate status badge is gone, MCP server badges use the same pill style, and the "Admin only" tag is now a lock icon.
-
-- The **Just me** tab of extension configuration forms now lets you set every field, not only the token — e.g. your own Jira email, subdomain or project keys. Fields left at the team value keep following it. Usernames and emails show in clear (Cloudi‑Fi Admin's username is no longer masked), and Slack connect links also ask for required settings the team has not set.
-
-- Extension, Google OAuth, and MCP connection pages now show credentials in a tabbed box — **Just me** and **Whole team** tabs, each explaining who it serves, with an "Admin only" mark when the team tab is admin-managed — instead of a "Connection for" / "Credentials for" dropdown.
-
-- In multi-user mode, only admins can connect or disconnect **Whole team** Google OAuth and MCP server connections; other users can still view the team connection or credentials read-only (or see that an admin must set them up), matching extension API credentials.
-- Web chat now folds consecutive thinking and tool calls into one muted, collapsible "Working / Worked for Ns" group (expanded while streaming, collapsed once done) in both simple and detailed views. Thinking lines show a live excerpt of the last few words, then "Thought for Ns"; bubbles and timestamps on thinking and tool lines are gone.
-- Langfuse tracing now uses the Langfuse JS SDK v5 (OpenTelemetry) instead of the legacy v3 SDK, so traces keep flowing once the server moves to `events_only` ingestion. Session IDs, environment, metadata, and the trace → `llm-turn` generation → tool tree are unchanged; session/user/tags are now stamped on every observation. Config is unchanged, and missing keys now disable tracing instead of failing.
-- Multi-user mode no longer requires `oauth.google`; any configured sign-in method is enough. `/api/capabilities` now reports `authMethods`.
+- **⚠ BREAKING** Sandboxed agents mount `AGENTS.md` and `agent.yaml` read-only (including on a fresh workspace's first run), so agents can't rewrite their operator instructions or sandbox/tool config; a missing `AGENTS.md` is restored. `SOUL.md`/`USER.md` templates are no longer re-seeded into existing workspaces, so operators can remove them.
+- Whole-team extension setup (shared credentials, team OAuth connections, shared MCP server config) is admin-only; other users see it read-only and set up their own connection (adding a custom extension no longer offers them a team choice).
+- Personal Google connections and personal extension tokens/settings (e.g. Zendesk, Notion, Pipedrive) follow you across agents: set them once and they apply on every agent where the extension is enabled, with no reconnecting per agent. Team values stay per agent, and reconnecting keeps scopes already granted.
+- Agent edit page: extension cards use two columns and the on/off toggle is gone. A card shows a checkmark once credentials exist for Just me or Whole team (secrets or an OAuth connection), otherwise a "+" linking to its config page. Saving personal credentials or connecting OAuth turns the extension on for the agent; extensions without settings are enabled/disabled from their details page. Removing credentials turns a credentialed extension off. The list renders once in final order instead of reshuffling as MCP cards and stars load.
+- Clicking an extension card opens one page with the extension details and its settings form; the separate **Configure** step is gone (old `/agents/<id>/extensions/<ext>/config` links still work).
+- Extension, Google OAuth, and MCP connection pages show credentials in **Just me** / **Whole team** tabs ("Only used by you" / "Can be used by the whole team") instead of a dropdown. Each tab shows a status pill (green connected/configured, red needs reconnecting or missing access, gray not set up), admin-managed tabs show a lock icon, and pages open on the tab in use (Just me, else Whole team, else Just me). Usernames and emails show in clear.
+- Extension settings without Just me/Whole team tabs render in a bordered panel; checkbox settings align their description under the label.
+- Agent **Scheduled jobs** tab is a list: recurrence reads in plain language ("Monday and Thursday at 07:30") with the time zone, a prompt preview, a paused marker, and a Mine/Team switch. The create-job form is removed; ask the agent in chat to create jobs.
+- Team scheduled jobs are shared with everyone on the agent; Mine jobs stay private. Switching modes updates ownership, Team cards show the original creator, and scheduler guidance explains when to choose each mode.
+- Agent catalog hides agents a non-admin can't chat (e.g. private-team agents) instead of showing an inert card, and `/pool-actions` no longer returns team names for agents the user can't access.
+- Web chat folds consecutive thinking and tool calls into one muted, collapsible "Working / Worked for Ns" group (expanded while streaming, collapsed once done) in both views. Thinking lines show a live excerpt, then "Thought for Ns"; bubbles and timestamps on thinking and tool lines are gone.
+- The chat thinking-level selector is shown to superadmins only.
+- Dashboard skill separates a strict technical contract from design guidance and offers layout archetypes (monitor, brief, worklist, profile, compare, guide), so dashboards vary in shape. Agents sharing drill-down dashboards include the query string in the link.
+- Dashboard assets are cached for a week instead of a year.
+- Slack: when a long run completes, the progress bubble is deleted instead of left as "Completed."; failed and interrupted runs keep their status line.
+- Slack agents are told their final text is delivered to the thread automatically, so they no longer reply through `slack.send_message`.
+- Langfuse tracing uses the Langfuse JS SDK v5 (OpenTelemetry) instead of v3, so traces keep flowing once the server moves to `events_only` ingestion. Session IDs, environment, metadata, and the trace tree are unchanged; session/user/tags are stamped on every observation. Missing keys now disable tracing instead of failing.
+- Upgraded the Pi SDK packages to 0.87.1 so Anthropic OAuth requests for Claude Opus 5.5 report the required Claude Code version; gateway retries and interrupted tool-call repair update Pi's canonical session context.
+- Model context-size data updated for new models (incl. Claude Sonnet 5.5).
 
 ### Fixed
 
-- Slack `get_channel_history`/`get_thread_replies` now include text from message blocks and attachments, so bot posts (e.g. Zendesk) no longer appear empty.
-- Extension pages open almost instantly: the encryption key for stored credentials is derived once instead of once per extension (~600 ms → ~20 ms per catalog request, also faster credential lookups on tool calls).
-
-- Generic "Progress updated." status lines no longer appear: web chat stops rendering them, and the Slack progress bubble ignores milestones that have no meaningful, safe label instead of posting the placeholder.
-- Thinking and activity durations in web chat now survive page reloads and stopped runs: gateway history stores start and end times on thinking blocks.
-- A Canvas chart no longer blanks the rest of the dashboard when ECharts is missing or its option is invalid; the chart area shows a short message instead, and re-rendering a chart on the same element replaces it cleanly.
-- Messages sent mid-turn now appear after the agent's already-streamed thinking, text, and tool calls (including still-running ones) instead of jumping above them.
-- Pi agent history now keeps each assistant message together with its own tool calls, so reloaded chats show messages sent mid-turn in the order they were sent instead of splitting thinking from tool calls.
-- Agents sharing drill-down dashboards now include the query string in the link itself, and the CS `client`/`qbr` templates show a "No client selected" link back to Clients instead of a blank page when opened without parameters.
-- Opening a Canvas drill-down link while logged out now keeps its query string through login, instead of landing on an empty page.
-- Pi sessions (host and sandboxed) no longer break permanently with `tools.N.custom.input_schema: JSON schema is invalid` when an MCP tool schema has a field such as `assignee`: session redaction now keeps tool declarations verbatim instead of masking schema keys that look sensitive.
-- The "Context compacted." notice now stays where compaction happened in the chat instead of pinning to the bottom below newer messages.
-- Sessions no longer fail on every prompt after `/compact` with `Cannot read properties of undefined (reading 'input')`: retained assistant messages are reseeded with zeroed token usage instead of none.
-- Canvas dashboards now follow the web UI's light/dark theme choice instead of always rendering dark when `$YOPLAI_HOME/theme.css` is dark-first: the web UI mirrors its theme into a `yoplai-theme` cookie, and the gateway stamps `data-theme` on the dashboard page (or falls back to `prefers-color-scheme`) unless the dashboard already sets its own.
-- Keep live web-chat streams scoped to their originating conversation when switching sessions.
-- Sandboxed Pi agents now load the built-in skills (such as `dashboard`); the runner looked for them outside its build output.
-- Record the system prompt in Langfuse again for new Pi sessions, host and sandboxed, after the Pi 0.87 upgrade left it empty until the first turn.
-- Canvas dashboards now inherit deployment colours from `$YOPLAI_HOME/theme.css`.
-- Keep Canvas chart headings with their charts across printed page breaks.
-- Move the Dashboard Kit chart legend to the bottom and reserve grid margins so it no longer overlaps card/chart titles on multi-series charts.
-- Return users to their requested dashboard or app deep link after Google sign-in.
-- Upgraded the Pi SDK packages to 0.87.1 so Anthropic OAuth requests for Claude Opus 5.5 report the required Claude Code 2.1.280 version; gateway retries and interrupted tool-call repair now update Pi's canonical session context.
-- Ensure gateway shutdown stops the Vite preview process tree, and bind Tailscale-served UIs to loopback even with LAN UI configuration.
+- Gateway no longer crashes at startup when one agent's extension config is invalid (e.g. a missing credential); it logs a structured error and skips that extension for that agent.
+- `/internal/tools` returns the upstream error's 4xx/5xx status (e.g. Google 404) instead of masking every failure as 500, so agents diagnose causes correctly.
+- Sessions no longer fail on every prompt after `/compact` with `Cannot read properties of undefined (reading 'input')`.
+- Pi sessions (host and sandboxed) no longer break permanently with `tools.N.custom.input_schema: JSON schema is invalid` when an MCP tool schema has a field such as `assignee`: session redaction keeps tool declarations verbatim.
+- Scheduler tool params use `anyOf` for nullable fields, so models such as opencode-go MiMo no longer leak tool calls as text.
+- Subagent reasoning effort reaches the CLI: codex uses `model_reasoning_effort` (was ignored) and pi gets `--thinking` (was dropped); orchestrator and `subagents start` fall back to profile reasoning.
+- Sessions whose first turn was aborted now get an automatic title on a later turn instead of staying untitled.
+- Messages sent mid-turn appear after the agent's already-streamed thinking, text, and tool calls instead of jumping above them, and follow-ups sent before the first prompt starts run behind the user's message instead of ahead of it. Pi history keeps each assistant message with its own tool calls, so reloaded chats keep that order.
+- Live web-chat streams stay scoped to their originating conversation when switching sessions.
+- The "Context compacted." notice stays where compaction happened instead of pinning to the bottom.
+- Thinking and activity durations survive page reloads and stopped runs (start/end times stored on thinking blocks).
+- Removed the blinking text cursor on streaming messages, which sometimes showed mid-turn before later thinking or tool traces.
+- Generic "Progress updated." status lines no longer appear in web chat or the Slack progress bubble.
+- Blank UI after a gateway restart: shutdown stops the Vite preview process tree, and Tailscale-served UIs bind to loopback even with LAN UI configuration.
+- Users return to their requested dashboard or app deep link after Google sign-in, and Canvas drill-down links keep their query string through login.
+- Canvas dashboards follow the web UI's light/dark choice (via a `yoplai-theme` cookie, falling back to `prefers-color-scheme`) and inherit deployment colours from `$YOPLAI_HOME/theme.css`.
+- Canvas charts: a missing ECharts or invalid option shows a short message instead of blanking the dashboard; re-rendering replaces the chart cleanly; legends sit at the bottom without overlapping titles; headings stay with their charts across printed page breaks.
+- No-argument `dashboard_link` calls discover dashboard files before they are registered, and a file vanishing mid-listing no longer hides the others.
+- CS `client`/`qbr` templates show a "No client selected" link back to Clients instead of a blank page when opened without parameters.
+- Sandboxed Pi agents load the built-in skills (such as `dashboard`), and headless eval runs start Canvas so dashboard evals work.
+- Langfuse records the system prompt again for new Pi sessions after the Pi 0.87 upgrade, and queued messages are traced as user input instead of creating input-less traces or closing the active run's trace early.
+- Slack `get_channel_history`/`get_thread_replies` include text from message blocks and attachments, so bot posts (e.g. Zendesk) no longer appear empty.
+- Slack pairing no longer fails the origin check (browsers sent `Origin: null` under `no-referrer`), and paired users in user-scoped sessions now receive connect links.
+- Connecting an account (e.g. Gmail) on an extension page turns the extension on for any member who connects, not only admins.
+- OAuth extensions sharing one provider account (e.g. Gmail and Google Drive) no longer show as set up until their own scopes are granted; the connect prompt shows "Grant permissions" for them and a spinner while enabling.
+- Adding a custom extension "Just me" no longer flashes an OAuth popup when you are already connected to that server from another agent.
+- Non-admins no longer see "Remove server" on MCP server pages; a rejected removal says only admins can remove the server.
+- Returning to the agent extensions tab, or moving between the extension list and MCP server pages, no longer blanks the page while MCP status loads.
+- Top extensions shows MCP display names instead of config keys.
+- Onboarding tour stays on its target as late-loading cards re-render, and adapts its Gmail steps when Gmail is already connected or only needs a grant.
+- Extension pages open almost instantly: the credential encryption key is derived once instead of per extension (~600 ms → ~20 ms per catalog request).
+- OAuth descriptors are registered before extensions activate on runtime reload, so providers are present during start.
 
 ## v0.24.0 — Capability discovery, auto-titled sessions + resilient model runs
 
@@ -202,8 +188,6 @@ Agents that hit a dead end can now discover platform extensions and MCP servers,
 - Toolchain now targets pnpm 12.
 
 ### Fixed
-
-- Sandboxed agents can now run under rootless Docker. `YOPLAI_CONTAINER_USER` sets the container `uid:gid`; it defaults to the gateway process uid, which is correct for a rootful daemon but names an id owning nothing under a rootless one, making every bind mount fail with `EACCES`.
 
 - Sandboxed Pi agents now use the same Yoplai base system prompt as host Pi agents, while retaining container-specific instructions.
 - Manual scheduler runs (`yoplai scheduler run`) are now detached, so long jobs no longer trip CLI fetch timeouts while they keep running.
