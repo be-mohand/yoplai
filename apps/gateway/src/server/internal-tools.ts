@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -244,7 +245,13 @@ export function createInternalTools(
         tool: parsed.data.tool,
         agentId: context.agentId,
       });
-      return c.json({ error: message }, 500);
+      // Pass through upstream HTTP errors (e.g. Google 404) instead of masking them as 500.
+      const status = (error as { status?: unknown } | null)?.status;
+      const httpStatus =
+        typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599
+          ? (status as ContentfulStatusCode)
+          : 500;
+      return c.json({ error: message }, httpStatus);
     }
   });
 

@@ -429,7 +429,24 @@ describe("internal tools", () => {
     expect(consoleWarn).toHaveBeenCalledOnce();
   });
 
-  it("returns 500 for tool execution errors", async () => {
+  it("returns 500 for tool execution errors without an HTTP status", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    executeExtensionTool.mockRejectedValueOnce(Object.assign(new Error("boom"), { status: "failed" }));
+    registerToken("token-plain-error");
+
+    const response = await postTool(app, {
+      tool: "project.get",
+      args: { projectId: "PRO-1" },
+      agentId: "agent-1",
+      agentToken: "token-plain-error",
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "boom" });
+  });
+
+  it("passes through upstream HTTP status for tool execution errors", async () => {
     const { app, executeExtensionTool } = createDeps();
     const error = Object.assign(new Error("Project not found: PRO-1"), {
       status: 502,
@@ -450,7 +467,7 @@ describe("internal tools", () => {
       agentToken: "token-4",
     });
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       error: "Project not found: PRO-1",
     });
