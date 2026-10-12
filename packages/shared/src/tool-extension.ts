@@ -1,4 +1,4 @@
-import { requestCredentialConnectLink } from "./credential-connect.js";
+import { oauthConnectionRefusal } from "./credential-connect.js";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
@@ -159,9 +159,7 @@ function resolveToolExtensionConfig(
 
   definition.configSchema.parse(resolved.merged);
   // An OAuth-mode agent authenticates with a token, not with secrets.
-  const usesOAuth = typeof definition.oauth === "function"
-    ? definition.oauth(resolved) !== undefined
-    : definition.oauth !== undefined;
+  const usesOAuth = oauthRequirementFor(definition, resolved) !== undefined;
   for (const secretName of usesOAuth ? [] : definition.requiredSecrets) {
     const value = resolved.merged[secretName];
     if (typeof value !== "string" || value.length === 0) {
@@ -171,6 +169,13 @@ function resolveToolExtensionConfig(
     }
   }
   return resolved;
+}
+
+function oauthRequirementFor(
+  definition: Pick<ToolExtensionDefinition, "oauth">,
+  config: ResolvedToolExtensionConfig
+): OAuthRequirement | undefined {
+  return typeof definition.oauth === "function" ? definition.oauth(config) : definition.oauth;
 }
 
 /** Resolve an extension's OAuth scopes from its root and agent settings. */
@@ -192,7 +197,7 @@ async function resolveOAuthForDefinition(
   context: ExtensionHookContext,
   config: ResolvedToolExtensionConfig
 ): Promise<ResolvedOAuth | undefined> {
-  const requirement = typeof definition.oauth === "function" ? definition.oauth(config) : definition.oauth;
+  const requirement = oauthRequirementFor(definition, config);
   if (!requirement) return undefined;
   if (!context.resolveOAuth) {
     return {
@@ -365,17 +370,15 @@ export function defineToolExtension(
           if (!definition.oauth || !context.resolveOAuth) {
             return tool.execute(params, toolContext);
           }
-          const requirement = typeof definition.oauth === "function" ? definition.oauth(resolved) : definition.oauth;
+          const requirement = oauthRequirementFor(definition, resolved);
           if (!requirement) return tool.execute(params, toolContext);
           const oauth = await context.resolveOAuth(
             agent,
             requirement,
             toolContext.userId
           );
-          if (!oauth.connected && oauth.reason !== "provider_not_configured") {
-            const link = await requestCredentialConnectLink(toolContext, { kind: "oauth", ...requirement });
-            if (link) return { error: "oauth_connection_required", ...(oauth.reason === "insufficient_scope" ? { connected: false, reason: oauth.reason } : {}), authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
-          }
+          const refusal = await oauthConnectionRefusal(toolContext, requirement, oauth);
+          if (refusal) return refusal;
           const callTimeTool = definition
             .createTools({ ...resolved, oauth })
             .find((candidate) => candidate.name === tool.name);
