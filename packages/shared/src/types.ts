@@ -1108,6 +1108,9 @@ const GatewayCommonFields = {
       baseUrl: z.string().url().optional(),
     })
     .optional(),
+  sessionHistory: z
+    .object({ enabled: z.boolean().optional().default(true) })
+    .optional(),
   server: z
     .object({
       host: z.string().optional(),

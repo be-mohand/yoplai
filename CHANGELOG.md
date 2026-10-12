@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Add a core `session_history` agent tool to list, search, and read the agent's own past sessions as condensed text (tool calls merged, thinking dropped, long text truncated with drill-down). Enabled by default; disable with `sessionHistory.enabled: false`.
+
 ### Fixed
 
 - Preserve assistant text replay signatures in persisted Pi sessions so subsequent OpenAI Responses turns do not fail with an invalid message ID, while continuing to redact credentials.

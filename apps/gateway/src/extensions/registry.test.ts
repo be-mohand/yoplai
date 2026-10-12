@@ -79,6 +79,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "sessionHistory",
       "scheduler",
       "heartbeat",
     ]);
@@ -86,6 +87,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "sessionHistory",
       "scheduler",
       "heartbeat",
     ]);
@@ -167,6 +169,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "sessionHistory",
       "multiUser",
     ]);
     expect(isExtensionLoaded("multiUser")).toBe(true);
@@ -195,6 +198,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "sessionHistory",
       "heartbeat",
     ]);
     expect(isExtensionLoaded("heartbeat")).toBe(true);
@@ -299,6 +303,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "sessionHistory",
       "scheduler",
     ]);
     expect(isExtensionLoaded("scheduler")).toBe(true);
@@ -327,6 +332,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "sessionHistory",
       "scheduler",
       "heartbeat",
     ]);
@@ -354,6 +360,7 @@ describe("extension registry", () => {
       "taskLifecycle",
       "capabilityDiscovery",
       "canvas",
+      "sessionHistory",
       "heartbeat",
     ]);
   });
