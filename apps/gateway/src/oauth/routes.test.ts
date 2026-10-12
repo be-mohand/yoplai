@@ -133,8 +133,12 @@ describe("oauth routes", () => {
   it("requires a user account for personal operations and rejects invalid scopes", async () => {
     const app = createOAuthRoutes(new OAuthService({ store, loadConfig: makeConfig }));
     for (const [operation, method] of [["authorize", "GET"], ["status", "GET"], ["disconnect", "POST"]] as const) {
-      expect((await app.request(`/oauth/google/${operation}?agent=a1&scope=personal`, { method })).status).toBe(401);
-      expect((await app.request(`/oauth/google/${operation}?agent=a1&scope=other`, { method })).status).toBe(400);
+      const personal = await app.request(`/oauth/google/${operation}?agent=a1&scope=personal`, { method });
+      expect(personal.status).toBe(401);
+      expect(await personal.json()).toEqual({ error: "personal_requires_login" });
+      const invalid = await app.request(`/oauth/google/${operation}?agent=a1&scope=other`, { method });
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toEqual({ error: "invalid_scope" });
     }
   });
 

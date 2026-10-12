@@ -600,12 +600,3 @@ export function getHomeExtension(): string | undefined {
 export function getExtensionRuntime(): ExtensionRuntime {
   return extensionRuntime;
 }
-
-export function createExtensionRuntime(
-  extensions: Extension[],
-  homeExtensionId?: string
-): ExtensionRuntime {
-  const runtime = new ExtensionRuntime(getKnownExtensionRouteMetadata());
-  runtime.load(extensions, homeExtensionId);
-  return runtime;
-}
