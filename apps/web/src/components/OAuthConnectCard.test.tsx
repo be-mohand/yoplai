@@ -50,7 +50,7 @@ describe("OAuthConnectCard scope", () => {
     await flush();
     document.querySelector<HTMLButtonElement>(".oauth-btn-danger")!.click();
     await flush();
-    expect(fetchMock).toHaveBeenCalledWith("/api/oauth/google/disconnect?agent=probe&scope=personal", { method: "POST" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/oauth/google/disconnect?agent=probe&scope=personal", { method: "POST", credentials: "include" });
   });
 
   it("opens on the connected team tab, read-only for non-admins, when Just me is not set up", async () => {

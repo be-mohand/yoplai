@@ -1,4 +1,5 @@
 import { API_BASE, apiFetch as fetch } from "./core";
+import { fetchOAuthStatus } from "./oauth";
 
 type ExtensionConfigTier = "auto-form" | "bespoke-route" | "toggle-only";
 
@@ -115,10 +116,6 @@ export async function fetchOAuthScopeState(
   provider: string,
   scope: "personal" | "team"
 ): Promise<OAuthScopeState> {
-  const res = await fetch(
-    `/api/oauth/${encodeURIComponent(provider)}/status?agent=${encodeURIComponent(agentId)}&scope=${scope}`
-  );
-  if (!res.ok) return "disconnected";
-  const data = (await res.json()) as { connected?: boolean; state?: OAuthScopeState };
+  const data = await fetchOAuthStatus(agentId, provider, scope);
   return data.state ?? (data.connected ? "connected" : "disconnected");
 }

@@ -32,6 +32,8 @@ import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
 import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
+import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
+import { onOAuthReturn, reserveOAuthPopup } from "../lib/oauth-popup";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -59,13 +61,6 @@ function dashboardSections(dashboards: AgentDashboard[]) {
   const sub = dashboards.filter((dashboard) => dashboard.params.length > 0)
     .map((dashboard) => ({ dashboard, usedBy: usedBy.get(dashboard.slug) ?? [] }));
   return { top, sub };
-}
-
-const STAFF_ROLES = ["admin", "superadmin"];
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
 }
 
 // Team assignment for the edit page: assign a never-forked pool agent to a
@@ -180,7 +175,7 @@ export function EditAgent() {
   // Superadmins see every agent; admins are scoped to their teams.
   const isSuperadmin = createMemo(() => {
     const role = (session().data?.user as { role?: string | string[] } | undefined)?.role;
-    return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
+    return isSuperadminRole(role);
   });
 
   const [agents] = createResource(() =>
@@ -299,16 +294,7 @@ export function EditAgent() {
   });
 
   createEffect(() => {
-    const onReturn = () => { void refetchMcpServers(); };
-    const onMessage = (event: MessageEvent) => {
-      if (event.data?.extension === "mcp" && ["yoplai-oauth", "aihub-oauth"].includes(event.data.type)) onReturn();
-    };
-    window.addEventListener("focus", onReturn);
-    window.addEventListener("message", onMessage);
-    onCleanup(() => {
-      window.removeEventListener("focus", onReturn);
-      window.removeEventListener("message", onMessage);
-    });
+    onCleanup(onOAuthReturn(() => { void refetchMcpServers(); }, { extension: "mcp" }));
   });
 
   const addCustomExtension = async (event: SubmitEvent) => {
@@ -331,7 +317,7 @@ export function EditAgent() {
     // Reserve the popup in the click event; browsers block windows opened after fetch.
     // Skipped when a shared personal grant already covers this URL.
     const alreadyConnected = mcpScope() === "personal" && connectedMcpHref() === url.href;
-    const popup = alreadyConnected ? null : window.open("", "yoplai-oauth", "width=520,height=640");
+    const popup = alreadyConnected ? null : reserveOAuthPopup();
     setMcpBusy(true);
     setMcpError(undefined);
     try {
