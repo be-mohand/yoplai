@@ -5,8 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
+import type { GatewayConfig } from "@yoplai/shared";
 import {
   createInternalSocketApp,
+  startConfiguredInternalSocket,
   startInternalSocketServer,
 } from "./internal-socket.js";
 
@@ -107,5 +109,38 @@ describe("internal socket server", () => {
     );
     socket.close();
     expect(fs.existsSync(socket.socketPath)).toBe(false);
+  });
+});
+
+describe("startConfiguredInternalSocket", () => {
+  it("starts with the socket transport even when no agent is sandboxed yet", async () => {
+    const home = tmpDir();
+    // No sandboxed agent at boot: one may enable its sandbox later via reload.
+    const config = {
+      agents: [{ id: "a", sandbox: { enabled: false } }],
+      sandbox: { gatewayTransport: "socket" },
+    } as unknown as GatewayConfig;
+    const socket = await startConfiguredInternalSocket(config, home, (dir) =>
+      startInternalSocketServer(dir, createInternalSocketApp(stubRoutes()))
+    );
+    expect(socket).toBeDefined();
+    cleanups.push(() => socket?.close());
+    expect(
+      (await request(socket!.socketPath, "POST", "/internal/tools")).status
+    ).toBe(200);
+  });
+
+  it("does nothing with the default http transport", async () => {
+    let started = false;
+    const socket = await startConfiguredInternalSocket(
+      { agents: [] } as unknown as GatewayConfig,
+      tmpDir(),
+      async (dir) => {
+        started = true;
+        return startInternalSocketServer(dir);
+      }
+    );
+    expect(socket).toBeUndefined();
+    expect(started).toBe(false);
   });
 });
