@@ -1,6 +1,6 @@
 import { API_BASE, apiFetch as fetch } from "./core";
 
-export type ExtensionConfigTier = "auto-form" | "bespoke-route" | "toggle-only";
+type ExtensionConfigTier = "auto-form" | "bespoke-route" | "toggle-only";
 
 export type ExtensionCatalogEntry = {
   id: string;

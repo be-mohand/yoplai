@@ -2,7 +2,7 @@
 // list of form-field descriptors the schema-driven auto-form renderer can draw.
 // Kept pure and framework-free so it can be unit-tested without a DOM.
 
-export type AutoFormFieldType = "text" | "number" | "boolean" | "secret";
+type AutoFormFieldType = "text" | "number" | "boolean" | "secret";
 
 export const REDACTED_SECRET_VALUE = "********";
 

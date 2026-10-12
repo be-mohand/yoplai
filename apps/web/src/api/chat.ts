@@ -1,6 +1,5 @@
 import type {
   FileAttachment,
-  SendMessageResponse,
   SessionSummary,
   ThinkLevel,
 } from "./types";
@@ -53,20 +52,6 @@ export type StreamMessageOptions = {
   thinkLevel?: ThinkLevel;
   sessionId?: string;
 };
-
-export async function sendMessage(
-  agentId: string,
-  message: string,
-  sessionId?: string
-): Promise<SendMessageResponse> {
-  const res = await fetch(`${API_BASE}/agents/${agentId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, sessionId }),
-  });
-  if (!res.ok) throw new Error("Failed to send message");
-  return res.json();
-}
 
 export async function postAbort(
   agentId: string,

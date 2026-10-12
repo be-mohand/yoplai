@@ -1,6 +1,6 @@
 import { createEffect, createSignal } from "solid-js";
 
-export type Theme = "light" | "dark";
+type Theme = "light" | "dark";
 
 function getInitialTheme(): Theme {
   const stored = localStorage.getItem("yoplai-theme");

@@ -1,4 +1,4 @@
-export type TourAdvance = "next" | "click" | "done";
+type TourAdvance = "next" | "click" | "done";
 
 export type TourStep = {
   /** Matches the router path (base stripped) where this step is shown. */
@@ -26,7 +26,7 @@ const AGENT_EDIT = /^\/agents\/[^/]+\/edit\/?$/;
 const EXTENSION_DETAILS = /^\/agents\/[^/]+\/extensions\/[^/]+/;
 const CHAT = /^\/chat\/[^/]+/;
 
-export const CHAT_SUGGESTION =
+const CHAT_SUGGESTION =
   "Create a simple dashboard that explains what you can do for me";
 
 const byTour = (root: ParentNode, name: string) =>

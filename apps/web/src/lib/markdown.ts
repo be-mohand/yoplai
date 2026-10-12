@@ -30,7 +30,7 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export function getFilenameFromHref(raw: string): string {
+function getFilenameFromHref(raw: string): string {
   const cleaned = raw.split(/[?#]/)[0] ?? "";
   const last = cleaned.split("/").filter(Boolean).pop() ?? cleaned;
   try {
