@@ -46,12 +46,10 @@
     "tesseract.js": "^7.0.0",
     "@tesseract.js-data/eng": "1.0.0",
     "@tesseract.js-data/fra": "1.0.0",
-    "undici": "^7.20.0",
     "ws": "^8.19.0",
     "xlsx": "^0.18.5",
     "yaml": "^2.9.1",
-    "zod": "^3.25.76",
-    "zod-to-json-schema": "^3.25.1"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

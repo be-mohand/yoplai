@@ -24,6 +24,12 @@ describe("sanitizeForStorage", () => {
     expect(sanitized.output).toContain("page=2");
   });
 
+  it("still redacts textSignature outside the Pi session boundary", () => {
+    expect(sanitizeForStorage({ textSignature: "credential-canary" })).toEqual({
+      textSignature: "[REDACTED]",
+    });
+  });
+
   it("preserves thinking-block signatures required for history replay", () => {
     const signature = "EoIFCokBCBAYAipAseJtlUgxbB";
     const sanitized = sanitizeForStorage({

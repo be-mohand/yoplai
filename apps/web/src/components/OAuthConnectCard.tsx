@@ -9,20 +9,12 @@ import {
   type JSX,
 } from "solid-js";
 import { useSession } from "../auth/client";
-import { CredentialScopeTabs, preferredScope, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
+import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
+import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
+import { navigateOAuthPopup, onOAuthReturn, openOAuthPopup, reserveOAuthPopup } from "../lib/oauth-popup";
+import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "./ScopedConnectionNotes";
 
-type ConnectionState = "connected" | "needs_reconnect" | "disconnected";
-
-type OAuthStatus = {
-  state?: ConnectionState;
-  connected: boolean;
-  provider: string;
-  account?: string;
-  scopes?: string[];
-  canConfigureTeam?: boolean;
-};
-
-const OAUTH_POPUP_MESSAGE_TYPES = new Set(["yoplai-oauth", "aihub-oauth"]);
+type ConnectionState = OAuthConnectionState;
 
 function stateOf(status: OAuthStatus | undefined): ConnectionState {
   if (!status) return "disconnected";
@@ -30,9 +22,7 @@ function stateOf(status: OAuthStatus | undefined): ConnectionState {
 }
 
 function providerLabel(provider: string): string {
-  return provider === "google"
-    ? "Google"
-    : provider.charAt(0).toUpperCase() + provider.slice(1);
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
 export function OAuthConnectCard(props: {
@@ -77,14 +67,8 @@ export function OAuthConnectCard(props: {
     setLoading(true);
     try {
       // Both scopes are loaded so each tab can show its own state.
-      const load = async (target: CredentialScope): Promise<OAuthStatus> => {
-        const response = await fetch(
-          `/api/oauth/${encodeURIComponent(props.provider)}/status?agent=${encodeURIComponent(props.agentId)}&scope=${target}`
-        );
-        return response.ok
-          ? ((await response.json()) as OAuthStatus)
-          : { connected: false, provider: props.provider };
-      };
+      const load = (target: CredentialScope): Promise<OAuthStatus> =>
+        fetchOAuthStatus(props.agentId, props.provider, target);
       const [team, personal] = await Promise.all([
         load("team"),
         session().data?.user ? load("personal") : undefined,
@@ -110,22 +94,7 @@ export function OAuthConnectCard(props: {
   });
 
   createEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (
-        event.data &&
-        typeof event.data === "object" &&
-        OAUTH_POPUP_MESSAGE_TYPES.has(event.data.type)
-      ) {
-        void refreshStatus();
-      }
-    };
-    const onFocus = () => void refreshStatus();
-    window.addEventListener("message", onMessage);
-    window.addEventListener("focus", onFocus);
-    onCleanup(() => {
-      window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", onFocus);
-    });
+    onCleanup(onOAuthReturn(() => void refreshStatus()));
   });
 
   const status = () => statuses()[scope()];
@@ -139,36 +108,31 @@ export function OAuthConnectCard(props: {
     const current = statuses()[target];
     if (!current) return undefined;
     const state = stateOf(current);
-    if (state === "needs_reconnect") return { tone: "error", label: "Reconnect" };
-    if (state !== "connected") return { tone: "off", label: "Not set up" };
+    if (state === "needs_reconnect") return STATUS_RECONNECT;
+    if (state !== "connected") return STATUS_NOT_SET_UP;
     return scopesFor(target).every((required) => current.scopes?.includes(required))
-      ? { tone: "ok", label: "Connected" }
+      ? STATUS_CONNECTED
       : { tone: "error", label: "Not granted" };
   };
 
   // Non-admins can see, but not change, the admin-managed team connection.
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
-  const authorizeUrl = (target: CredentialScope, scopes: string[]) => {
-    const query = new URLSearchParams({ agent: props.agentId });
-    if (scopes.length) query.set("scopes", scopes.join(","));
-    query.set("scope", target);
-    return `/api/oauth/${encodeURIComponent(props.provider)}/authorize?${query.toString()}`;
-  };
+  const authorizeUrl = (target: CredentialScope, scopes: string[]) =>
+    oauthAuthorizeUrl(props.agentId, props.provider, target, scopes);
 
   const connect = async () => {
     if (!props.agentId) return;
     const target = scope();
     if (!props.hasUnsavedSettings?.()) {
-      window.open(authorizeUrl(target, scopesFor(target)), "yoplai-oauth", "width=520,height=640");
+      openOAuthPopup(authorizeUrl(target, scopesFor(target)));
       return;
     }
     // Reserve the popup in the click event; browsers block windows opened after fetch.
-    const popup = window.open("", "yoplai-oauth", "width=520,height=640");
+    const popup = reserveOAuthPopup();
     try {
       const url = authorizeUrl(target, (await props.saveSettings?.()) ?? scopesFor(target));
-      if (popup && !popup.closed) popup.location.replace(url);
-      else window.location.assign(url);
+      navigateOAuthPopup(popup, url);
       setError(undefined);
     } catch (cause) {
       popup?.close();
@@ -177,10 +141,7 @@ export function OAuthConnectCard(props: {
   };
 
   const disconnect = async () => {
-    await fetch(
-      `/api/oauth/${encodeURIComponent(props.provider)}/disconnect?agent=${encodeURIComponent(props.agentId)}&scope=${scope()}`,
-      { method: "POST" }
-    );
+    await disconnectOAuth(props.agentId, props.provider, scope());
     await refreshStatus();
   };
 
@@ -262,19 +223,14 @@ export function OAuthConnectCard(props: {
         <Show when={teamReadOnly()}>
           <p class="oauth-shared-note">
             {connected() || needsGrant()
-              ? "The whole team connection is managed by an admin."
+              ? TEAM_MANAGED_NOTE
               : lifecycle() === "needs_reconnect"
                 ? "The whole team connection needs reconnecting. An admin must reconnect it."
                 : "The whole team connection is not set up. An admin must connect it."}
           </p>
         </Show>
         <Show when={lifecycle() === "needs_reconnect" && !teamReadOnly()}>
-          <div class="oauth-connected-detail">
-            <p class="oauth-warn-text">
-              This connection can no longer refresh. Reconnect to restore
-              access.
-            </p>
-          </div>
+          <ReconnectWarning />
         </Show>
         <Show when={(connected() || needsGrant()) && status()?.account}>
           <div class="oauth-connected-detail">
@@ -285,11 +241,7 @@ export function OAuthConnectCard(props: {
           </div>
         </Show>
         <Show when={connected() || needsGrant()}>
-          <p class="oauth-shared-note">
-            {scope() === "personal"
-              ? "Used only for your requests. Without it, your requests use the team connection when available."
-              : "Used by everyone on this agent who has no personal connection."}
-          </p>
+          <ScopeUsageNote scope={scope()} />
         </Show>
         <Show when={loading() && !status()}>
           <div class="oauth-quiet">Checking connection…</div>

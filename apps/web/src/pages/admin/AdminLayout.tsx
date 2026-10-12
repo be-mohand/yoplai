@@ -2,9 +2,8 @@ import { For, Show, type JSX } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
 import { capabilities } from "../../lib/capabilities";
 import { stripBase } from "../../lib/path";
+import { isSuperadmin } from "../../lib/roles";
 
-const isSuperadmin = (role: string | string[] | null | undefined) =>
-  Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
 
 /** Admin sections, one tab each; users exist only in multi-user mode, Top extensions and MCP servers are superadmin-only. */
 function adminTabs() {

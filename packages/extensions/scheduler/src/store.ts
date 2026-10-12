@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import lockfile from "proper-lockfile";
 import type { AgentConfig, ScheduleJob } from "@yoplai/shared";
@@ -24,7 +23,7 @@ export function getAgentJobsPath(workspaceDir: string): string {
   return path.join(workspaceDir, "cron", "jobs.json");
 }
 
-export function getCronOutputDir(workspaceDir: string): string {
+function getCronOutputDir(workspaceDir: string): string {
   return path.join(workspaceDir, "cron", "output");
 }
 
@@ -139,8 +138,4 @@ export async function readLatestOutputFile(
   if (!latest) return undefined;
   const filePath = path.join(dir, latest);
   return { path: filePath, content: await fs.readFile(filePath, "utf8") };
-}
-
-export function getTempDir(): string {
-  return os.tmpdir();
 }

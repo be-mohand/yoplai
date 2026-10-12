@@ -465,14 +465,13 @@ export const UiConfigSchema = z.object({
 export type UiConfig = z.infer<typeof UiConfigSchema>;
 
 // Gateway server bind mode (reuses UiBindMode)
-export const GatewayBindModeSchema = UiBindModeSchema;
 export type GatewayBindMode = UiBindMode;
 
 // Gateway server config
 export const GatewayServerConfigSchema = z.object({
   host: z.string().optional(), // Explicit host (overrides bind)
   port: z.number().optional(),
-  bind: GatewayBindModeSchema.optional(), // loopback | lan | tailnet
+  bind: UiBindModeSchema.optional(), // loopback | lan | tailnet
 });
 export type GatewayServerConfig = z.infer<typeof GatewayServerConfigSchema>;
 
@@ -1080,10 +1079,8 @@ export const AgentDiscoveryConfigSchema = z.union([
   z.array(z.string()),
 ]);
 
-export const GatewayRootConfigSchema = z.object({
-  version: z.literal(3).optional(),
-  agents: AgentDiscoveryConfigSchema.optional(),
-  pool: AgentDiscoveryConfigSchema.optional(),
+// Settings shared by the discovery (root) and resolved gateway schemas.
+const GatewayCommonFields = {
   defaultProjectManager: z.string().optional(),
   sandbox: GlobalSandboxConfigSchema.optional(),
   onecli: OnecliConfigSchema.optional(),
@@ -1111,63 +1108,8 @@ export const GatewayRootConfigSchema = z.object({
       baseUrl: z.string().url().optional(),
     })
     .optional(),
-  server: z
-    .object({
-      host: z.string().optional(),
-      port: z.number().optional(),
-      baseUrl: z.string().optional(),
-    })
-    .optional(),
-  gateway: GatewayServerConfigSchema.optional(),
-  sessions: SessionsConfigSchema.optional().default({}),
-  agentLoop: AgentLoopConfigSchema.optional(),
-  web: z
-    .object({
-      baseUrl: z.string().optional(),
-    })
-    .optional(),
-  ui: UiConfigSchema.optional(),
-  taskboard: TaskboardConfigSchema.optional(),
-  projects: ProjectsConfigSchema.optional(),
-  subagents: z.array(SubagentConfigSchema).optional(),
-  notifications: NotificationsConfigSchema.optional(),
-  dream: DreamGatewayConfigSchema.optional(),
-  env: z.record(z.string(), z.string()).optional(),
-});
-export type GatewayRootConfig = z.infer<typeof GatewayRootConfigSchema>;
-
-// Gateway config
-export const GatewayConfigSchema = z.object({
-  version: z.number().optional(),
-  agents: z.array(AgentConfigSchema),
-  pool: z.array(AgentConfigSchema).optional(),
-  forkedAgents: z.boolean().optional(),
-  defaultProjectManager: z.string().optional(),
-  sandbox: GlobalSandboxConfigSchema.optional(),
-  onecli: OnecliConfigSchema.optional(),
-  maintenance: RequiredModelConfigSchema.optional(),
-  imageDescription: z
-    .object({
-      provider: z.string(),
-      model: z.string(),
-      enabled: z.boolean().default(true),
-    })
-    .optional(),
-  oauth: OAuthConfigSchema.optional(),
-  extensions: ExtensionsConfigSchema,
-  extensionsPath: z.string().optional(),
-  branding: z
-    .object({
-      name: z.string().optional(),
-      logo: z.string().optional(),
-    })
-    .optional(),
-  agentFab: z.boolean().optional().default(false),
-  canvas: z
-    .object({
-      enabled: z.boolean().optional().default(true),
-      baseUrl: z.string().url().optional(),
-    })
+  sessionHistory: z
+    .object({ enabled: z.boolean().optional().default(true) })
     .optional(),
   server: z
     .object({
@@ -1191,6 +1133,23 @@ export const GatewayConfigSchema = z.object({
   notifications: NotificationsConfigSchema.optional(),
   dream: DreamGatewayConfigSchema.optional(),
   env: z.record(z.string(), z.string()).optional(), // Env vars to set (only if not already set)
+};
+
+export const GatewayRootConfigSchema = z.object({
+  version: z.literal(3).optional(),
+  agents: AgentDiscoveryConfigSchema.optional(),
+  pool: AgentDiscoveryConfigSchema.optional(),
+  ...GatewayCommonFields,
+});
+export type GatewayRootConfig = z.infer<typeof GatewayRootConfigSchema>;
+
+// Gateway config
+export const GatewayConfigSchema = z.object({
+  version: z.number().optional(),
+  agents: z.array(AgentConfigSchema),
+  pool: z.array(AgentConfigSchema).optional(),
+  forkedAgents: z.boolean().optional(),
+  ...GatewayCommonFields,
 });
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
 

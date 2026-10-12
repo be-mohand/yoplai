@@ -51,8 +51,7 @@ import {
 } from "./utils/dedupe.js";
 import { clearHistory, getHistory, recordMessage } from "./utils/history.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
-import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
-import { createSlackThreadSessionBindingStore } from "./thread-session-bindings.js";
+import { withProactiveDmNotes, withThreadBindings } from "./store-scope.js";
 import {
   buildSlackHistoryKey,
   buildSlackSessionKey,
@@ -331,17 +330,14 @@ function claimProactiveReply(
 ): boolean {
   if (!data.thread_ts) return false;
   try {
-    const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
-    try {
-      return store.claimReply(
+    return withProactiveDmNotes(getSlackContext().getDataDir(), (store) =>
+      store.claimReply(
         target.agent.id,
         data.channel,
-        data.thread_ts,
+        data.thread_ts!,
         target.dmConfig?.proactiveReplies?.maxReplies
-      );
-    } finally {
-      store.close();
-    }
+      )
+    );
   } catch (err) {
     console.debug(`${target.logPrefix} Proactive reply check failed:`, err);
     return false;
@@ -354,12 +350,9 @@ function isTrackedProactiveMessage(
   ts: string
 ): boolean {
   try {
-    const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
-    try {
-      return store.isTracked(agentId, channel, ts);
-    } finally {
-      store.close();
-    }
+    return withProactiveDmNotes(getSlackContext().getDataDir(), (store) =>
+      store.isTracked(agentId, channel, ts)
+    );
   } catch {
     return false;
   }
@@ -981,18 +974,12 @@ async function handleSlackMessage(
   let boundSessionId: string | undefined;
   if (data.thread_ts && data.thread_ts !== data.ts) {
     try {
-      const store = createSlackThreadSessionBindingStore(
-        getSlackContext().getDataDir()
+      boundSessionId = withThreadBindings(
+        getSlackContext().getDataDir(),
+        (store) =>
+          store.getBinding(data.channel, data.thread_ts!, target.agent.id)
+            ?.sessionId
       );
-      try {
-        boundSessionId = store.getBinding(
-          data.channel,
-          data.thread_ts,
-          target.agent.id
-        )?.sessionId;
-      } finally {
-        store.close();
-      }
     } catch (err) {
       console.debug(`${target.logPrefix} Thread binding lookup failed:`, err);
     }
@@ -1291,12 +1278,9 @@ function takeProactiveDmNotes(
   userId: string | undefined,
   channelId: string
 ) {
-  const store = createProactiveDmNoteStore(getSlackContext().getDataDir());
-  try {
-    return store.takeNotes(agentId, userId, channelId);
-  } finally {
-    store.close();
-  }
+  return withProactiveDmNotes(getSlackContext().getDataDir(), (store) =>
+    store.takeNotes(agentId, userId, channelId)
+  );
 }
 
 async function handleSlackReaction(
@@ -1516,33 +1500,21 @@ function resolveCommandTarget(
   return null;
 }
 
-export function createSlackBot(
-  agents: AgentConfig[],
-  componentConfig: SlackComponentConfig
-): SlackBot | null {
-  if (!componentConfig.token || !componentConfig.appToken) return null;
+type SlackBotWiring = {
+  app: App;
+  agentId: string;
+  logPrefix: string;
+  resolveMessageTarget(data: MessageData): SlackMessageTarget | null;
+  resolveReactionTarget(data: ReactionData): SlackReactionTarget | null;
+  resolveCommandTarget(command: SlackCommandData): SlackCommandTarget | null;
+  recoveryPrefixes(): string[];
+  acceptsAgent(agentId: string): boolean;
+  getBroadcastChannel(): string | undefined;
+};
 
-  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  const fallbackAgent = agents[0];
-  const routedAgentIds = new Set<string>();
-
-  for (const route of Object.values(componentConfig.channels ?? {})) {
-    routedAgentIds.add(route.agent);
-  }
-  if (componentConfig.dm?.agent) {
-    routedAgentIds.add(componentConfig.dm.agent);
-  }
-  if (!componentConfig.channels && fallbackAgent) {
-    routedAgentIds.add(fallbackAgent.id);
-  }
-  if (!agents.some((agent) => routedAgentIds.has(agent.id))) {
-    return null;
-  }
-
-  const app = createSocketModeApp(
-    componentConfig.token,
-    componentConfig.appToken
-  );
+/** Event, command, and lifecycle wiring shared by the component and per-agent bots. */
+function wireSlackBot(w: SlackBotWiring): SlackBot {
+  const { app, logPrefix, resolveMessageTarget, resolveReactionTarget } = w;
   const client = app.client as unknown as SlackWebClient;
   const textAccumulators = new Map<string, string>();
   const unlockedThreadKeys = new Set<string>();
@@ -1550,84 +1522,10 @@ export function createSlackBot(
   // user message under different event_ids, so a shared store would let one
   // bot's claim suppress every other bot's copy.
   const deduper = createSlackEventDeduper();
-  const logPrefix = "[slack]";
   let cleanupBroadcasts: (() => void) | null = null;
   let progressRecovery: ReturnType<typeof setInterval> | undefined;
   let botUserId: string | undefined;
   let botId: string | undefined;
-
-  const resolveMessageTarget = (
-    data: MessageData
-  ): SlackMessageTarget | null => {
-    if (data.channel_type === "im") {
-      if (!componentConfig.dm || componentConfig.dm.enabled === false)
-        return null;
-      if (!componentConfig.dm.agent) return null;
-      const dmAgent = agentsById.get(componentConfig.dm.agent);
-      if (!dmAgent) return null;
-      const target: SlackMessageTarget = {
-        agent: dmAgent,
-        config: componentConfig,
-        dmConfig: componentConfig.dm,
-        isMainSession: true,
-        logPrefix: `[slack:${dmAgent.id}]`,
-      };
-      return isDmUserAllowed(componentConfig.dm, data.user)
-        ? target
-        : (asProactiveReplyTarget(data, target) ?? target);
-    }
-
-    const route = componentConfig.channels?.[data.channel];
-    if (route) {
-      const agent = agentsById.get(route.agent);
-      if (!agent) return null;
-      return {
-        agent,
-        config: componentConfig,
-        channelConfig: route,
-        isMainSession: false,
-        logPrefix: `[slack:${agent.id}]`,
-      };
-    }
-
-    if (!componentConfig.channels && fallbackAgent) {
-      return {
-        agent: fallbackAgent,
-        config: componentConfig,
-        isMainSession: false,
-        logPrefix: `[slack:${fallbackAgent.id}]`,
-      };
-    }
-
-    return null;
-  };
-
-  const resolveReactionTarget = (
-    data: ReactionData
-  ): SlackReactionTarget | null => {
-    const channel = data.item.channel;
-    if (!channel) return null;
-    const dmAgent = componentConfig.dm?.agent
-      ? agentsById.get(componentConfig.dm.agent)
-      : undefined;
-    if (channel.startsWith("D")) {
-      return dmAgent
-        ? dmReactionTarget(
-            channel,
-            dmAgent,
-            componentConfig,
-            componentConfig.dm,
-            `[slack:${dmAgent.id}]`
-          )
-        : null;
-    }
-    const route = componentConfig.channels?.[channel];
-    if (!route) return null;
-    const agent = agentsById.get(route.agent);
-    return agent
-      ? { agent, config: componentConfig, logPrefix: `[slack:${agent.id}]` }
-      : null;
-  };
 
   app.message(async ({ message, client: eventClient, body }) => {
     const data = toMessageData(message);
@@ -1720,16 +1618,11 @@ export function createSlackBot(
   ) => {
     app.command(name, async ({ command, ack, respond }) => {
       await ack();
-      const target = resolveCommandTarget(
-        componentConfig,
-        agentsById,
-        fallbackAgent,
-        {
-          channel_id: command.channel_id,
-          user_id: command.user_id,
-          text: command.text,
-        }
-      );
+      const target = w.resolveCommandTarget({
+        channel_id: command.channel_id,
+        user_id: command.user_id,
+        text: command.text,
+      });
       if (!target) {
         await respond({
           text: "No agent is configured for this Slack route.",
@@ -1757,7 +1650,7 @@ export function createSlackBot(
 
   return {
     app,
-    agentId: "slack",
+    agentId: w.agentId,
     start: async () => {
       try {
         const auth = await client.auth?.test();
@@ -1769,20 +1662,15 @@ export function createSlackBot(
         botId = undefined;
       }
       await app.start();
-      await recoverTimedOutSlackProgress(
-        [...routedAgentIds].map((agentId) => `[slack:${agentId}]`), client
-      );
+      await recoverTimedOutSlackProgress(w.recoveryPrefixes(), client);
       progressRecovery = setInterval(() => {
-        void recoverTimedOutSlackProgress(
-          [...routedAgentIds].map((agentId) => `[slack:${agentId}]`),
-          client
-        );
+        void recoverTimedOutSlackProgress(w.recoveryPrefixes(), client);
       }, PROGRESS_ORPHAN_TIMEOUT_MS);
       cleanupBroadcasts = setupSlackBroadcasts({
         client,
         textAccumulators,
-        acceptsAgent: (agentId) => routedAgentIds.has(agentId),
-        getBroadcastChannel: () => componentConfig.broadcastToChannel,
+        acceptsAgent: w.acceptsAgent,
+        getBroadcastChannel: w.getBroadcastChannel,
         logPrefix,
       });
       console.log(`${logPrefix} Started Socket Mode bot`);
@@ -1799,6 +1687,122 @@ export function createSlackBot(
   };
 }
 
+export function createSlackBot(
+  agents: AgentConfig[],
+  componentConfig: SlackComponentConfig
+): SlackBot | null {
+  if (!componentConfig.token || !componentConfig.appToken) return null;
+
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const fallbackAgent = agents[0];
+  const routedAgentIds = new Set<string>();
+
+  for (const route of Object.values(componentConfig.channels ?? {})) {
+    routedAgentIds.add(route.agent);
+  }
+  if (componentConfig.dm?.agent) {
+    routedAgentIds.add(componentConfig.dm.agent);
+  }
+  if (!componentConfig.channels && fallbackAgent) {
+    routedAgentIds.add(fallbackAgent.id);
+  }
+  if (!agents.some((agent) => routedAgentIds.has(agent.id))) {
+    return null;
+  }
+
+  const app = createSocketModeApp(
+    componentConfig.token,
+    componentConfig.appToken
+  );
+
+  const resolveMessageTarget = (
+    data: MessageData
+  ): SlackMessageTarget | null => {
+    if (data.channel_type === "im") {
+      if (!componentConfig.dm || componentConfig.dm.enabled === false)
+        return null;
+      if (!componentConfig.dm.agent) return null;
+      const dmAgent = agentsById.get(componentConfig.dm.agent);
+      if (!dmAgent) return null;
+      const target: SlackMessageTarget = {
+        agent: dmAgent,
+        config: componentConfig,
+        dmConfig: componentConfig.dm,
+        isMainSession: true,
+        logPrefix: `[slack:${dmAgent.id}]`,
+      };
+      return isDmUserAllowed(componentConfig.dm, data.user)
+        ? target
+        : (asProactiveReplyTarget(data, target) ?? target);
+    }
+
+    const route = componentConfig.channels?.[data.channel];
+    if (route) {
+      const agent = agentsById.get(route.agent);
+      if (!agent) return null;
+      return {
+        agent,
+        config: componentConfig,
+        channelConfig: route,
+        isMainSession: false,
+        logPrefix: `[slack:${agent.id}]`,
+      };
+    }
+
+    if (!componentConfig.channels && fallbackAgent) {
+      return {
+        agent: fallbackAgent,
+        config: componentConfig,
+        isMainSession: false,
+        logPrefix: `[slack:${fallbackAgent.id}]`,
+      };
+    }
+
+    return null;
+  };
+
+  const resolveReactionTarget = (
+    data: ReactionData
+  ): SlackReactionTarget | null => {
+    const channel = data.item.channel;
+    if (!channel) return null;
+    const dmAgent = componentConfig.dm?.agent
+      ? agentsById.get(componentConfig.dm.agent)
+      : undefined;
+    if (channel.startsWith("D")) {
+      return dmAgent
+        ? dmReactionTarget(
+            channel,
+            dmAgent,
+            componentConfig,
+            componentConfig.dm,
+            `[slack:${dmAgent.id}]`
+          )
+        : null;
+    }
+    const route = componentConfig.channels?.[channel];
+    if (!route) return null;
+    const agent = agentsById.get(route.agent);
+    return agent
+      ? { agent, config: componentConfig, logPrefix: `[slack:${agent.id}]` }
+      : null;
+  };
+
+  return wireSlackBot({
+    app,
+    agentId: "slack",
+    logPrefix: "[slack]",
+    resolveMessageTarget,
+    resolveReactionTarget,
+    resolveCommandTarget: (command) =>
+      resolveCommandTarget(componentConfig, agentsById, fallbackAgent, command),
+    recoveryPrefixes: () =>
+      [...routedAgentIds].map((agentId) => `[slack:${agentId}]`),
+    acceptsAgent: (agentId) => routedAgentIds.has(agentId),
+    getBroadcastChannel: () => componentConfig.broadcastToChannel,
+  });
+}
+
 export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   if (!agent.slack?.token || !agent.slack?.appToken) return null;
 
@@ -1808,16 +1812,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     agentSlackConfig.token,
     agentSlackConfig.appToken
   );
-  const client = app.client as unknown as SlackWebClient;
-  const textAccumulators = new Map<string, string>();
-  const unlockedThreadKeys = new Set<string>();
-  // One claim store per bot — see createSlackBot.
-  const deduper = createSlackEventDeduper();
   const logPrefix = `[slack:${agent.id}]`;
-  let cleanupBroadcasts: (() => void) | null = null;
-  let progressRecovery: ReturnType<typeof setInterval> | undefined;
-  let botUserId: string | undefined;
-  let botId: string | undefined;
 
   const resolveMessageTarget = (
     data: MessageData
@@ -1941,162 +1936,15 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
     return null;
   };
 
-  app.message(async ({ message, client: eventClient, body }) => {
-    const data = toMessageData(message);
-    if (!data) return;
-    const target = resolveMessageTarget(data);
-    if (!target) return;
-    const threadUnlock = target.channelConfig?.threadUnlock === true;
-    const mentioned = mentionsSlackBot(data, botUserId);
-    const unlockKey = slackThreadUnlockKey(data, mentioned);
-    if (threadUnlock && unlockKey && mentioned) {
-      unlockedThreadKeys.add(unlockKey);
-    }
-    const threadKey = slackThreadUnlockKey(data);
-    const effectiveTarget =
-      threadUnlock && threadKey && unlockedThreadKeys.has(threadKey)
-        ? withoutSlackMentionRequirement(target, data.channel)
-        : target;
-    await handleSlackMessage(
-      data,
-      eventClient as unknown as SlackWebClient,
-      effectiveTarget,
-      botUserId,
-      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
-      () => releaseSlackMessageEvent(deduper, body, data)
-    );
-  });
-
-  app.event("app_mention", async ({ event, client: eventClient, body }) => {
-    const data = toMessageData(event, true);
-    if (!data) return;
-    const target = resolveMessageTarget(data);
-    if (!target) return;
-    const threadUnlock = target.channelConfig?.threadUnlock === true;
-    const unlockKey = slackThreadUnlockKey(data, true);
-    if (threadUnlock && unlockKey) {
-      unlockedThreadKeys.add(unlockKey);
-    }
-    const threadKey = slackThreadUnlockKey(data);
-    const effectiveTarget =
-      threadUnlock && threadKey && unlockedThreadKeys.has(threadKey)
-        ? withoutSlackMentionRequirement(target, data.channel)
-        : target;
-    await handleSlackMessage(
-      data,
-      eventClient as unknown as SlackWebClient,
-      effectiveTarget,
-      botUserId,
-      () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
-      () => releaseSlackMessageEvent(deduper, body, data)
-    );
-  });
-
-  app.event("reaction_added", async ({ event, client: eventClient }) => {
-    const data = toReactionData(event);
-    if (!data) return;
-    const target = resolveReactionTarget(data);
-    if (!target) return;
-    await handleSlackReaction(
-      data,
-      eventClient as unknown as SlackWebClient,
-      target,
-      "add",
-      botUserId,
-      botId
-    );
-  });
-
-  app.event("reaction_removed", async ({ event, client: eventClient }) => {
-    const data = toReactionData(event);
-    if (!data) return;
-    const target = resolveReactionTarget(data);
-    if (!target) return;
-    await handleSlackReaction(
-      data,
-      eventClient as unknown as SlackWebClient,
-      target,
-      "remove",
-      botUserId,
-      botId
-    );
-  });
-
-  const registerCommand = (
-    name: "/new" | "/stop" | "/help" | "/ping",
-    handler: (
-      command: SlackCommandData,
-      target: SlackCommandTarget,
-      respond: SlackRespond
-    ) => Promise<void>
-  ) => {
-    app.command(name, async ({ command, ack, respond }) => {
-      await ack();
-      const target = resolveAgentCommandTarget({
-        channel_id: command.channel_id,
-        user_id: command.user_id,
-        text: command.text,
-      });
-      if (!target) {
-        await respond({
-          text: "No agent is configured for this Slack route.",
-          response_type: "ephemeral",
-        });
-        return;
-      }
-      await handler(
-        {
-          channel_id: command.channel_id,
-          user_id: command.user_id,
-          requesterUserId: await resolveSlackRequester(client, command.user_id),
-          text: command.text,
-        },
-        target,
-        respond as SlackRespond
-      );
-    });
-  };
-
-  registerCommand("/new", handleNewCommand);
-  registerCommand("/stop", handleAbortCommand);
-  registerCommand("/help", handleHelpCommand);
-  registerCommand("/ping", handlePingCommand);
-
-  return {
+  return wireSlackBot({
     app,
     agentId: agent.id,
-    start: async () => {
-      try {
-        const auth = await client.auth?.test();
-        botUserId = auth?.user_id;
-        botId = auth?.bot_id;
-        if (auth?.team_id) getSlackPairingService()?.registerClient(auth.team_id, client);
-      } catch {
-        botUserId = undefined;
-        botId = undefined;
-      }
-      await app.start();
-      await recoverTimedOutSlackProgress([logPrefix], client);
-      progressRecovery = setInterval(() => {
-        void recoverTimedOutSlackProgress([logPrefix], client);
-      }, PROGRESS_ORPHAN_TIMEOUT_MS);
-      cleanupBroadcasts = setupSlackBroadcasts({
-        client,
-        textAccumulators,
-        acceptsAgent: (agentId) => agentId === agent.id,
-        getBroadcastChannel: () => agentSlackConfig.broadcastToChannel,
-        logPrefix,
-      });
-      console.log(`${logPrefix} Started Socket Mode bot`);
-    },
-    stop: async () => {
-      cleanupBroadcasts?.();
-      if (progressRecovery) clearInterval(progressRecovery);
-      cleanupBroadcasts = null;
-      textAccumulators.clear();
-      unlockedThreadKeys.clear();
-      stopAllThinkingReactions();
-      await app.stop();
-    },
-  };
+    logPrefix,
+    resolveMessageTarget,
+    resolveReactionTarget,
+    resolveCommandTarget: resolveAgentCommandTarget,
+    recoveryPrefixes: () => [logPrefix],
+    acceptsAgent: (agentId) => agentId === agent.id,
+    getBroadcastChannel: () => agentSlackConfig.broadcastToChannel,
+  });
 }

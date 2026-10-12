@@ -15,8 +15,10 @@ import {
 import { fetchMcpServers, mcpDisplayName, type McpServer } from "../api/mcp-servers";
 import { fetchTopExtensions, type TopExtensions } from "../api/top-extensions";
 import { capabilities, capabilitiesReady } from "../lib/capabilities";
-import { stripBase } from "../lib/path";
+import { chatRouteSession, stripBase } from "../lib/path";
 import { ExtensionConfigForm } from "../pages/ExtensionConfigForm";
+import { oauthAuthorizeUrl } from "../api/oauth";
+import { onOAuthReturn, openOAuthPopup } from "../lib/oauth-popup";
 
 export type ConnectRowState = "connected" | "team" | "enable" | "grant" | "connect" | "setup";
 
@@ -140,11 +142,6 @@ async function loadRows(agentId: string): Promise<ConnectRow[]> {
   return buildConnectRows({ top, extensions, servers: mcp.servers, oauthStates });
 }
 
-function chatAgentId(pathname: string): string | null {
-  const match = stripBase(pathname).match(/^\/chat\/([^/?]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
 const STATE_LABEL: Partial<Record<ConnectRowState, string>> = {
   connected: "Connected",
   team: "Already connected for the team",
@@ -159,7 +156,7 @@ export function ConnectToolsPrompt() {
   // Row whose personal credentials form replaces the list.
   const [configuring, setConfiguring] = createSignal<ConnectRow | null>(null);
   const [error, setError] = createSignal<string>();
-  const routeAgentId = createMemo(() => chatAgentId(location.pathname));
+  const routeAgentId = createMemo(() => (chatRouteSession(location.pathname, "").agentId ?? null));
   // The tour can be pending on another page (e.g. a new user landing straight in
   // a chat while its first step waits on home); only a step shown here blocks the prompt.
   const tourShownHere = createMemo(() => {
@@ -255,20 +252,14 @@ export function ConnectToolsPrompt() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
-    const onReturn = () => {
+    const stopReturn = onOAuthReturn(() => {
       const agentId = shownFor();
       if (agentId) void refresh(agentId);
-    };
-    const onMessage = (event: MessageEvent) => {
-      if (event.data && typeof event.data === "object" && ["yoplai-oauth", "aihub-oauth"].includes(event.data.type)) onReturn();
-    };
+    });
     document.addEventListener("keydown", onKey);
-    window.addEventListener("message", onMessage);
-    window.addEventListener("focus", onReturn);
     onCleanup(() => {
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", onReturn);
+      stopReturn();
     });
   });
 
@@ -277,13 +268,9 @@ export function ConnectToolsPrompt() {
     const url =
       row.kind === "mcp"
         ? `/api/mcp/oauth/authorize?agent=${encodeURIComponent(agentId)}&server=${encodeURIComponent(row.id)}&scope=personal`
-        : `/api/oauth/${encodeURIComponent(row.oauth!.provider)}/authorize?${new URLSearchParams({
-            agent: agentId,
-            ...(row.oauth!.scopes.length ? { scopes: row.oauth!.scopes.join(",") } : {}),
-            scope: "personal",
-          }).toString()}`;
+        : oauthAuthorizeUrl(agentId, row.oauth!.provider, "personal", row.oauth!.scopes);
     connecting = row.key;
-    window.open(url, "yoplai-oauth", "width=520,height=640");
+    openOAuthPopup(url);
   };
 
   const enable = async (agentId: string, row: ConnectRow) => {

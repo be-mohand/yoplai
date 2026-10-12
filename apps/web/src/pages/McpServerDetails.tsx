@@ -14,10 +14,12 @@ import {
   type McpScope,
   type McpServer,
 } from "../api/mcp-servers";
-import { CredentialScopeTabs, preferredScope, type ScopeStatus } from "../components/CredentialScopeTabs";
+import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type ScopeStatus } from "../components/CredentialScopeTabs";
 import { McpIcon } from "../components/McpExtensionCard";
 import { OAUTH_CONNECT_CARD_STYLES } from "../components/OAuthConnectCard";
 import { EXTENSION_DETAILS_STYLES } from "./ExtensionDetails";
+import { onOAuthReturn, openOAuthPopup } from "../lib/oauth-popup";
+import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "../components/ScopedConnectionNotes";
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
@@ -47,23 +49,14 @@ export function McpServerDetails() {
   let scopePicked = false;
 
   createEffect(() => {
-    const onReturn = () => { void refetch(); };
-    const onMessage = (event: MessageEvent) => {
-      if (event.data?.extension === "mcp" && ["yoplai-oauth", "aihub-oauth"].includes(event.data.type)) onReturn();
-    };
-    window.addEventListener("focus", onReturn);
-    window.addEventListener("message", onMessage);
-    onCleanup(() => {
-      window.removeEventListener("focus", onReturn);
-      window.removeEventListener("message", onMessage);
-    });
+    onCleanup(onOAuthReturn(() => { void refetch(); }, { extension: "mcp" }));
   });
 
   const tabStatus = (target: McpScope): ScopeStatus | undefined => {
     const state = target === "personal" ? server()?.personalState : server()?.teamState;
     if (!server()) return undefined;
-    if (state === "needs_reconnect") return { tone: "error", label: "Reconnect" };
-    return state === "connected" ? { tone: "ok", label: "Connected" } : { tone: "off", label: "Not set up" };
+    if (state === "needs_reconnect") return STATUS_RECONNECT;
+    return state === "connected" ? STATUS_CONNECTED : STATUS_NOT_SET_UP;
   };
 
   createEffect(() => {
@@ -76,10 +69,8 @@ export function McpServerDetails() {
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
   const connect = () => {
-    window.open(
-      `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}`,
-      "yoplai-oauth",
-      "width=520,height=640"
+    openOAuthPopup(
+      `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}`
     );
   };
 
@@ -188,10 +179,10 @@ export function McpServerDetails() {
                     </Show>
                   </div>
                   <Show when={teamReadOnly()}>
-                    <p class="oauth-shared-note">The whole team connection is managed by an admin.</p>
+                    <p class="oauth-shared-note">{TEAM_MANAGED_NOTE}</p>
                   </Show>
                   <Show when={scopedState() === "needs_reconnect" && !teamReadOnly()}>
-                    <div class="oauth-connected-detail"><p class="oauth-warn-text">This connection can no longer refresh. Reconnect to restore access.</p></div>
+                    <ReconnectWarning />
                   </Show>
                   <Show when={scopedState() === "connected"}>
                     <Show when={scope() === "personal" ? server()?.personalAccount : server()?.teamAccount}>
@@ -202,11 +193,7 @@ export function McpServerDetails() {
                         </div>
                       )}
                     </Show>
-                    <p class="oauth-shared-note">
-                      {scope() === "personal"
-                        ? "Used only for your requests. Without it, your requests use the team connection when available."
-                        : "Used by everyone on this agent who has no personal connection."}
-                    </p>
+                    <ScopeUsageNote scope={scope()} />
                   </Show>
                 </CredentialScopeTabs>
               </Show>

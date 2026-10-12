@@ -3,7 +3,6 @@ import type {
   FileAttachment,
   RuntimeSubagentListResponse,
   SubagentGlobalListResponse,
-  SubagentListItem,
   SubagentListResponse,
   SubagentLogsResponse,
 } from "./types";
@@ -156,33 +155,6 @@ export async function fetchSubagents(
   return { ok: true, data };
 }
 
-export type RenameSubagentResult =
-  | { ok: true; data: SubagentListItem }
-  | { ok: false; error: string };
-
-export async function renameSubagent(
-  projectId: string,
-  slug: string,
-  name: string
-): Promise<RenameSubagentResult> {
-  const res = await fetch(
-    `${API_BASE}/projects/${projectId}/subagents/${encodeURIComponent(slug)}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    }
-  );
-  if (!res.ok) {
-    const data = await res
-      .json()
-      .catch(() => ({ error: "Failed to rename subagent" }));
-    return { ok: false, error: data.error ?? "Failed to rename subagent" };
-  }
-  const data = (await res.json()) as SubagentListItem;
-  return { ok: true, data };
-}
-
 export type SubagentLogsResult =
   | { ok: true; data: SubagentLogsResponse }
   | { ok: false; error: string };
@@ -203,26 +175,6 @@ export async function fetchSubagentLogs(
   }
   const data = (await res.json()) as SubagentLogsResponse;
   return { ok: true, data };
-}
-
-export type AgentInfo = { id: string; name: string };
-export type SubagentTemplateInfo = {
-  name: string;
-  description?: string;
-  cli: string;
-  model: string;
-  reasoning: string;
-  type: string;
-  runMode: string;
-};
-
-export async function fetchSpawnOptions(): Promise<{
-  agents: AgentInfo[];
-  subagentTemplates: SubagentTemplateInfo[];
-}> {
-  const res = await fetch(`${API_BASE}/config/spawn-options`);
-  if (!res.ok) return { agents: [], subagentTemplates: [] };
-  return res.json();
 }
 
 export type SpawnSubagentInput = {
@@ -275,55 +227,6 @@ export async function spawnSubagent(
   return { ok: true, data };
 }
 
-export type UpdateSubagentInput = {
-  name?: string;
-  model?: string;
-  reasoningEffort?: string;
-  thinking?: string;
-};
-
-export type UpdateSubagentResult =
-  | {
-      ok: true;
-      data: {
-        slug: string;
-        name?: string;
-        model?: string;
-        reasoningEffort?: string;
-        thinking?: string;
-      };
-    }
-  | { ok: false; error: string };
-
-export async function updateSubagent(
-  projectId: string,
-  slug: string,
-  input: UpdateSubagentInput
-): Promise<UpdateSubagentResult> {
-  const res = await fetch(
-    `${API_BASE}/projects/${projectId}/subagents/${slug}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    }
-  );
-  if (!res.ok) {
-    const data = await res
-      .json()
-      .catch(() => ({ error: "Failed to update subagent" }));
-    return { ok: false, error: data.error ?? "Failed to update subagent" };
-  }
-  const data = (await res.json()) as {
-    slug: string;
-    name?: string;
-    model?: string;
-    reasoningEffort?: string;
-    thinking?: string;
-  };
-  return { ok: true, data };
-}
-
 export type InterruptSubagentResult =
   | { ok: true; data: { slug: string } }
   | { ok: false; error: string };
@@ -370,44 +273,6 @@ export async function killSubagent(
   }
   const data = (await res.json()) as { slug: string };
   return { ok: true, data };
-}
-
-export type LeadSessionResult =
-  | { ok: true; data: { ok: true; agentId: string; sessionKey?: string } }
-  | { ok: false; error: string };
-
-export async function removeLeadSession(
-  projectId: string,
-  agentId: string
-): Promise<LeadSessionResult> {
-  const res = await fetch(
-    `${API_BASE}/projects/${projectId}/lead-sessions/${encodeURIComponent(agentId)}`,
-    { method: "DELETE" }
-  );
-  if (!res.ok) {
-    const data = await res
-      .json()
-      .catch(() => ({ error: "Failed to remove lead session" }));
-    return { ok: false, error: data.error ?? "Failed to remove lead session" };
-  }
-  return { ok: true, data: await res.json() };
-}
-
-export async function resetLeadSession(
-  projectId: string,
-  agentId: string
-): Promise<LeadSessionResult> {
-  const res = await fetch(
-    `${API_BASE}/projects/${projectId}/lead-sessions/${encodeURIComponent(agentId)}/reset`,
-    { method: "POST" }
-  );
-  if (!res.ok) {
-    const data = await res
-      .json()
-      .catch(() => ({ error: "Failed to reset lead session" }));
-    return { ok: false, error: data.error ?? "Failed to reset lead session" };
-  }
-  return { ok: true, data: await res.json() };
 }
 
 export type ArchiveSubagentResult =

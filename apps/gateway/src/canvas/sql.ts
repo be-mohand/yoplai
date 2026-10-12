@@ -4,7 +4,9 @@ import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "@yoplai/shared";
-import { dashboardDatabasePath } from "./index.js";
+import { dashboardDatabasePath } from "./dashboard-files.js";
+import type { DashboardQueryRequest } from "./sql-protocol.js";
+import { isInsideRoot } from "../util/paths.js";
 
 export const DASHBOARD_QUERY_ROW_LIMIT = 5_000;
 export const DASHBOARD_QUERY_TIMEOUT_MS = 2_000;
@@ -25,7 +27,7 @@ const workerWaiters: Array<{
 export type DashboardQuery = { name: string; database: string; sql: string };
 export type DashboardQueryError = { name: string; error: string };
 
-function attributes(source: string): Map<string, string> {
+export function attributes(source: string): Map<string, string> {
   return new Map(
     [...source.matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/gs)].map((match) => [
       match[1].toLowerCase(),
@@ -74,12 +76,7 @@ export async function resolveDashboardDatabase(
   const location = dashboardDatabasePath(agent, database);
   const realRoot = await fs.realpath(location.root);
   const realDatabase = await fs.realpath(location.path);
-  const relative = path.relative(realRoot, realDatabase);
-  if (
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  ) {
+  if (!isInsideRoot(realRoot, realDatabase)) {
     throw new Error("Database path escapes the agent workspace");
   }
   return { root: realRoot, database: realDatabase };
@@ -105,18 +102,22 @@ export function runDashboardQuery(
       const snapshotStat = await fs.stat(snapshotDirectory);
       try {
         return await spawnDashboardQuery(
-          trustedRoot,
-          rootStat.dev,
-          rootStat.ino,
-          snapshotParent,
-          snapshotParentStat.dev,
-          snapshotParentStat.ino,
-          snapshotDirectory,
-          snapshotStat.dev,
-          snapshotStat.ino,
-          database,
-          sql,
-          bindings,
+          {
+            root: trustedRoot,
+            rootDev: rootStat.dev,
+            rootIno: rootStat.ino,
+            snapshotParent,
+            snapshotParentDev: snapshotParentStat.dev,
+            snapshotParentIno: snapshotParentStat.ino,
+            snapshotDirectory,
+            snapshotDev: snapshotStat.dev,
+            snapshotIno: snapshotStat.ino,
+            database,
+            sql,
+            bindings,
+            rowLimit: DASHBOARD_QUERY_ROW_LIMIT,
+            resultByteLimit: DASHBOARD_RESULT_BYTE_LIMIT,
+          },
           timeoutMs
         );
       } finally {
@@ -133,18 +134,7 @@ export function runDashboardQuery(
 }
 
 function spawnDashboardQuery(
-  root: string,
-  rootDev: number,
-  rootIno: number,
-  snapshotParent: string,
-  snapshotParentDev: number,
-  snapshotParentIno: number,
-  snapshotDirectory: string,
-  snapshotDev: number,
-  snapshotIno: number,
-  database: string,
-  sql: string,
-  bindings: Record<string, string | null>,
+  request: DashboardQueryRequest,
   timeoutMs: number
 ): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
@@ -188,22 +178,7 @@ function spawnDashboardQuery(
       if (message.error) finish(new Error(message.error));
       else finish(undefined, message.rows);
     });
-    child.send({
-      root,
-      rootDev,
-      rootIno,
-      snapshotParent,
-      snapshotParentDev,
-      snapshotParentIno,
-      snapshotDirectory,
-      snapshotDev,
-      snapshotIno,
-      database,
-      sql,
-      bindings,
-      rowLimit: DASHBOARD_QUERY_ROW_LIMIT,
-      resultByteLimit: DASHBOARD_RESULT_BYTE_LIMIT,
-    });
+    child.send(request);
   });
 }
 

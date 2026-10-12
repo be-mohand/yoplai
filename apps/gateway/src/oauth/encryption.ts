@@ -1,4 +1,5 @@
 import { loadConfig } from "../config/index.js";
+import { envRefName, isEnvRef } from "../config/secrets.js";
 import { TokenCipher } from "./crypto.js";
 
 /**
@@ -20,8 +21,8 @@ let warned = false;
 let cached: { secret: string; cipher: TokenCipher } | undefined;
 
 function resolveEnvRef(value: string): string {
-  if (!value.startsWith("$env:")) return value;
-  const envName = value.slice("$env:".length);
+  if (!isEnvRef(value)) return value;
+  const envName = envRefName(value);
   const envValue = process.env[envName];
   if (envValue === undefined || envValue === "") {
     throw new Error(

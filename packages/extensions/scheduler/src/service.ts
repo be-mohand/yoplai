@@ -39,9 +39,9 @@ function credentialError(event: StreamEvent): string | undefined {
   }
 }
 
-export type SchedulerRunKind = "script_only" | "silent_tick" | "woke_agent";
+type SchedulerRunKind = "script_only" | "silent_tick" | "woke_agent";
 
-export type SchedulerState = {
+type SchedulerState = {
   nextRunAtMs?: number;
   lastRunAtMs?: number;
   lastStatus?: "ok" | "error";

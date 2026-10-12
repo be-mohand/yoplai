@@ -5,50 +5,8 @@ import type {
   BoardProject,
   BoardProjectsResponse,
   ProjectLifecycleCounts,
-  TaskboardItemResponse,
-  TaskboardResponse,
 } from "./types";
 import { API_BASE, apiFetch as fetch } from "./core";
-
-// Taskboard API functions
-export type TaskboardResult =
-  | { ok: true; data: TaskboardResponse }
-  | { ok: false; error: string };
-
-export async function fetchTaskboard(): Promise<TaskboardResult> {
-  const res = await fetch(`${API_BASE}/taskboard`);
-  if (!res.ok) {
-    const data = await res
-      .json()
-      .catch(() => ({ error: "Failed to fetch taskboard" }));
-    return { ok: false, error: data.error ?? "Failed to fetch taskboard" };
-  }
-  const data = await res.json();
-  return { ok: true, data };
-}
-
-export type TaskboardItemResult =
-  | { ok: true; data: TaskboardItemResponse }
-  | { ok: false; error: string };
-
-export async function fetchTaskboardItem(
-  type: "todo" | "project",
-  id: string,
-  companion?: string
-): Promise<TaskboardItemResult> {
-  const url = companion
-    ? `${API_BASE}/taskboard/${type}/${id}?companion=${encodeURIComponent(companion)}`
-    : `${API_BASE}/taskboard/${type}/${id}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const data = await res
-      .json()
-      .catch(() => ({ error: "Failed to fetch item" }));
-    return { ok: false, error: data.error ?? "Failed to fetch item" };
-  }
-  const data = await res.json();
-  return { ok: true, data };
-}
 
 export async function fetchBoardProjects(
   includeDone = false
@@ -121,31 +79,6 @@ export async function fetchAreaSummaries(): Promise<AreaSummary[]> {
   if (!res.ok) throw new Error("Failed to fetch area summaries");
   const data = (await res.json()) as { items?: AreaSummary[] };
   return data.items ?? [];
-}
-
-export async function toggleAreaHidden(
-  areaId: string,
-  hidden: boolean,
-): Promise<void> {
-  const res = await fetch(`${API_BASE}/board/areas/${encodeURIComponent(areaId)}/hidden`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ hidden }),
-  });
-  if (!res.ok) throw new Error("Failed to update area visibility");
-}
-
-export async function updateAreaLoop(
-  areaId: string,
-  date: string,
-  body: string,
-): Promise<void> {
-  const res = await fetch(`${API_BASE}/board/areas/${encodeURIComponent(areaId)}/loop`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ date, body }),
-  });
-  if (!res.ok) throw new Error("Failed to update area loop");
 }
 
 export async function fetchBoardActivity(opts?: {

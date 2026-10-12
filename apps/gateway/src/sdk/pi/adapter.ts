@@ -107,14 +107,12 @@ async function createPiExtensionTools(
 ): Promise<{ tools: AgentTool[]; invisibleToolNames: Set<string> }> {
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
-  const tools = params.extensionRuntime
-    ? await getExtensionAgentTools(
-        agent,
-        config,
-        params.extensionRuntime,
-        params.userId
-      )
-    : await getExtensionAgentTools(agent, config, undefined, params.userId);
+  const tools = await getExtensionAgentTools(
+    agent,
+    config,
+    params.extensionRuntime,
+    params.userId
+  );
   const invisibleToolNames = new Set<string>();
   const piTools: AgentTool[] = tools.map((tool): AgentTool => {
     const name = claimAgentToolName(tool.name, usedToolNames);
@@ -362,7 +360,11 @@ export const piAdapter: SdkAdapter = {
       if (!apiKey) {
         throw new Error(`No API key for provider: ${model.provider}`);
       }
-      await modelRuntime.setRuntimeApiKey(model.provider, apiKey);
+      // Runtime-resolved auth must retain its credential type (especially OAuth).
+      // Only explicit API-key mode needs an override to exclude stored OAuth.
+      if (authMode === "api_key") {
+        await modelRuntime.setRuntimeApiKey(model.provider, apiKey);
+      }
 
       // Load configured system files
       const systemFiles = await resolveSystemFiles({
@@ -401,19 +403,12 @@ export const piAdapter: SdkAdapter = {
         ...builtInTools,
         ...extensionTools.map((tool) => tool.name),
       ];
-      const extensionPrompts = params.extensionRuntime
-        ? await getExtensionSystemPromptContributions(
-            agent,
-            loadConfig(),
-            params.extensionRuntime,
-            params.userId
-          )
-        : await getExtensionSystemPromptContributions(
-            agent,
-            loadConfig(),
-            undefined,
-            params.userId
-          );
+      const extensionPrompts = await getExtensionSystemPromptContributions(
+        agent,
+        loadConfig(),
+        params.extensionRuntime,
+        params.userId
+      );
       const renderedContext = params.context
         ? renderAgentContext(params.context)
         : "";
@@ -774,11 +769,7 @@ export const piAdapter: SdkAdapter = {
           );
         }
         try {
-          const fallbackAuth = await modelRuntime.getAuth(fallback);
-          const fallbackKey = fallbackAuth?.auth.apiKey;
-          if (fallbackKey) {
-            await modelRuntime.setRuntimeApiKey(fallback.provider, fallbackKey);
-          }
+          await modelRuntime.getAuth(fallback);
           await agentSession.setModel(fallback);
           await resumeAfterFailedTurn(agentSession, () =>
             agentSession.prompt(messageWithAttachments, promptOptions)

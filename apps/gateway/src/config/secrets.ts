@@ -1,5 +1,16 @@
-function isSecretRef(value: string): boolean {
-  return value.startsWith("$env:");
+const ENV_REF_PREFIX = "$env:";
+
+export function isEnvRef(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith(ENV_REF_PREFIX);
+}
+
+export function envRefName(ref: string): string {
+  return ref.slice(ENV_REF_PREFIX.length);
+}
+
+/** Resolve an `$env:NAME` ref; undefined when the variable is unset. */
+export function resolveEnvRefSync(ref: string, env: Record<string, string | undefined>): string | undefined {
+  return env[envRefName(ref)];
 }
 
 export async function resolveSecretValue(
@@ -13,8 +24,8 @@ export async function resolveSecretValue(
     );
   }
 
-  if (value.startsWith("$env:")) {
-    const envName = value.slice("$env:".length);
+  if (isEnvRef(value)) {
+    const envName = envRefName(value);
     const envValue = env[envName];
     if (envValue === undefined) {
       throw new Error(`Env var "${envName}" not set`);
@@ -34,7 +45,7 @@ export async function resolveConfigSecrets<T>(
       if (value.startsWith("$secret:")) {
         return resolveSecretValue(value, env);
       }
-      return isSecretRef(value) ? resolveSecretValue(value, env) : value;
+      return isEnvRef(value) ? resolveSecretValue(value, env) : value;
     }
     if (Array.isArray(value)) {
       const resolved = await Promise.all(value.map((entry) => walk(entry)));

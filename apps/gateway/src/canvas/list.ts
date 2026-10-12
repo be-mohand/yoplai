@@ -1,6 +1,6 @@
-import fs from "node:fs/promises";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
-import { dashboardBaseUrl, dashboardDirectory, normalizeDashboardSlug, openDashboardFile } from "./index.js";
+import { dashboardBaseUrl, listDashboardSlugs, normalizeDashboardSlug, openDashboardFile } from "./dashboard-files.js";
+import { attributes } from "./sql.js";
 import { DashboardRegistry } from "./store.js";
 
 export async function listAgentDashboards(
@@ -8,24 +8,7 @@ export async function listAgentDashboards(
   registry: DashboardRegistry,
   config: GatewayConfig
 ) {
-  let names: string[];
-  try {
-    names = (await fs.readdir(dashboardDirectory(agent), { withFileTypes: true }))
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .filter((name) => {
-        try {
-          normalizeDashboardSlug(name);
-          return true;
-        } catch {
-          return false;
-        }
-      })
-      .sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
+  const names = await listDashboardSlugs(agent);
 
   const dashboards = [];
   for (const slug of names) {
@@ -38,14 +21,9 @@ export async function listAgentDashboards(
           .trim() || slug;
         let params: string[] = [];
         for (const meta of html.matchAll(/<meta\b([^>]*)>/gi)) {
-          const attributes = new Map(
-            [...meta[1].matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/gs)].map((match) => [
-              match[1].toLowerCase(),
-              match[3],
-            ])
-          );
-          if (attributes.get("name") !== "yoplai:params") continue;
-          params = (attributes.get("content") || "")
+          const metaAttributes = attributes(meta[1]);
+          if (metaAttributes.get("name") !== "yoplai:params") continue;
+          params = (metaAttributes.get("content") || "")
             .split(",")
             .map((param) => param.trim())
             .filter(Boolean);

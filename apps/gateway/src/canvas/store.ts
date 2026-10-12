@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeJsonAtomic } from "../util/atomic-write.js";
+import { serializeByKey } from "../util/serialize.js";
 
 export type DashboardRegistration = {
   id: string;
@@ -24,21 +26,8 @@ const pendingWrites = new Map<string, Promise<void>>();
 export class DashboardRegistry {
   constructor(private readonly file: string) {}
 
-  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
-    const previous = pendingWrites.get(this.file) ?? Promise.resolve();
-    const current = previous.then(operation, operation);
-    const settled = current.then(
-      () => undefined,
-      () => undefined
-    );
-    pendingWrites.set(this.file, settled);
-    try {
-      return await current;
-    } finally {
-      if (pendingWrites.get(this.file) === settled) {
-        pendingWrites.delete(this.file);
-      }
-    }
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    return serializeByKey(pendingWrites, this.file, operation);
   }
 
   private async read(): Promise<Registry> {
@@ -114,10 +103,7 @@ export class DashboardRegistry {
         slug,
       };
       registry.dashboards.push(result);
-      await fs.mkdir(path.dirname(this.file), { recursive: true });
-      const temporary = `${this.file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-      await fs.writeFile(temporary, `${JSON.stringify(registry, null, 2)}\n`);
-      await fs.rename(temporary, this.file);
+      await this.write(registry);
     };
     await this.mutate(write);
     if (!result) throw new Error("Dashboard registry write failed");
@@ -195,10 +181,7 @@ export class DashboardRegistry {
   }
 
   private async write(registry: Registry): Promise<void> {
-    await fs.mkdir(path.dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-    await fs.writeFile(temporary, `${JSON.stringify(registry, null, 2)}\n`);
-    await fs.rename(temporary, this.file);
+    await writeJsonAtomic(this.file, registry);
   }
 }
 

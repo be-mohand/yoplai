@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { googleProvider, notionProvider } from "./test-providers.js";
+import { googleProvider, notionProvider } from "./__tests__/providers.fixture.js";
 import {
   OAuthRefreshError,
   exchangeCodeForTokens,

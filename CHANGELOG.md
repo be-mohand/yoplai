@@ -9,8 +9,14 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Add a core `session_history` agent tool to list, search, and read the agent's own past sessions as condensed text (tool calls merged, thinking dropped, long text truncated with drill-down). Enabled by default; disable with `sessionHistory.enabled: false`.
+
 ### Fixed
 
+- Preserve assistant text replay signatures in persisted Pi sessions so subsequent OpenAI Responses turns do not fail with an invalid message ID, while continuing to redact credentials.
+- Preserve Pi OAuth credentials during initial authentication, per-run model overrides, and fallback model selection instead of converting access tokens into API-key overrides that break OAuth-only providers such as `openai-codex`.
 - Canvas dashboards no longer show "This dashboard hit an error" for errors thrown by browser extensions injected into the page (e.g. an extension reading `sessionStorage`, which the sandboxed dashboard document forbids). Errors whose source is a `chrome-extension://`, `moz-extension://` or `safari-web-extension://` script are ignored; the page's own errors still surface.
 
 ## v0.25.0 — Canvas dashboards, personal credentials + team-scoped admin

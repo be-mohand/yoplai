@@ -2,7 +2,7 @@
 
 Vendor-neutral [Harbor](https://www.harborframework.com/) eval infrastructure for Yoplai agents.
 
-See `docs/plans/harbor-evals-for-yoplai-migration.md` for the full design.
+See `base/yoplai-eval/README.md` for the eval image.
 
 ## What lives here
 
