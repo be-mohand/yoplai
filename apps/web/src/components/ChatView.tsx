@@ -1095,7 +1095,6 @@ export function ChatView() {
     )
   );
 
-
   const [autoScrollPinned, setAutoScrollPinned] = createSignal(true);
   const SCROLL_THRESHOLD = 40;
   let autoScrollFrame: number | undefined;
