@@ -4,10 +4,17 @@ import * as path from "node:path";
 import os from "node:os";
 import type { Context } from "hono";
 import type { AddressInfo } from "node:net";
-import { writeTestV3Config } from "../test-utils/v3-config.js";
+import type {
+  MultiUserRuntime,
+} from "../../../../packages/extensions/multi-user/src/runtime-state.js";
+import type { PoolAgentRef } from "../../../../packages/extensions/multi-user/src/forks.js";
+import { writeTestAgent, writeTestV3Config } from "../test-utils/v3-config.js";
 
 // Every REST run/read surface addressed to a single agent must reject a user
-// without team access and allow one who has it, with staff bypass preserved.
+// without team access and allow one who has it. Authorization runs through the
+// real multi-user resolver (`hasAgentAccess`, `requireAgentAccess`,
+// `getAgentFilter`) over real team/fork/membership stores on in-memory SQLite;
+// only session acquisition (the auth middleware) is replaced by a header.
 // The aggregate agent endpoints (`/api/agents/status`, `/api/agents/sessions`)
 // are shaped like `/api/agents/:id` but are per-user filtered payloads, not
 // single-agent addresses, so the per-agent guard must NOT reject them.
@@ -17,15 +24,10 @@ type AuthCtx = {
   session: { id: string; userId: string };
 } | null;
 
-// Minimal shape of the Hono context surface the mocked middleware touches.
+// Minimal shape of the Hono context surface the stand-in session middleware touches.
 type MockContext = {
-  get: (key: string) => unknown;
   set: (key: string, value: unknown) => void;
-  json: (body: unknown, status?: number) => Response;
-  req: {
-    header: (name: string) => string | undefined;
-    param: (name: string) => string | undefined;
-  };
+  req: { header: (name: string) => string | undefined };
 };
 
 const AUTH_HEADER = "x-test-auth";
@@ -44,30 +46,6 @@ function encodeAuth(ctx: AuthCtx): string {
   return Buffer.from(JSON.stringify(ctx), "utf8").toString("base64url");
 }
 
-function hasStaffRole(role: unknown): boolean {
-  const staff = ["admin", "superadmin"];
-  if (Array.isArray(role)) return role.some((r) => staff.includes(String(r)));
-  return typeof role === "string" && staff.includes(role);
-}
-
-// alice may chat `allowed-agent`; nobody is granted `blocked-agent`.
-const ACCESS: Record<string, Set<string>> = {
-  "allowed-agent": new Set(["alice"]),
-  "blocked-agent": new Set<string>(),
-};
-
-async function hasAgentAccessImpl(
-  authContext: AuthCtx,
-  agentId: string
-): Promise<boolean> {
-  if (!authContext) return false;
-  if (hasStaffRole(authContext.user.role)) return true;
-  return ACCESS[agentId]?.has(authContext.user.id) ?? false;
-}
-
-const connectPromptRows = new Map<string, string>();
-const onboardingRows = new Map<string, { status: string; at: string }>();
-
 describe("REST per-agent access gating (multi-user)", () => {
   let tmpDir: string;
   let prevHomeDir: string | undefined;
@@ -75,6 +53,7 @@ describe("REST per-agent access gating (multi-user)", () => {
   let prevUserProfile: string | undefined;
   let server: ReturnType<typeof import("./index.js").startServer>;
   let port: number;
+  let clearRuntime: (() => void) | undefined;
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-agent-access-rest-"));
@@ -85,11 +64,17 @@ describe("REST per-agent access gating (multi-user)", () => {
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
+    for (const id of ["allowed-agent", "blocked-agent", "pool-template"]) {
+      await writeTestAgent(path.join(tmpDir, "pool"), { id });
+    }
     await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [
         { id: "allowed-agent", name: "Allowed Agent" },
         { id: "blocked-agent", name: "Blocked Agent" },
+        { id: "pool-template", name: "Pool Template" },
       ],
+      // A configured pool turns on forkedAgents (per-user agent visibility).
+      extraConfig: { pool: ["allowed-agent", "blocked-agent", "pool-template"].map((id) => path.join(tmpDir, "pool", "agents", id)) },
       extensions: {
         multiUser: {
           enabled: true,
@@ -117,79 +102,76 @@ describe("REST per-agent access gating (multi-user)", () => {
         }),
       };
     });
-    vi.doMock("@yoplai/extension-multi-user", () => {
-      // `createAuthMiddleware` reads a test header and installs the auth context
-      // into Hono's store so `requireAgentAccess`/downstream forwarding can read
-      // it, mirroring the real cookie-session flow without Better Auth.
-      const KEY = "multiUserAuthContext";
+    vi.doMock("@yoplai/extension-multi-user", async () => {
+      const actual = await vi.importActual<
+        typeof import("@yoplai/extension-multi-user")
+      >("@yoplai/extension-multi-user");
       return {
-        FORWARDED_AUTH_CONTEXT_HEADER: HEADER,
+        ...actual,
+        // Session acquisition only: install the header-described session where
+        // the cookie-session middleware would. Everything else is real.
         createAuthMiddleware:
           () => async (c: MockContext, next: () => Promise<void>) => {
             const ctx = decodeAuth(c.req.header(AUTH_HEADER) ?? null);
-            if (ctx) c.set(KEY, ctx);
-            await next();
-          },
-        getRequestAuthContext: (c: MockContext) => c.get(KEY) ?? null,
-        getForwardedAuthContext: (headers: Headers) =>
-          decodeAuth(headers.get(HEADER)),
-        forwardAuthContextToRequest: (request: Request, ctx: AuthCtx) => {
-          if (ctx) request.headers.set(HEADER, encodeAuth(ctx));
-          else request.headers.delete(HEADER);
-          return request;
-        },
-        hasActiveImpersonation: (ctx: AuthCtx) =>
-          Boolean(ctx && (ctx as { impersonator?: unknown }).impersonator),
-        getAgentFilter:
-          (userId: string, role: unknown) => (agents: Array<{ id: string }>) => {
-            if (hasStaffRole(role)) return agents;
-            return agents.filter((a) => ACCESS[a.id]?.has(userId));
-          },
-        hasAgentAccess: hasAgentAccessImpl,
-        requireAgentAccess:
-          (param = "id") =>
-          async (c: MockContext, next: () => Promise<void>) => {
-            const ctx = (c.get(KEY) ?? null) as AuthCtx;
-            if (!ctx) return c.json({ error: "unauthorized" }, 401);
-            const agentId = c.req.param(param);
-            if (!agentId) return c.json({ error: "forbidden" }, 403);
-            if (!(await hasAgentAccessImpl(ctx, agentId))) {
-              return c.json({ error: "forbidden" }, 403);
-            }
+            if (ctx) c.set("multiUserAuthContext", ctx);
             await next();
           },
         validateWebSocketRequest: async () => null,
-        getMultiUserRuntime: () => ({
-          connectPrompt: {
-            get: (u: string, a: string) => {
-              const at = connectPromptRows.get(`${u}:${a}`);
-              return at ? { seen: true, at } : { seen: false, at: null };
-            },
-            markSeen: (u: string, a: string) => {
-              const at = "2026-01-01T00:00:00.000Z";
-              connectPromptRows.set(`${u}:${a}`, at);
-              return { seen: true, at };
-            },
-            clear: (u: string, a: string) => {
-              connectPromptRows.delete(`${u}:${a}`);
-              return { seen: false, at: null };
-            },
-          },
-          onboarding: {
-            get: (id: string) => onboardingRows.get(id) ?? { status: null, at: null },
-            set: (id: string, status: string) => {
-              const row = { status, at: "2026-01-01T00:00:00.000Z" };
-              onboardingRows.set(id, row);
-              return row;
-            },
-            clear: (id: string) => {
-              onboardingRows.delete(id);
-              return { status: null, at: null };
-            },
-          },
-        }),
       };
     });
+
+    // Real stores + access resolver over in-memory SQLite, installed as the
+    // multi-user runtime the real authorization functions consult.
+    const dbMod = await import("../../../../packages/extensions/multi-user/src/db.js");
+    const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
+    const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
+    const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
+    const { createOnboardingStore } = await import("../../../../packages/extensions/multi-user/src/onboarding.js");
+    const { createConnectPromptStore } = await import("../../../../packages/extensions/multi-user/src/connect-prompt.js");
+    const { default: Database } = await import("better-sqlite3");
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY)");
+    for (const u of ["alice", "mallory", "red-admin", "boss", "root"]) {
+      db.prepare("INSERT INTO user (id) VALUES (?)").run(u);
+    }
+    dbMod.ensureTeamsTable(db);
+    dbMod.ensureTeamMembersTable(db);
+    dbMod.ensureAgentForksTable(db);
+    dbMod.ensureUserOnboardingTable(db);
+    dbMod.ensureUserAgentConnectPromptTable(db);
+    for (const [id, name] of [["team-red", "Red"], ["team-blue", "Blue"]]) {
+      db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(id, name, "root");
+    }
+    const poolAgents = new Map<string, PoolAgentRef>();
+    for (const id of ["allowed-agent", "blocked-agent", "pool-template"]) {
+      poolAgents.set(id, { id, workspaceDir: path.join(tmpDir, "pool", "agents", id) });
+    }
+    const forks = createForkStore({
+      db,
+      getForksDir: () => path.join(tmpDir, "forks"),
+      getPoolAgent: (poolId) => poolAgents.get(poolId) ?? null,
+    });
+    const membership = createMembershipStore(db);
+    // allowed-agent belongs to team-red (alice, red-admin); blocked-agent to
+    // team-blue (nobody we authenticate as); pool-template is never forked.
+    forks.setTeams("allowed-agent", { mode: "list", teamIds: ["team-red"] }, "root");
+    forks.setTeams("blocked-agent", { mode: "list", teamIds: ["team-blue"] }, "root");
+    membership.setMembers("team-red", { mode: "list", userIds: ["alice", "red-admin"] }, "root");
+    const { setMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
+    setMultiUserRuntime({
+      db,
+      forks,
+      membership,
+      access: createAccessResolver({ membership, forks }),
+      onboarding: createOnboardingStore(db),
+      connectPrompt: createConnectPromptStore(db),
+      getPoolAgentIds: () => [...poolAgents.keys()],
+    } as unknown as MultiUserRuntime);
+    clearRuntime = () => {
+      setMultiUserRuntime(null);
+      db.close();
+    };
 
     const { clearConfigCacheForTests } = await import("../config/index.js");
     clearConfigCacheForTests();
@@ -209,6 +191,7 @@ describe("REST per-agent access gating (multi-user)", () => {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+    clearRuntime?.();
     vi.doUnmock("@yoplai/extension-multi-user");
     if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
     else process.env.YOPLAI_HOME = prevHomeDir;
@@ -294,10 +277,36 @@ describe("REST per-agent access gating (multi-user)", () => {
     );
   });
 
-  it("allows staff to read any agent regardless of membership", async () => {
-    expect(
-      await get("/api/agents/blocked-agent", authHeader("boss", "admin"))
-    ).toBe(200);
+  it("scopes admins to their teams; only superadmins cross teams", async () => {
+    // admin outside the agent's team: denied (no blanket staff bypass).
+    expect(await get("/api/agents/blocked-agent", authHeader("boss", "admin"))).toBe(403);
+    expect(await get("/api/agents/allowed-agent", authHeader("boss", "admin"))).toBe(403);
+    // admin inside the agent's team: allowed; but not another team's agent.
+    expect(await get("/api/agents/allowed-agent", authHeader("red-admin", "admin"))).toBe(200);
+    expect(await get("/api/agents/blocked-agent", authHeader("red-admin", "admin"))).toBe(403);
+    // superadmin: any agent.
+    expect(await get("/api/agents/blocked-agent", authHeader("root", "superadmin"))).toBe(200);
+    expect(await get("/api/agents/allowed-agent", authHeader("root", "superadmin"))).toBe(200);
+  });
+
+  it("lets admins inspect an unforked pool template but not users", async () => {
+    expect(await get("/api/agents/pool-template", authHeader("boss", "admin"))).toBe(200);
+    expect(await get("/api/agents/pool-template", authHeader("mallory"))).toBe(403);
+  });
+
+  it("filters the aggregate agent list by team membership", async () => {
+    const ids = async (user: string, role?: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}/api/agents`, { headers: authHeader(user, role) });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { id: string }[]).map((a) => a.id).sort();
+    };
+    expect(await ids("alice")).toEqual(["allowed-agent"]);
+    expect(await ids("mallory")).toEqual([]);
+    expect(await ids("boss", "admin")).toEqual([]);
+    expect(await ids("red-admin", "admin")).toEqual(["allowed-agent"]);
+    expect(await ids("root", "superadmin")).toEqual(
+      expect.arrayContaining(["allowed-agent", "blocked-agent"])
+    );
   });
 
   it("gates agent status sub-route by the resolver", async () => {
@@ -329,7 +338,7 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([]);
     expect(
-      await get("/api/agents/missing-agent/dashboards", authHeader("boss", "admin"))
+      await get("/api/agents/missing-agent/dashboards", authHeader("root", "superadmin"))
     ).toBe(404);
   });
 

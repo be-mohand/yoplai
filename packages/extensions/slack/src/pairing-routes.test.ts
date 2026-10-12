@@ -9,7 +9,7 @@ import { registerSlackPairingRoutes } from "./pairing-routes.js";
 import { clearSlackContext, setSlackContext } from "./context.js";
 
 const state = vi.hoisted(() => ({ runtime: null as unknown }));
-vi.mock("@yoplai/extension-multi-user", () => ({ getMultiUserRuntime: () => state.runtime }));
+vi.mock("@yoplai/extension-multi-user", async () => ({ ...(await vi.importActual<object>("../../multi-user/src/users.js")), getMultiUserRuntime: () => state.runtime }));
 
 describe("Slack pairing web routes", () => {
   let dataDir: string;

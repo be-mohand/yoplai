@@ -88,6 +88,8 @@ export type {
   UpdateTeamInput,
   DeleteTeamResult,
 } from "./teams.js";
+export { getEligibleAccount } from "./users.js";
+export type { EligibleAccount } from "./users.js";
 export { createMembershipStore } from "./membership.js";
 export type { MembershipStore, TeamMember } from "./membership.js";
 export { createAccessResolver } from "./access.js";

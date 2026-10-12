@@ -5,6 +5,11 @@ export type CredentialScope = "personal" | "team";
 /** State of one tab's credentials: ok = connected/configured, error = broken connection, off = not set up. */
 export type ScopeStatus = { tone: "ok" | "error" | "off"; label: string };
 
+export const STATUS_CONNECTED: ScopeStatus = { tone: "ok", label: "Connected" };
+export const STATUS_NOT_SET_UP: ScopeStatus = { tone: "off", label: "Not set up" };
+export const STATUS_RECONNECT: ScopeStatus = { tone: "error", label: "Reconnect" };
+export const STATUS_NOT_CONNECTED: ScopeStatus = { tone: "error", label: "Not connected" };
+
 /** Default tab: Just me if connected, else Whole team if connected, else Just me. */
 export function preferredScope(
   status: Partial<Record<CredentialScope, ScopeStatus>>,
@@ -145,7 +150,7 @@ export const STATUS_PILL_STYLES = `
 .cred-status-pill[data-tone="error"] { --tone: #dc2626; }
 `;
 
-export const CREDENTIAL_SCOPE_TABS_STYLES = `
+const CREDENTIAL_SCOPE_TABS_STYLES = `
 .cred-tabs { --cred-accent: var(--accent, #1a73e8); --cred-radius: 14px; }
 .cred-tabs-list { display: flex; gap: 4px; position: relative; z-index: 1; }
 .cred-tab {

@@ -57,7 +57,7 @@ export function isSupportedFile(file: File): boolean {
   return ext ? SUPPORTED_FILE_EXTENSIONS.has(ext) : false;
 }
 
-export function isImageFile(file: File): boolean {
+function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
 }
 

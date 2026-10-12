@@ -18,7 +18,7 @@ function key(channel: string, timestamp: string): string {
   return `${channel}:${timestamp}`;
 }
 
-export async function addThinkingReaction(
+async function addThinkingReaction(
   client: SlackWebClient,
   channel: string,
   timestamp: string
@@ -34,7 +34,7 @@ export async function addThinkingReaction(
   }
 }
 
-export async function removeThinkingReaction(
+async function removeThinkingReaction(
   client: SlackWebClient,
   channel: string,
   timestamp: string

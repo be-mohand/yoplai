@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveConfigSecrets, resolveSecretValue } from "../secrets.js";
+import { isEnvRef, resolveConfigSecrets, resolveEnvRefSync, resolveSecretValue } from "../secrets.js";
 
 describe("secret resolution", () => {
   afterEach(() => {
@@ -48,5 +48,15 @@ describe("secret resolution", () => {
         },
       },
     });
+  });
+});
+
+describe("env refs", () => {
+  it("recognises refs and resolves them without throwing when unset", () => {
+    expect(isEnvRef("$env:FOO")).toBe(true);
+    expect(isEnvRef("FOO")).toBe(false);
+    expect(isEnvRef(5)).toBe(false);
+    expect(resolveEnvRefSync("$env:FOO", { FOO: "bar" })).toBe("bar");
+    expect(resolveEnvRefSync("$env:FOO", {})).toBeUndefined();
   });
 });

@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { getSlackContextIfInitialized } from "./context.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 
@@ -32,23 +32,27 @@ export function page(content: string): string {
 <body><main><div class="brand">${logo}<span>${name}</span></div><h1>Connect Slack to ${name}</h1>${content}</main></body></html>`;
 }
 
+/** Same-origin or configured-base-URL Origin header required on state-changing requests. */
+export function isTrustedOrigin(c: Context, baseUrl: string): boolean {
+  const origin = c.req.header("origin");
+  return !!origin && [new URL(c.req.url).origin, new URL(baseUrl).origin].includes(origin);
+}
+
 export function registerSlackPairingRoutes(app: Hono): void {
   app.on(["GET", "DELETE"], ["/slack/pairings", "/slack/pairings/:workspaceId/:slackUserId"], async (c) => {
     c.header("Cache-Control", "no-store");
     const service = getSlackPairingService();
     if (!service) return c.json({ error: "slack_unavailable" }, 503);
-    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    const { getMultiUserRuntime, getEligibleAccount } = await import("@yoplai/extension-multi-user");
     const runtime = getMultiUserRuntime();
     const session = await runtime?.auth.api.getSession({ headers: c.req.raw.headers });
     if (!session || !runtime) return c.json({ error: "login_required" }, 401);
-    const user = runtime.db.prepare("SELECT approved, role, banned FROM user WHERE id = ?").get(session.user.id) as { approved: number; role: string; banned: number } | undefined;
-    if (!user || user.banned || (!user.approved && !["admin", "superadmin"].includes(user.role))) return c.json({ error: "forbidden" }, 403);
+    if (!getEligibleAccount(runtime.db, session.user.id)) return c.json({ error: "forbidden" }, 403);
     if (c.req.method === "GET") return c.json({ pairings: service.list(session.user.id) });
     const workspaceId = c.req.param("workspaceId");
     const slackUserId = c.req.param("slackUserId");
     if (!workspaceId || !slackUserId) return c.json({ error: "missing_identity" }, 400);
-    const origin = c.req.header("origin");
-    if (!origin || ![new URL(c.req.url).origin, new URL(service.baseUrl).origin].includes(origin)) return c.json({ error: "invalid_origin" }, 403);
+    if (!isTrustedOrigin(c, service.baseUrl)) return c.json({ error: "invalid_origin" }, 403);
     service.unpair(session.user.id, workspaceId, slackUserId);
     return c.json({ ok: true });
   });
@@ -62,7 +66,7 @@ export function registerSlackPairingRoutes(app: Hono): void {
     try {
       const token = c.req.param("token");
       const identity = service.inspect(token);
-      const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+      const { getMultiUserRuntime, getEligibleAccount } = await import("@yoplai/extension-multi-user");
       const runtime = getMultiUserRuntime();
       if (!runtime) return c.html(page("<p>Slack pairing requires multi-user sign-in.</p>"), 503);
       const session = await runtime.auth.api.getSession({ headers: c.req.raw.headers });
@@ -73,16 +77,14 @@ export function registerSlackPairingRoutes(app: Hono): void {
         login.searchParams.set("returnTo", returnTo);
         return c.html(page(`${description}<p>Sign in to your existing ${escapeHtml(brandName())} account to connect Slack.</p><a class="btn" href="${escapeHtml(login.href)}">Sign in</a>`), c.req.method === "POST" ? 401 : 200);
       }
-      const user = runtime.db.prepare("SELECT id, email, approved, role, banned FROM user WHERE id = ?")
-        .get(session.user.id) as { id: string; email: string; approved: number; role: string; banned: number } | undefined;
-      if (!user || user.banned || (!user.approved && !["admin", "superadmin"].includes(user.role))) {
+      const user = getEligibleAccount(runtime.db, session.user.id);
+      if (!user) {
         return c.html(page("<p>Your account does not have access.</p>"), 403);
       }
       if (c.req.method === "GET") {
         return c.html(page(`${description}<p>Connect to <strong>${escapeHtml(user.email)}</strong>.</p><form method="post"><button class="btn" type="submit">Connect Slack</button></form>`));
       }
-      const origin = c.req.header("origin");
-      if (!origin || ![new URL(c.req.url).origin, new URL(service.baseUrl).origin].includes(origin)) return c.html(page("<p>Invalid request origin.</p>"), 403);
+        if (!isTrustedOrigin(c, service.baseUrl)) return c.html(page("<p>Invalid request origin.</p>"), 403);
       await service.redeem(token, user);
       return c.html(page("<p>Slack connected. Return to Slack and retry your message.</p>"));
     } catch (error) {

@@ -12,7 +12,8 @@ import { clearCredentialConnectRequests, createCredentialConnectLink, inspectCre
 import { registerCredentialConnectRoutes } from "./credential-connect-routes.js";
 
 const state = vi.hoisted(() => ({ runtime: null as unknown, access: true, impersonating: false }));
-vi.mock("@yoplai/extension-multi-user", () => ({
+vi.mock("@yoplai/extension-multi-user", async () => ({
+  ...(await vi.importActual<object>("../../multi-user/src/users.js")),
   getMultiUserRuntime: () => state.runtime,
   getRequestAuthContext: async () => ({ user: { id: "owner" } }),
   hasAgentAccess: async () => state.access,

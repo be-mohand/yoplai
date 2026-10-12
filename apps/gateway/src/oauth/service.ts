@@ -22,6 +22,7 @@ import {
   type ResolvedOAuth,
 } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
+import { envRefName, isEnvRef } from "../config/secrets.js";
 import { resolveCredential } from "../credentials/resolver.js";
 import { OAuthConnectionStore, connectionScope, getOAuthConnectionStore } from "./store.js";
 
@@ -49,8 +50,8 @@ function resolveProviderEnvRefs(
   providers: NonNullable<GatewayConfig["oauth"]>["providers"]
 ): Record<string, { clientId: string; clientSecret: string; subdomain?: string }> {
   const resolveRef = (value: string): string => {
-    if (!value.startsWith("$env:")) return value;
-    const envName = value.slice("$env:".length);
+    if (!isEnvRef(value)) return value;
+    const envName = envRefName(value);
     const envValue = process.env[envName];
     if (envValue === undefined) {
       throw new Error(

@@ -8,19 +8,12 @@ export class ContainerToolBridge {
     params: SdkRunParams,
     config: GatewayConfig
   ): Promise<string[]> {
-    return params.extensionRuntime
-      ? getExtensionSystemPromptContributions(
-          params.agent,
-          config,
-          params.extensionRuntime,
-          params.userId
-        )
-      : getExtensionSystemPromptContributions(
-          params.agent,
-          config,
-          undefined,
-          params.userId
-        );
+    return getExtensionSystemPromptContributions(
+      params.agent,
+      config,
+      params.extensionRuntime,
+      params.userId
+    );
   }
 
   async buildTools(
@@ -28,19 +21,12 @@ export class ContainerToolBridge {
     config: GatewayConfig,
     includeDescribeImage = false
   ): Promise<ContainerExtensionTool[]> {
-    const tools = params.extensionRuntime
-      ? await getExtensionAgentTools(
-          params.agent,
-          config,
-          params.extensionRuntime,
-          params.userId
-        )
-      : await getExtensionAgentTools(
-          params.agent,
-          config,
-          undefined,
-          params.userId
-        );
+    const tools = await getExtensionAgentTools(
+      params.agent,
+      config,
+      params.extensionRuntime,
+      params.userId
+    );
     const gatewayTools: ContainerExtensionTool[] = [{
       extensionId: "gateway",
       name: "extract_document",

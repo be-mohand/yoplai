@@ -13,6 +13,7 @@ import {
   hasAgentRootConfig,
 } from "./registry.js";
 import { resolveAgentEnv } from "../config/index.js";
+import { isEnvRef, resolveEnvRefSync } from "../config/secrets.js";
 import { extensionSecretFields, getPersonalExtensionTokens, overlayOAuthPersonalSettings, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { CredentialStore } from "../credentials/store.js";
 
@@ -197,7 +198,7 @@ function configValuesForAgent(
   for (const [field, fieldValue] of Object.entries(config)) {
     if (secretFields.includes(field)) config[field] = "********";
     // Settings such as usernames are not secret: show the value, not the env ref.
-    else if (typeof fieldValue === "string" && fieldValue.startsWith("$env:")) config[field] = env[fieldValue.slice(5)];
+    else if (isEnvRef(fieldValue)) config[field] = resolveEnvRefSync(fieldValue, env);
   }
   return config;
 }

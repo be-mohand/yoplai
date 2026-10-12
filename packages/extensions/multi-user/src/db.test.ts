@@ -448,4 +448,15 @@ describe("existing team privacy migration", () => {
     expect(teams.getTeam(later.id)?.private).toBe(false);
     db.close();
   });
+
+  it("bootstraps agent_forks with allTeams and reopens cleanly", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-db-"));
+    tempDirs.push(tempDir);
+    const file = path.join(tempDir, "auth.db");
+    initializeMultiUserDatabase(file).close();
+    const db = initializeMultiUserDatabase(file);
+    const columns = db.prepare("PRAGMA table_info(agent_forks)").all() as Array<{ name: string }>;
+    expect(columns.map((c) => c.name)).toContain("allTeams");
+    db.close();
+  });
 });

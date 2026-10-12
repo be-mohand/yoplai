@@ -19,13 +19,13 @@ export function McpIcon(props: { src?: string }) {
 }
 
 /** OAuth servers are set up when a personal or team connection exists; others when the live connection listed tools. */
-export function isMcpServerSetUp(server: McpServer): boolean {
+function isMcpServerSetUp(server: McpServer): boolean {
   return server.auth === "oauth"
     ? server.personalState === "connected" || server.teamState === "connected"
     : server.state === "connected";
 }
 
-export function mcpServerPath(agentId: string, name: string): string {
+function mcpServerPath(agentId: string, name: string): string {
   return `/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(name)}`;
 }
 

@@ -65,7 +65,7 @@ export type DownloadedSlackFile = {
   filename: string;
 };
 
-export function getSlackFilename(file: SlackFile): string {
+function getSlackFilename(file: SlackFile): string {
   return file.name?.trim() || file.title?.trim() || file.id || "slack-file";
 }
 
