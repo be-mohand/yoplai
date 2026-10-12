@@ -392,7 +392,7 @@ describe("dashboard starter templates", () => {
           .flat()
           .flatMap((row) => Object.values(row as Record<string, unknown>))
           .some((value) => typeof value === "string" && value.length > 2 && text.includes(value));
-        expect(shownValue || rendered.charts.length > 0, file).toBe(true);
+        expect(shownValue, file).toBe(true);
         expectDrillDowns(file, doc, bindings);
       } finally {
         rendered.close();
@@ -411,14 +411,13 @@ const kitSource = readFileSync(
 
 // Renders a shipped template the way the dashboard route serves it: the real
 // runtime bootstrap (`injectDashboardRuntime`, with a sibling-slug link map)
-// and the real `kit.js`. Only ECharts (not bundled here) is replaced by a
-// recorder, which keeps chart option assertions possible.
+// and the real `kit.js`. Only ECharts (not bundled here) is stubbed.
 function renderTemplate(
   html: string,
   data: Record<string, unknown[]>,
   params: Record<string, string>,
   siblings: string[]
-): { document: Document; charts: unknown[]; close(): void } {
+): { document: Document; close(): void } {
   const links = Object.fromEntries(
     siblings.map((slug) => [slug, `/d/id-${slug.replace(/\.html$/, "")}`])
   );
@@ -433,7 +432,6 @@ function renderTemplate(
     runScripts: "outside-only",
     url: "https://yoplai.test/d/source",
   });
-  const charts: unknown[] = [];
   // jsdom has no canvas; Kit falls back to parsing computed colors.
   dom.window.HTMLCanvasElement.prototype.getContext = () => null;
   Object.assign(dom.window, {
@@ -441,7 +439,7 @@ function renderTemplate(
       registerTheme: () => undefined,
       getInstanceByDom: () => undefined,
       init: () => ({
-        setOption: (option: unknown) => charts.push(option),
+        setOption: () => undefined,
         resize: () => undefined,
         dispose: () => undefined,
       }),
@@ -460,7 +458,6 @@ function renderTemplate(
   }
   return {
     document: dom.window.document,
-    charts,
     close: () => dom.window.close(),
   };
 }
