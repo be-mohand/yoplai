@@ -84,6 +84,8 @@ YAML
 
 Yoplai creates missing workspace prompt files (`AGENTS.md`, `SOUL.md`, and `USER.md`) on first run. You can edit them later to customize agent behavior.
 
+In-process Pi preserves stored OAuth credentials when `auth.mode: oauth` is set or `auth.mode` is omitted (automatic selection), including per-run model overrides and fallback models. Use `auth.mode: api_key` to require an API key instead of stored OAuth for the agent's configured model.
+
 ### 5. Build and authenticate
 
 Build before running any `pnpm yoplai` command from a fresh clone:

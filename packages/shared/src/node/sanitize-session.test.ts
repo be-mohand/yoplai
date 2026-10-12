@@ -97,6 +97,87 @@ describe("sanitizeSessionFile", () => {
     expect(storedUser.message.content).toBe("Use Bearer [REDACTED]");
   });
 
+  it("exempts only assistant text-block replay metadata, not credentials", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "session.jsonl");
+    const canary = "disposable-secret-canary";
+    const textSignature = JSON.stringify({
+      v: 1,
+      id: "msg_123",
+      phase: "final_answer",
+    });
+    const entries = [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          apiKey: canary,
+          textSignature: canary,
+          content: [
+            {
+              type: "text",
+              text: `Bearer ${canary}`,
+              textSignature,
+              signature: canary,
+              accessToken: canary,
+            },
+            {
+              type: "toolCall",
+              arguments: { textSignature: canary, password: canary },
+            },
+            {
+              type: "text",
+              text: "invalid metadata",
+              textSignature: { secret: canary },
+            },
+          ],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", textSignature: canary }],
+        },
+      },
+      {
+        type: "custom",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", textSignature: canary }],
+        },
+      },
+    ];
+    await fs.writeFile(
+      file,
+      entries.map((entry) => JSON.stringify(entry)).join("\n")
+    );
+
+    await sanitizeSessionFile(file);
+
+    const stored = await fs.readFile(file, "utf8");
+    expect(stored).not.toContain(canary);
+    const [assistant, user, custom] = stored
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(assistant.message.content[0]).toEqual({
+      type: "text",
+      text: "Bearer [REDACTED]",
+      textSignature,
+      signature: "[REDACTED]",
+      accessToken: "[REDACTED]",
+    });
+    expect(assistant.message.apiKey).toBe("[REDACTED]");
+    expect(assistant.message.textSignature).toBe("[REDACTED]");
+    expect(assistant.message.content[1].arguments.textSignature).toBe(
+      "[REDACTED]"
+    );
+    expect(assistant.message.content[2].textSignature).toBe("[REDACTED]");
+    expect(user.message.content[0].textSignature).toBe("[REDACTED]");
+    expect(custom.message.content[0].textSignature).toBe("[REDACTED]");
+  });
+
   it("keeps raw Pi writes out of the durable session file", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-sanitize-"));
     tempDirs.push(dir);

@@ -66,6 +66,7 @@ import {
   groupActivityItems,
   lastFiveWords,
   type ActivitySegment,
+  streamingActivityItems,
 } from "../lib/chat-activity";
 
 function isEmoji(str: string): boolean {
@@ -999,7 +1000,6 @@ export function ChatView() {
   let skipNextHistoryRefresh = false;
   let fileDragDepth = 0;
   const noAnimIds = new Set<string>();
-  const noAnimFullMessageKeys = new Set<string>();
 
   const [searchParams] = useSearchParams();
   const sessionKey = () => getSessionKey(params.agentId);
@@ -1094,17 +1094,6 @@ export function ChatView() {
       (row) => row.kind === "activity"
     )
   );
-
-  const fullMessageKey = (message: FullHistoryMessage) =>
-    `${message.role}:${message.timestamp}:${message.content
-      .map((block) => {
-        if (block.type === "text") return block.text;
-        if (block.type === "thinking") return block.thinking;
-        if (block.type === "toolCall") return `${block.id}:${block.name}`;
-        return block.fileId;
-      })
-      .join("|")
-      .slice(0, 80)}`;
 
   const [autoScrollPinned, setAutoScrollPinned] = createSignal(true);
   const SCROLL_THRESHOLD = 40;
@@ -2008,7 +1997,6 @@ export function ChatView() {
           : [{ type: "text", text: content }],
       timestamp,
     };
-    noAnimFullMessageKeys.add(fullMessageKey(assistantMessage));
     setFullMessages((prev) => [...prev, assistantMessage, ...toolResults]);
     return true;
   };
@@ -3096,43 +3084,16 @@ export function ChatView() {
                               segment().endIndex ===
                                 streamingBlocks().length - 1
                             }
-                            items={activityItems(segment()).map(
-                              (block, itemIndex) =>
-                                block.type === "thinking"
-                                  ? {
-                                      type: "thinking" as const,
-                                      content: block.thinking,
-                                      startedAt: block.timestamp,
-                                      endedAt:
-                                        streamingBlocks()[
-                                          segment().startIndex + itemIndex + 1
-                                        ]?.timestamp ??
-                                        (isStreaming() &&
-                                        segment().endIndex ===
-                                          streamingBlocks().length - 1
-                                          ? undefined
-                                          : Date.now()),
-                                      active:
-                                        isStreaming() &&
-                                        segment().endIndex ===
-                                          streamingBlocks().length - 1 &&
-                                        itemIndex ===
-                                          activityItems(segment()).length - 1,
-                                    }
-                                  : (() => {
-                                      const tool = block as Extract<
-                                        StreamingBlock,
-                                        { type: "toolCall" }
-                                      >;
-                                      return {
-                                        type: "tool" as const,
-                                        name: tool.name,
-                                        arguments: tool.arguments,
-                                        result: tool.result,
-                                        status: tool.status,
-                                        at: tool.timestamp,
-                                      };
-                                    })()
+                            items={streamingActivityItems<
+                              StreamingBlock,
+                              FullToolResultMessage
+                            >(
+                              streamingBlocks(),
+                              segment() as ActivitySegment<StreamingBlock> & {
+                                kind: "activity";
+                              },
+                              isStreaming(),
+                              true
                             )}
                           />
                         )}
@@ -3220,45 +3181,16 @@ export function ChatView() {
                             isStreaming() &&
                             segment().endIndex === streamingBlocks().length - 1
                           }
-                          items={activityItems(segment()).map(
-                            (block, itemIndex) =>
-                              block.type === "thinking"
-                                ? {
-                                    type: "thinking" as const,
-                                    content: block.thinking,
-                                    startedAt: block.timestamp,
-                                    endedAt:
-                                      streamingBlocks()[
-                                        segment().startIndex + itemIndex + 1
-                                      ]?.timestamp ??
-                                      (isStreaming() &&
-                                      segment().endIndex ===
-                                        streamingBlocks().length - 1
-                                        ? undefined
-                                        : Date.now()),
-                                    active:
-                                      isStreaming() &&
-                                      segment().endIndex ===
-                                        streamingBlocks().length - 1 &&
-                                      itemIndex ===
-                                        activityItems(segment()).length - 1,
-                                  }
-                                : {
-                                    type: "tool" as const,
-                                    name: (
-                                      block as Extract<
-                                        StreamingBlock,
-                                        { type: "toolCall" }
-                                      >
-                                    ).name,
-                                    arguments: (
-                                      block as Extract<
-                                        StreamingBlock,
-                                        { type: "toolCall" }
-                                      >
-                                    ).arguments,
-                                    at: block.timestamp,
-                                  }
+                          items={streamingActivityItems<
+                            StreamingBlock,
+                            FullToolResultMessage
+                          >(
+                            streamingBlocks(),
+                            segment() as ActivitySegment<StreamingBlock> & {
+                              kind: "activity";
+                            },
+                            isStreaming(),
+                            false
                           )}
                         />
                       )}

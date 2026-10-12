@@ -6,6 +6,7 @@ import { ExtensionRuntime, registerExtensionOAuthProviders } from "./runtime.js"
 import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
 import { canvasExtension } from "../canvas/index.js";
+import { sessionHistoryExtension } from "../session-history/index.js";
 
 type ExtensionRegistration = {
   load: () => Promise<Extension>;
@@ -409,6 +410,7 @@ async function deriveExtensionsToLoad(
     taskLifecycleExtension,
     capabilityDiscoveryExtension,
     canvasExtension,
+    sessionHistoryExtension,
   ];
   const rawConfigs = new Map<string, Record<string, unknown>>();
 
@@ -599,13 +601,4 @@ export function getHomeExtension(): string | undefined {
 
 export function getExtensionRuntime(): ExtensionRuntime {
   return extensionRuntime;
-}
-
-export function createExtensionRuntime(
-  extensions: Extension[],
-  homeExtensionId?: string
-): ExtensionRuntime {
-  const runtime = new ExtensionRuntime(getKnownExtensionRouteMetadata());
-  runtime.load(extensions, homeExtensionId);
-  return runtime;
 }

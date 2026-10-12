@@ -14,7 +14,7 @@ import { theme, toggleTheme } from "../theme";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { openConnectPrompt, restartTour } from "../onboarding/state";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
-import { stripBase } from "../lib/path";
+import { chatRouteSession, stripBase } from "../lib/path";
 import {
   deleteAgentSession,
   fetchAgentSessions,
@@ -22,6 +22,7 @@ import {
   UnauthenticatedError,
 } from "../api";
 import type { SessionSummary } from "../api/types";
+import { hasStaffRole as hasAdminRole } from "../lib/roles";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
@@ -31,13 +32,6 @@ type AgentSidebarProps = {
 const LazySidebarAccountPanel = lazy(
   () => import("../auth/SidebarAccountPanel")
 );
-
-const STAFF_ROLES = ["admin", "superadmin"];
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
-}
 
 function relativeTime(timestamp: number): string {
   const diff = Math.max(0, Date.now() - timestamp);
@@ -62,15 +56,6 @@ function groupLabel(timestamp: number): string {
     return "Earlier this month";
   }
   return date.toLocaleString(undefined, { month: "long", year: "numeric" });
-}
-
-function chatRouteSession(pathname: string, search: string): { agentId?: string; sessionId?: string } {
-  const match = stripBase(pathname).match(/^\/chat\/([^/?]+)/);
-  const params = new URLSearchParams(search);
-  return {
-    agentId: match ? decodeURIComponent(match[1]) : undefined,
-    sessionId: params.get("session") ?? undefined,
-  };
 }
 
 /** Slide an overflowing session title left so its tail clears the hover action icons. */

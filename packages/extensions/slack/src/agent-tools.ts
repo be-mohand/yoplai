@@ -11,10 +11,9 @@ import type {
 import { z } from "zod";
 import { getActiveBot } from "./bot-registry.js";
 import { getSlackContextIfInitialized } from "./context.js";
-import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 import { findSlackSender, getSlackWorkspace, SLACK_PAIR_LINK_PLACEHOLDER } from "./requester.js";
-import { createSlackThreadSessionBindingStore } from "./thread-session-bindings.js";
+import { withProactiveDmNotes, withThreadBindings } from "./store-scope.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
 import { splitMessage } from "./utils/chunk.js";
 import type { SlackWebClient } from "./types.js";
@@ -426,24 +425,24 @@ async function sendSlackMessage(
   if (recipientType) {
     const context = getSlackContextIfInitialized();
     if (context) {
-      const store = createProactiveDmNoteStore(context.getDataDir());
-      try {
-        store.addNote(agent.id, recipientType, input.channel, input.text);
-        // Top-level sends only: replies are threaded under these messages.
-        const dmChannel = postedChannel ?? input.channel;
-        if (!input.threadTs && dmChannel.startsWith("D")) {
-          for (const ts of postedTs) store.trackMessage(agent.id, dmChannel, ts);
+      // Store open/close errors propagate; only note writes are warning-only.
+      withProactiveDmNotes(context.getDataDir(), (store) => {
+        try {
+          store.addNote(agent.id, recipientType, input.channel, input.text);
+          // Top-level sends only: replies are threaded under these messages.
+          const dmChannel = postedChannel ?? input.channel;
+          if (!input.threadTs && dmChannel.startsWith("D")) {
+            for (const ts of postedTs) store.trackMessage(agent.id, dmChannel, ts);
+          }
+        } catch (error) {
+          // The message is already in Slack; a bookkeeping failure must not be
+          // reported back as a failed send (a scheduler delivery would record a
+          // warning for a message the user actually received).
+          context.logger.warn(
+            `[slack] Failed to record proactive DM note: ${error instanceof Error ? error.message : String(error)}`
+          );
         }
-      } catch (error) {
-        // The message is already in Slack; a bookkeeping failure must not be
-        // reported back as a failed send (a scheduler delivery would record a
-        // warning for a message the user actually received).
-        context.logger.warn(
-          `[slack] Failed to record proactive DM note: ${error instanceof Error ? error.message : String(error)}`
-        );
-      } finally {
-        store.close();
-      }
+      });
     }
   }
   return { channel: input.channel, ts: firstTs };
@@ -513,17 +512,15 @@ export function slackAgentTools(): ExtensionAgentTool[] {
             return toolError("Slack did not return a message timestamp.");
           }
           const channel = result.channel ?? input.channel;
-          const store = createSlackThreadSessionBindingStore(context.getDataDir());
-          try {
+          const threadTs = result.ts;
+          withThreadBindings(context.getDataDir(), (store) =>
             store.setBinding({
               channelId: channel,
-              threadTs: result.ts,
+              threadTs,
               sessionId,
               agentId: agent.id,
-            });
-          } finally {
-            store.close();
-          }
+            })
+          );
           return { ok: true, channel, ts: result.ts };
         } catch (error) {
           return toolError(error);

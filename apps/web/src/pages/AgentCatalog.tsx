@@ -9,12 +9,11 @@ import {
 import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
 import { subscribeToRealtime } from "../api/realtime-client";
+import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
 }
-
-const STAFF_ROLES = ["admin", "superadmin"];
 
 const UNASSIGNED_MESSAGE = "This agent has not been assigned to a team.";
 
@@ -23,16 +22,6 @@ function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
   return entry?.reason === "no_workspace"
     ? "This agent has no workspace."
     : UNASSIGNED_MESSAGE;
-}
-
-function hasAdminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.some((r) => STAFF_ROLES.includes(r));
-  return typeof role === "string" && STAFF_ROLES.includes(role);
-}
-
-function hasSuperadminRole(role: string | string[] | null | undefined): boolean {
-  if (Array.isArray(role)) return role.includes("superadmin");
-  return role === "superadmin";
 }
 
 export function AgentCatalog() {

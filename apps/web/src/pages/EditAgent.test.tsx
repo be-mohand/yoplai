@@ -260,7 +260,7 @@ describe("EditAgent", () => {
 
     expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
     expect(container.textContent).toContain("Writing Report");
-    expect(container.textContent).toContain("report.html");
+    expect(container.textContent).not.toContain("report.html");
     expect(container.textContent).toContain("Updated");
     expect(container.querySelector<HTMLAnchorElement>(".edit-agent-dashboard a")?.getAttribute("href")).toBe("https://yoplai.test/d/stable-link");
     container.querySelector<HTMLButtonElement>(".edit-agent-dashboard button")!.click();
@@ -268,7 +268,7 @@ describe("EditAgent", () => {
     expect(writeText).toHaveBeenCalledWith("https://yoplai.test/d/stable-link");
   });
 
-  it("nests parameter dashboards under every parent, stops cycles, and lists unreachable dashboards", async () => {
+  it("lists top dashboards once and parameter pages once with their top-page parents", async () => {
     setCapabilitiesForTests({ forkedAgents: false });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
@@ -277,44 +277,30 @@ describe("EditAgent", () => {
       updatedAt: "2026-09-25T10:00:00.000Z", link: `/d/${slug}`,
     });
     fetchAgentDashboardsMock.mockResolvedValue([
-      dashboard("clients", [], ["client", "csm", "missing"]),
+      dashboard("clients", [], ["client", "qbr", "csm", "missing"]),
       dashboard("csm", [], ["client"]),
       dashboard("client", ["id"], ["qbr", "clients", "client"]),
       dashboard("qbr", ["id"], ["client"]),
       dashboard("orphan", ["name"], ["orphan-child"]),
-      dashboard("orphan-child", ["id"], ["orphan"]),
     ]);
     await mountEdit("scribe");
     openTab("Dashboards");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const panel = container.querySelector(".edit-agent-dashboards")!;
-    const roots = panel.querySelectorAll(":scope > ul:first-of-type > li");
-    expect(roots).toHaveLength(2);
-    for (const root of roots) {
-      expect(root.querySelector(":scope > .edit-agent-dashboard-row strong")?.textContent)
-        .toMatch(/^(clients|csm)$/);
-      const child = root.querySelector(":scope > ul > li")!;
-      expect(child.querySelector(":scope > .edit-agent-dashboard-row strong")?.textContent).toBe("client");
-      expect(child.querySelectorAll("li")).toHaveLength(1);
-      expect(child.querySelector(":scope > ul > li > .edit-agent-dashboard-row strong")?.textContent).toBe("qbr");
-      expect(child.querySelector("a, button")).toBeNull();
-      expect(child.textContent).toContain("Opened from within the parent dashboard.");
-      expect(child.textContent).toContain("client.html");
-      expect(child.textContent).not.toContain("Updated");
-    }
-    expect(panel.querySelectorAll("a")).toHaveLength(2);
-    expect(panel.querySelectorAll("button")).toHaveLength(2);
-    expect(panel.querySelector("h2")?.textContent).toBe("Needs parameters");
-    const orphans = panel.querySelectorAll(":scope > ul:last-of-type > li");
-    expect(orphans).toHaveLength(2);
-    for (const orphan of orphans) {
-      expect(orphan.textContent).toContain("Opened from another dashboard with parameters.");
-      expect(orphan.querySelector("a, button")).toBeNull();
-    }
+    const top = panel.querySelectorAll(":scope > ul > li");
+    expect(Array.from(top, (li) => li.querySelector("strong")?.textContent)).toEqual(["clients", "csm"]);
+    expect(panel.querySelectorAll(".edit-agent-dashboard-actions a")).toHaveLength(2);
+    const sub = Array.from(panel.querySelectorAll(".edit-agent-subpages li"));
+    expect(sub.map((li) => li.querySelector("strong")?.textContent)).toEqual(["client", "qbr", "orphan"]);
+    const parents = (li: Element) => Array.from(li.querySelectorAll("a"), (a) => [a.textContent, a.getAttribute("href")]);
+    expect(parents(sub[0]!)).toEqual([["clients", "/d/clients"], ["csm", "/d/csm"]]);
+    expect(parents(sub[1]!)).toEqual([["clients", "/d/clients"], ["csm", "/d/csm"]]);
+    expect(sub[2]!.textContent).toContain("not linked from any top page");
+    expect(panel.querySelector(".edit-agent-subpages p")?.textContent).toContain("need dynamic arguments in the URL");
   });
 
-  it("shows Needs parameters when no dashboard can be opened without arguments", async () => {
+  it("shows parameter pages when no dashboard can be opened without arguments", async () => {
     setCapabilitiesForTests({ forkedAgents: false });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
@@ -326,7 +312,7 @@ describe("EditAgent", () => {
     openTab("Dashboards");
     await new Promise((resolve) => setTimeout(resolve, 0));
     const panel = container.querySelector(".edit-agent-dashboards")!;
-    expect(panel.textContent).toContain("Needs parameters");
+    expect(panel.textContent).toContain("Detail pages");
     expect(panel.textContent).toContain("Client");
     expect(panel.querySelector("a, button")).toBeNull();
     expect(panel.textContent).not.toContain("No dashboards yet.");
@@ -360,7 +346,7 @@ describe("EditAgent", () => {
     expect(container.textContent).toContain("No dashboards yet.");
   });
 
-  it("keeps tabs usable during a pending dashboard request and renders the tree when it resolves", async () => {
+  it("keeps tabs usable during a pending dashboard request and renders dashboards when it resolves", async () => {
     setCapabilitiesForTests({ forkedAgents: false });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
@@ -386,9 +372,9 @@ describe("EditAgent", () => {
     ]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.textContent).not.toContain("Loading dashboards…");
-    const child = container.querySelector(".edit-agent-dashboard-children > li")!;
+    const child = container.querySelector(".edit-agent-subpages li")!;
     expect(child.textContent).toContain("Client");
-    expect(child.querySelector("a, button")).toBeNull();
+    expect(child.querySelector("a")?.getAttribute("href")).toBe("/d/clients");
     expect(container.querySelector(".edit-agent-dashboard-actions a")?.getAttribute("href")).toBe("/d/clients");
   });
 

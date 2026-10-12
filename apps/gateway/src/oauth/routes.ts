@@ -33,6 +33,30 @@ export function createOAuthRoutes(
       : c.json({ error: "forbidden" }, 403);
   }
 
+  /** Validate a `scope` query value and build the credential scope it names. */
+  async function resolveRequestedScope(
+    c: Context,
+    requested: string,
+    options: { teamRequiresAdmin: boolean }
+  ): Promise<{ scope: CredentialScope; userId: string | undefined } | Response> {
+    if (requested !== "team" && requested !== "personal") {
+      return c.json({ error: "invalid_scope" }, 400);
+    }
+    if (
+      requested === "team" &&
+      options.teamRequiresAdmin &&
+      !(await canConfigureTeam(c))
+    ) {
+      return c.json({ error: "team_requires_admin" }, 403);
+    }
+    const userId = await getRequesterUserId(c);
+    if (requested === "personal") {
+      if (!userId) return c.json({ error: "personal_requires_login" }, 401);
+      return { scope: { type: "personal", userId }, userId };
+    }
+    return { scope: { type: "team" }, userId };
+  }
+
   router.get("/oauth/:provider/authorize", async (c) => {
     const provider = c.req.param("provider");
     const agentId = c.req.query("agent");
@@ -51,16 +75,12 @@ export function createOAuthRoutes(
     if (scope === undefined) {
       return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c)), await canConfigureTeam(c)));
     }
-    if (scope !== "team" && scope !== "personal") {
-      return c.json({ error: "invalid_scope" }, 400);
-    }
-    if (scope === "team" && !(await canConfigureTeam(c))) {
-      return c.json({ error: "team_requires_admin" }, 403);
-    }
-    const userId = await getRequesterUserId(c);
-    if (scope === "personal" && !userId) {
-      return c.json({ error: "personal_requires_login" }, 401);
-    }
+    const resolved = await resolveRequestedScope(c, scope, {
+      teamRequiresAdmin: true,
+    });
+    if (resolved instanceof Response) return resolved;
+    const userId = resolved.userId;
+    const scopeType = resolved.scope.type;
     const scopesParam = c.req.query("scopes");
     const scopes = scopesParam
       ? scopesParam
@@ -74,10 +94,10 @@ export function createOAuthRoutes(
         agentId,
         provider,
         scopes,
-        scope,
-        userId: scope === "personal" ? userId : undefined,
+        scope: scopeType,
+        userId: scopeType === "personal" ? userId : undefined,
         onComplete: async () => {
-          recordSettingsChange({ ...actor, action: "oauth.connect", agentId, targetType: "oauth", targetId: provider, scope,
+          recordSettingsChange({ ...actor, action: "oauth.connect", agentId, targetType: "oauth", targetId: provider, scope: scopeType,
             changes: [{ field: "credentials", secret: "set" }] });
         },
       });
@@ -138,18 +158,21 @@ export function createOAuthRoutes(
     }
     const denied = await requireAgentAccess(c, agentId);
     if (denied) return denied;
-    const userId = await getRequesterUserId(c);
     const requestedScope = c.req.query("scope");
-    if (requestedScope && requestedScope !== "team" && requestedScope !== "personal") {
-      return c.json({ error: "invalid_scope" }, 400);
+    let userId: string | undefined;
+    let scopedRequest: CredentialScope | undefined;
+    if (requestedScope) {
+      const resolved = await resolveRequestedScope(c, requestedScope, {
+        teamRequiresAdmin: false,
+      });
+      if (resolved instanceof Response) return resolved;
+      userId = resolved.userId;
+      scopedRequest = resolved.scope;
+    } else {
+      userId = await getRequesterUserId(c);
     }
-    if (requestedScope === "personal" && !userId) {
-      return c.json({ error: "personal_requires_login" }, 401);
-    }
-    const connection = requestedScope
-      ? service.getScopedConnection(agentId, provider, requestedScope === "personal"
-          ? { type: "personal", userId: userId! }
-          : { type: "team" })
+    const connection = scopedRequest
+      ? service.getScopedConnection(agentId, provider, scopedRequest)
       : service.getConnection(agentId, provider, userId);
     const state = !connection ? "disconnected" : connection.status === "needs_reconnect" ? "needs_reconnect" : "connected";
     const teamAllowed = await canConfigureTeam(c);
@@ -180,22 +203,14 @@ export function createOAuthRoutes(
     const denied = await requireAgentAccess(c, agentId);
     if (denied) return denied;
     const requestedScope = c.req.query("scope") ?? "team";
-    if (requestedScope !== "team" && requestedScope !== "personal") {
-      return c.json({ error: "invalid_scope" }, 400);
-    }
-    if (requestedScope === "team" && !(await canConfigureTeam(c))) {
-      return c.json({ error: "team_requires_admin" }, 403);
-    }
-    const userId = await getRequesterUserId(c);
-    if (requestedScope === "personal" && !userId) {
-      return c.json({ error: "personal_requires_login" }, 401);
-    }
-    const scope: CredentialScope = requestedScope === "personal"
-      ? { type: "personal", userId: userId! }
-      : { type: "team" };
+    const resolved = await resolveRequestedScope(c, requestedScope, {
+      teamRequiresAdmin: true,
+    });
+    if (resolved instanceof Response) return resolved;
+    const scope = resolved.scope;
     const existing = service.getScopedConnection(agentId, provider, scope);
     await service.disconnect(agentId, provider, scope);
-    if (existing) recordSettingsChange({ ...await getAuditActor(c), action: "oauth.disconnect", agentId, targetType: "oauth", targetId: provider, scope: requestedScope,
+    if (existing) recordSettingsChange({ ...await getAuditActor(c), action: "oauth.disconnect", agentId, targetType: "oauth", targetId: provider, scope: scope.type,
       changes: [{ field: "credentials", secret: "removed" }] });
     return c.json({ state: "disconnected", connected: false, provider });
   });

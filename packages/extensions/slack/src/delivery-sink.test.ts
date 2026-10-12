@@ -124,6 +124,46 @@ describe("slack delivery sink", () => {
     );
   });
 
+  it("rejects when the proactive-DM store cannot be opened", async () => {
+    const postMessage = vi.fn().mockResolvedValue({ ts: "3.3" });
+    registerMockBot("alpha", { chat: { postMessage } as never });
+    vi.mocked(createProactiveDmNoteStore).mockImplementationOnce(() => {
+      throw new Error("EEXIST: data dir is a file");
+    });
+    setSlackContext({
+      getConfig: () => config(),
+      getDataDir: () => "/tmp/slack-data",
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as unknown as ExtensionContext);
+    const sink = createSlackDeliverySink(ctx());
+
+    await expect(
+      sink({ agent: agent("alpha"), destination: { user: "U0123456789" }, text: "digest" })
+    ).rejects.toThrow("EEXIST");
+    expect(postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects when the proactive-DM store fails to close", async () => {
+    const postMessage = vi.fn().mockResolvedValue({ ts: "3.3" });
+    registerMockBot("alpha", { chat: { postMessage } as never });
+    vi.mocked(createProactiveDmNoteStore).mockReturnValueOnce({
+      addNote: vi.fn(),
+      close: vi.fn(() => {
+        throw new Error("close failed");
+      }),
+    } as never);
+    setSlackContext({
+      getConfig: () => config(),
+      getDataDir: () => "/tmp/slack-data",
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as unknown as ExtensionContext);
+    const sink = createSlackDeliverySink(ctx());
+
+    await expect(
+      sink({ agent: agent("alpha"), destination: { user: "U0123456789" }, text: "digest" })
+    ).rejects.toThrow("close failed");
+  });
+
   it("throws when the destination has neither channel nor user", async () => {
     const sink = createSlackDeliverySink(ctx());
 

@@ -5,7 +5,7 @@ import { API_BASE, apiFetch as fetch } from "./core";
  * Upload a file to the server
  * Returns the file path that can be used in attachments
  */
-export async function uploadFile(file: File): Promise<UploadResponse> {
+async function uploadFile(file: File): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
@@ -35,7 +35,7 @@ export async function uploadFiles(files: File[]): Promise<FileAttachment[]> {
   }));
 }
 
-export type UploadedAttachment = {
+type UploadedAttachment = {
   originalName: string;
   savedName: string;
   path: string;

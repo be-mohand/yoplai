@@ -20,7 +20,3 @@ export async function fetchConnectPrompt(agentId: string): Promise<ConnectPrompt
 export async function markConnectPromptSeen(agentId: string): Promise<ConnectPromptState> {
   return parse(await fetch(url(agentId), { method: "PUT" }));
 }
-
-export async function clearConnectPrompt(agentId: string): Promise<ConnectPromptState> {
-  return parse(await fetch(url(agentId), { method: "DELETE" }));
-}

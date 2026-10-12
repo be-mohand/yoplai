@@ -19,7 +19,6 @@
     "@buape/carbon": "^0.16.0",
     "better-sqlite3": "^12.10.0",
     "discord-api-types": "^0.37.120",
-    "hono": "^4.11.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {

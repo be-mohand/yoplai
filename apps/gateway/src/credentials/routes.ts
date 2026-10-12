@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { listOAuthProviders, type AgentConfig, type GatewayConfig } from "@yoplai/shared";
 import { loadConfig, resolveAgentEnv } from "../config/index.js";
+import { isEnvRef, resolveEnvRefSync } from "../config/secrets.js";
 import { buildExtensionCatalog } from "../extensions/catalog.js";
 import { getOAuthService } from "../oauth/service.js";
 import { CredentialStore } from "./store.js";
@@ -54,7 +55,7 @@ export function createConnectionRoutes(options: {
         personal: fields.some((field) => !!tokens?.[field]),
         team: fields.some((field) => {
           const token = shared[field];
-          return typeof token === "string" && !!(token.startsWith("$env:") ? resolveAgentEnv(agent, value)[token.slice(5)] : token);
+          return typeof token === "string" && !!(isEnvRef(token) ? resolveEnvRefSync(token, resolveAgentEnv(agent, value)) : token);
         }),
       });
     }

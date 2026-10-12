@@ -56,7 +56,7 @@ describe("startup validation", () => {
       const extensions = await loadExtensions(config);
       // Canvas is a core extension; optional extensions must be opted in.
       await expect(validateStartupConfig(config, extensions)).resolves.toEqual({
-        loaded: ["canvas"],
+        loaded: ["canvas", "sessionHistory"],
         skipped: [],
       });
       expect(
@@ -145,7 +145,7 @@ describe("startup validation", () => {
 
     const extensions = await loadExtensions(config);
     await expect(validateStartupConfig(config, extensions)).resolves.toEqual({
-      loaded: ["canvas", "scheduler", "heartbeat"],
+      loaded: ["canvas", "sessionHistory", "scheduler", "heartbeat"],
       skipped: [],
     });
   });

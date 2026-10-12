@@ -17,13 +17,33 @@ function sanitizeSessionEntry(entry: unknown): unknown {
   if (
     entry.type !== "message" ||
     !isRecord(message) ||
-    message.role !== "system" ||
     !isRecord(sanitizedMessage)
   ) {
     return sanitized;
   }
-  for (const key of ["toolsAdded", "toolsRemoved"] as const) {
-    if (key in message) sanitizedMessage[key] = message[key];
+  if (message.role === "system") {
+    for (const key of ["toolsAdded", "toolsRemoved"] as const) {
+      if (key in message) sanitizedMessage[key] = message[key];
+    }
+  }
+  // OpenAI Responses text signatures carry replay item IDs and phases, not
+  // credentials. Preserve only the SDK's assistant text-block metadata.
+  if (
+    message.role === "assistant" &&
+    Array.isArray(message.content) &&
+    Array.isArray(sanitizedMessage.content)
+  ) {
+    for (const [index, block] of message.content.entries()) {
+      const sanitizedBlock = sanitizedMessage.content[index];
+      if (
+        isRecord(block) &&
+        block.type === "text" &&
+        typeof block.textSignature === "string" &&
+        isRecord(sanitizedBlock)
+      ) {
+        sanitizedBlock.textSignature = block.textSignature;
+      }
+    }
   }
   return sanitized;
 }

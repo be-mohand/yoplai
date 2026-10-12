@@ -8,11 +8,11 @@ import {
 } from "@yoplai/shared";
 import {
   dashboardBaseUrl,
-  dashboardDirectory,
+  listDashboardSlugs,
   normalizeDashboardSlug,
   openDashboardFile,
-  recordDashboardVersion,
-} from "./index.js";
+} from "./dashboard-files.js";
+import { recordDashboardVersion } from "./index.js";
 import { DashboardRegistry } from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
 
@@ -168,22 +168,10 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
         today: new Date().toISOString().slice(0, 10),
       };
       const result = await executeDashboardQueries(agent, html, bindings);
-      const files = await fs.readdir(dashboardDirectory(agent), {
-        withFileTypes: true,
-      });
       const dashboards = await Promise.all(
-        files
-          .filter((file) => file.isFile())
-          .map((file) => file.name)
-          .filter((file) => {
-            try {
-              normalizeDashboardSlug(file);
-              return true;
-            } catch {
-              return false;
-            }
-          })
-          .map((file) => deps.registry.link(agent.id, file))
+        (await listDashboardSlugs(agent)).map((slug) =>
+          deps.registry.link(agent.id, slug)
+        )
       );
       const links = Object.fromEntries(
         dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])

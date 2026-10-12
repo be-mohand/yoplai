@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import { getSlackContext } from "./context.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 import { bindCredentialConnect, confirmCredentialConnect, inspectCredentialConnect } from "./credential-connect.js";
-import { escapeHtml, page } from "./pairing-routes.js";
+import { escapeHtml, isTrustedOrigin, page } from "./pairing-routes.js";
 
 export function registerCredentialConnectRoutes(app: Hono): void {
   let multiUser: Promise<typeof import("@yoplai/extension-multi-user")> | undefined;
@@ -18,7 +18,7 @@ export function registerCredentialConnectRoutes(app: Hono): void {
       const ctx = getSlackContext();
       const pairing = getSlackPairingService();
       if (!ctx.credentialConnect || !pairing) throw new Error("Connection unavailable");
-      const { getMultiUserRuntime, hasAgentAccess, hasActiveImpersonation, getRequestAuthContext, getForwardedAuthContext } = await (multiUser ??= import("@yoplai/extension-multi-user"));
+      const { getMultiUserRuntime, getEligibleAccount, hasAgentAccess, hasActiveImpersonation, getRequestAuthContext, getForwardedAuthContext } = await (multiUser ??= import("@yoplai/extension-multi-user"));
       if (hasActiveImpersonation(getRequestAuthContext(c) ?? getForwardedAuthContext(c.req.raw.headers))) {
         return c.html(page("<p>Exit read-only impersonation before connecting credentials.</p>"), 403);
       }
@@ -30,8 +30,8 @@ export function registerCredentialConnectRoutes(app: Hono): void {
         login.searchParams.set("returnTo", `/api/slack/connect/${encodeURIComponent(token)}`);
         return c.redirect(login.href, 302);
       }
-      const user = runtime.db.prepare("SELECT id, email, approved, role, banned FROM user WHERE id = ?").get(session.user.id) as { id: string; email: string; approved: number; role: string; banned: number } | undefined;
-      if (!user || user.banned || (!user.approved && !["admin", "superadmin"].includes(user.role)) || !(await hasAgentAccess({ user: { id: user.id, email: user.email, role: user.role }, session: { id: session.session.id, userId: user.id } }, request.sender.agentId))) {
+      const user = getEligibleAccount(runtime.db, session.user.id);
+      if (!user || !(await hasAgentAccess({ user: { id: user.id, email: user.email, role: user.role }, session: { id: session.session.id, userId: user.id } }, request.sender.agentId))) {
         return c.html(page("<p>Your account does not have access.</p>"), 403);
       }
       if (request.owner && request.owner !== user.id) throw new SlackPairingError("This link was created for another Slack account");
@@ -54,8 +54,7 @@ export function registerCredentialConnectRoutes(app: Hono): void {
         const target = request.target.kind === "oauth" ? request.target.provider : request.target.extensionId;
         return c.html(page(`<p>Slack account: <strong>${escapeHtml(identity)}</strong></p><p>Connect <strong>${escapeHtml(target)}</strong> for <strong>${escapeHtml(user.email)}</strong> — Just me.</p><form method="post">${form}<button class="btn" type="submit">Connect${request.target.kind === "oauth" ? ` ${escapeHtml(request.target.provider)}` : ""}</button></form>`));
       }
-      const origin = c.req.header("origin");
-      if (!origin || ![new URL(c.req.url).origin, new URL(pairing.baseUrl).origin].includes(origin)) return c.html(page("<p>Invalid request origin.</p>"), 403);
+      if (!isTrustedOrigin(c, pairing.baseUrl)) return c.html(page("<p>Invalid request origin.</p>"), 403);
       if (request.busy) return c.html(page("<p>This connection is already in progress.</p>"), 409);
       request.busy = true;
       locked = request;

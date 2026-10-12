@@ -169,21 +169,3 @@ export function subscribeToRealtime({
     socket.close();
   };
 }
-
-export function useProjectRealtime(
-  projectId: string,
-  interests: Array<"files" | "agents" | "subagents">,
-  onEvent: (event: RealtimeEvent) => void
-): () => void {
-  return subscribeToRealtime({
-    interests: [
-      ...(interests.includes("files") || interests.includes("agents")
-        ? [{ type: "project" as const, projectId }]
-        : []),
-      ...(interests.includes("subagents")
-        ? [{ type: "subagents" as const }]
-        : []),
-    ],
-    onEvent,
-  });
-}

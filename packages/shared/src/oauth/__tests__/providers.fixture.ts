@@ -1,4 +1,4 @@
-import type { OAuthProviderDescriptor } from "./types.js";
+import type { OAuthProviderDescriptor } from "../types.js";
 
 /**
  * Google descriptor. This is the whole "how to talk to Google" definition —

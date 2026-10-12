@@ -3,13 +3,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 
-export const AUTH_DB_FILENAME = "auth.db";
+const AUTH_DB_FILENAME = "auth.db";
 
 export function getAuthDbPath(dataDir: string): string {
   return path.join(dataDir, AUTH_DB_FILENAME);
 }
 
-export function ensureAgentAssignmentsTable(
+function ensureAgentAssignmentsTable(
   db: Database.Database
 ): void {
   const createTableSql = `
@@ -236,7 +236,7 @@ export function ensureAgentForksTable(db: Database.Database): void {
 }
 
 /** Records one-shot data migrations so bootstrap never re-runs them. */
-export function ensureMigrationsTable(db: Database.Database): void {
+function ensureMigrationsTable(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       name TEXT PRIMARY KEY,
@@ -248,7 +248,7 @@ export function ensureMigrationsTable(db: Database.Database): void {
 /** Identifier of the assignments → teams one-shot migration. */
 export const ASSIGNMENTS_TO_TEAMS_MIGRATION = "assignments_to_teams";
 /** One-shot backfill from the retired agent_forks.teamId column. */
-export const FORK_TEAMS_BACKFILL_MIGRATION = "fork_teams_backfill";
+const FORK_TEAMS_BACKFILL_MIGRATION = "fork_teams_backfill";
 
 /**
  * One-shot migration converting the legacy `agent_assignments` allowlist into
@@ -370,6 +370,5 @@ export function initializeMultiUserDatabase(
   // allowlist. Safe no-op on fresh installs (no assignment rows).
   migrateAssignmentsToTeams(db);
   migrateExistingTeamsToPrivate(db);
-  ensureAgentForksTable(db);
   return db;
 }
