@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import Database from "better-sqlite3";
 import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentConfig } from "@yoplai/shared";
+import { injectDashboardRuntime } from "../canvas/routes.js";
 import {
   executeDashboardQueries,
   parseDashboardQueries,
@@ -330,6 +332,24 @@ describe("dashboard starter templates", () => {
       expect(
         Object.values(result.data).every((rows) => rows.length === 0)
       ).toBe(true);
+      // A viewer who owns nothing gets the empty state with a real link back
+      // to the list, not a blank page or a thrown render.
+      const rendered = renderTemplate(html, result.data, {
+        viewer_email: "amina@example.com",
+        id: "acme",
+        quarter: "2026-Q3",
+      }, ["clients.html", "client.html", "qbr.html"]);
+      try {
+        expect(rendered.document.body.textContent, file).toContain(
+          "No client"
+        );
+        expect(
+          rendered.document.querySelector("#summary a")?.getAttribute("href"),
+          file
+        ).toBe("/d/id-clients");
+      } finally {
+        rendered.close();
+      }
     }
   });
 
@@ -357,43 +377,118 @@ describe("dashboard starter templates", () => {
         Object.values(result.data).some((rows) => rows.length > 0),
         file
       ).toBe(true);
-      expect(() =>
-        executeTemplateScripts(html, result.data, bindings)
-      ).not.toThrow();
+      const rendered = renderTemplate(
+        html,
+        result.data,
+        bindings,
+        files
+      );
+      try {
+        const doc = rendered.document;
+        expect(doc.querySelector(".dk-error-banner"), file).toBeNull();
+        expect(doc.querySelector(".dk-notice"), file).toBeNull();
+        const text = doc.body.textContent ?? "";
+        const shownValue = Object.values(result.data)
+          .flat()
+          .flatMap((row) => Object.values(row as Record<string, unknown>))
+          .some((value) => typeof value === "string" && value.length > 2 && text.includes(value));
+        expect(shownValue, file).toBe(true);
+        expectDrillDowns(file, doc, bindings);
+      } finally {
+        rendered.close();
+      }
     }
   }
 });
 
-function executeTemplateScripts(
+const kitSource = readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../canvas/assets/kit.js"
+  ),
+  "utf8"
+);
+
+// Renders a shipped template the way the dashboard route serves it: the real
+// runtime bootstrap (`injectDashboardRuntime`, with a sibling-slug link map)
+// and the real `kit.js`. Only ECharts (not bundled here) is stubbed.
+function renderTemplate(
   html: string,
   data: Record<string, unknown[]>,
-  params: Record<string, string>
-): void {
-  const dom = new JSDOM(html, { runScripts: "outside-only" });
-  const noOp = () => undefined;
+  params: Record<string, string>,
+  siblings: string[]
+): { document: Document; close(): void } {
+  const links = Object.fromEntries(
+    siblings.map((slug) => [slug, `/d/id-${slug.replace(/\.html$/, "")}`])
+  );
+  const page = injectDashboardRuntime(html, {
+    data,
+    viewer: { email: params.viewer_email ?? null, name: "Template Viewer" },
+    params,
+    links,
+    errors: [],
+  });
+  const dom = new JSDOM(page, {
+    runScripts: "outside-only",
+    url: "https://yoplai.test/d/source",
+  });
+  // jsdom has no canvas; Kit falls back to parsing computed colors.
+  dom.window.HTMLCanvasElement.prototype.getContext = () => null;
   Object.assign(dom.window, {
-    YOPLAI: {
-      data,
-      viewer: { email: params.viewer_email, name: "Template Viewer" },
-      params,
-      link: (slug: string) => `/d/template-${slug}`,
-    },
-    DashboardKit: {
-      kpi: noOp,
-      table: noOp,
-      list: noOp,
-      tabs: noOp,
-      filters: noOp,
-      md: noOp,
-      chart: noOp,
+    echarts: {
+      registerTheme: () => undefined,
+      getInstanceByDom: () => undefined,
+      init: () => ({
+        setOption: () => undefined,
+        resize: () => undefined,
+        dispose: () => undefined,
+      }),
     },
   });
-  for (const script of dom.window.document.querySelectorAll("script")) {
-    if (!script.src && script.type !== "application/sql") {
-      dom.window.eval(script.textContent ?? "");
+  const scripts = [...dom.window.document.querySelectorAll("script")].filter(
+    (script) => !script.src && script.type !== "application/sql"
+  );
+  const [bootstrap, ...templateScripts] = scripts;
+  // Document order: runtime bootstrap, then Kit (a <script src> in the page),
+  // then the template's own module body.
+  dom.window.eval(bootstrap?.textContent ?? "");
+  dom.window.eval(kitSource);
+  for (const script of templateScripts) {
+    dom.window.eval(script.textContent ?? "");
+  }
+  return {
+    document: dom.window.document,
+    close: () => dom.window.close(),
+  };
+}
+
+// Drill-down links rendered by the real Kit/runtime must carry the parameters
+// the target dashboard's queries bind.
+function expectDrillDowns(
+  file: string,
+  doc: Document,
+  bindings: Record<string, string>
+): void {
+  const hrefs = [...doc.querySelectorAll("a[href]")].map(
+    (link) => link.getAttribute("href") ?? ""
+  );
+  if (file === "clients.html") {
+    expect(hrefs).toContain("/d/id-client?id=acme");
+  }
+  if (file === "client.html") {
+    expect(doc.querySelector("#qbr")?.getAttribute("href")).toBe(
+      `/d/id-qbr?id=${bindings.id}&quarter=${bindings.quarter}`
+    );
+  }
+  if (file === "okr-reports.html") {
+    const links = hrefs.filter((href) => href.startsWith("/d/id-okr-me?"));
+    expect(links.length).toBeGreaterThan(0);
+    for (const href of links) {
+      const query = new URL(href, "https://yoplai.test").searchParams;
+      expect(query.get("owner")).toMatch(/@/);
+      expect(query.get("period")).toBe("2026-Q4");
     }
   }
-  dom.window.close();
 }
 
 function expectMutableTablesHaveUpdatedAt(db: Database.Database): void {
