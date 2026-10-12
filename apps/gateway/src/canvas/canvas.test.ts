@@ -7,12 +7,12 @@ import { JSDOM } from "jsdom";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { resolveHomeDir } from "@yoplai/shared";
 import { getAgentDataDir } from "../agents/container.js";
+import { canvasExtension } from "./index.js";
 import {
-  canvasExtension,
   dashboardDirectory,
   normalizeDashboardSlug,
   openDashboardFile,
-} from "./index.js";
+} from "./dashboard-files.js";
 import {
   createDashboardAssetRoutes,
   createDashboardRoutes,
