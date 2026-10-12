@@ -5,7 +5,7 @@ import type {
   LangfuseTool,
 } from "@langfuse/tracing";
 
-export type SpanState = {
+type SpanState = {
   span: LangfuseTool;
   id: string;
   name: string;
