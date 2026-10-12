@@ -41,6 +41,8 @@ describe("chat activity helpers", () => {
 });
 
 describe("streamingActivityItems", () => {
+  afterEach(() => vi.useRealTimers());
+
   const blocks = [
     { type: "thinking", thinking: "a", timestamp: 10 },
     {
@@ -85,8 +87,6 @@ describe("streamingActivityItems", () => {
       },
     ]);
   });
-
-  afterEach(() => vi.useRealTimers());
 
   it("closes last thinking when not streaming and omits tool details in simple mode", () => {
     vi.useFakeTimers();
