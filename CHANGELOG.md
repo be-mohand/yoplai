@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Add preinstalled Chromium and `playwright-cli` to sandbox agents, with authenticated dashboard previews and a visual-check recipe for themes, mobile layouts, and drill-downs.
+
 - Add a core `session_history` agent tool to list, search, and read the agent's own past sessions as condensed text (tool calls merged, thinking dropped, long text truncated with drill-down). Enabled by default; disable with `sessionHistory.enabled: false`.
 
 ### Fixed

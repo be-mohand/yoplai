@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import { resolveHomeDir } from "@yoplai/shared";
 import { getAgentDataDir } from "../agents/container.js";
+import { createInternalTools } from "../server/internal-tools.js";
 import { canvasExtension } from "./index.js";
 import {
   dashboardDirectory,
@@ -608,6 +609,168 @@ describe("dashboard registry and tool", () => {
   ])("rejects confined slug %s", (slug) =>
     expect(() => normalizeDashboardSlug(slug)).toThrow()
   );
+});
+
+describe("internal dashboard rendering", () => {
+  function app() {
+    return createInternalTools({
+      getConfig: () => ({
+        ...config,
+        agents: [
+          agent(),
+          {
+            ...agent(),
+            id: "agent-2",
+            workspace: path.join(root, "other-agent"),
+          },
+        ],
+      }),
+      getTokenContext: (token) =>
+        token === "test-agent-token"
+          ? {
+              agentId: "agent-1",
+              sessionId: "session",
+              runId: "run",
+              containerName: "container",
+              createdAt: Date.now(),
+              roots: {
+                workspace,
+                data: path.join(workspace, "data"),
+                uploads: workspace,
+              },
+              userId: "viewer-with-personal-credentials",
+            }
+          : undefined,
+    });
+  }
+
+  it("requires a valid token and confines slugs to the token's agent", async () => {
+    const otherWorkspace = path.join(root, "other-agent", "data", "dashboards");
+    await fs.mkdir(otherWorkspace, { recursive: true });
+    await fs.writeFile(path.join(otherWorkspace, "private.html"), "private");
+    const routes = app();
+    expect((await routes.request("/dashboards/private.html/html")).status).toBe(
+      401
+    );
+    expect(
+      (await routes.request("/dashboards/private.html/html?token=invalid"))
+        .status
+    ).toBe(401);
+    expect(
+      (
+        await routes.request(
+          "/dashboards/private.html/html?token=test-agent-token"
+        )
+      ).status
+    ).toBe(404);
+    expect(
+      (
+        await routes.request(
+          "/dashboards/missing.html/html?token=test-agent-token"
+        )
+      ).status
+    ).toBe(404);
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      "<html></html>"
+    );
+    expect(
+      (
+        await routes.request("/dashboards/hello.html/html", {
+          headers: { "X-Agent-Token": "test-agent-token" },
+        })
+      ).status
+    ).toBe(200);
+  });
+
+  it("shares SQL/runtime rendering with null viewer, params, internal links, and no versions", async () => {
+    const db = new Database(path.join(workspace, "data", "live.db"));
+    db.exec("create table items(id integer); insert into items values (7)");
+    db.close();
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      '<!doctype html><html><head></head><body><script type="application/sql" data-name="items" data-db="data/live.db">select id, :viewer_email as email, :viewer_name as name from items where id = :id</script></body></html>'
+    );
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "detail.html"),
+      "<html></html>"
+    );
+    const entry = await registry.link("agent-1", "hello.html");
+    const response = await app().request(
+      "/dashboards/hello.html/html?token=test-agent-token&theme=dark&id=7",
+      { headers: { Cookie: "yoplai-theme=light" } }
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toBe(
+      dashboardCsp(config, "http://localhost")
+    );
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const html = await response.text();
+    expect(html).toContain('data-theme="dark"');
+    expect(html).toContain('"items":[{"id":7,"email":null,"name":null}]');
+    expect(html).toContain('"viewer":{"email":null,"name":null}');
+    expect(html).toContain('"params":{"id":"7"}');
+    const dom = new JSDOM(html, {
+      url: "http://gateway/internal/dashboards/hello.html/html",
+      runScripts: "dangerously",
+    });
+    const runtime = dom.window as unknown as {
+      YOPLAI: {
+        link(slug: string, params: Record<string, string | number>): string;
+      };
+    };
+    const link = runtime.YOPLAI.link("detail.html", { id: 7 });
+    expect(link).toBe(
+      "/internal/dashboards/detail.html/html?token=test-agent-token&theme=dark&id=7"
+    );
+    expect(
+      runtime.YOPLAI.link("detail.html", { token: "wrong", theme: "light" })
+    ).toBe(
+      "/internal/dashboards/detail.html/html?token=test-agent-token&theme=dark"
+    );
+    dom.window.close();
+    expect(await registry.listVersions(entry.id)).toEqual([]);
+  });
+
+  it("reports SQL failures to the browser console", async () => {
+    const db = new Database(path.join(workspace, "data", "live.db"));
+    db.close();
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      '<html><script type="application/sql" data-name="broken" data-db="data/live.db">select * from missing_table</script></html>'
+    );
+    const html = await (
+      await app().request("/dashboards/hello.html/html?token=test-agent-token")
+    ).text();
+    const errors = vi.fn();
+    const dom = new JSDOM(html, {
+      runScripts: "dangerously",
+      beforeParse(window) {
+        window.console.error = errors;
+      },
+    });
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining("Dashboard query error (broken):")
+    );
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining("missing_table")
+    );
+    dom.window.close();
+  });
+
+  it("preserves an explicit dashboard theme", async () => {
+    await fs.writeFile(
+      path.join(workspace, "data", "dashboards", "hello.html"),
+      '<html data-theme="light"></html>'
+    );
+    const html = await (
+      await app().request(
+        "/dashboards/hello.html/html?token=test-agent-token&theme=dark"
+      )
+    ).text();
+    expect(html).toContain('<html data-theme="light">');
+    expect(html).not.toContain('data-theme="dark"');
+  });
 });
 
 describe("dashboard viewer", () => {
