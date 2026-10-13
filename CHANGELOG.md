@@ -16,6 +16,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Share memory across agents in a personal chat project: agent-added wiki references with private paths, removable references, and editable dated project notes refreshed each turn.
+
 - Personal chat project files: upload, list, and delete documents/images, with bounded extracted context and read-only sandbox access.
 
 - Set instructions for a chat project and start a new chat with your chosen agent; project chats receive the latest instructions and a prompt to suggest useful wiki references on every turn.

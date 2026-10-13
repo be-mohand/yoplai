@@ -1,13 +1,19 @@
 import { A, useNavigate, useParams } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { fetchAgents, fetchAgentSessions, startNewChat } from "../api";
-import { deleteChatProjectFile, fetchChatProjectFiles, uploadChatProjectFile, deleteChatProject, fetchChatProject, renameChatProject, updateChatProjectInstructions } from "../api/chat-projects";
+import { deleteChatProjectFile, fetchChatProjectFiles, uploadChatProjectFile, deleteChatProject, fetchChatProject, renameChatProject, updateChatProjectInstructions, fetchChatProjectReferences, deleteChatProjectReference, fetchChatProjectNotes, updateChatProjectNotes } from "../api/chat-projects";
 
 export function ChatProject() {
   const params = useParams();
   const navigate = useNavigate();
   const [project, { refetch }] = createResource(() => params.id, fetchChatProject);
   const [files, { refetch: refetchFiles }] = createResource(() => params.id, fetchChatProjectFiles);
+  const [references, { refetch: refetchReferences }] = createResource(() => params.id, fetchChatProjectReferences);
+  const [notes, { refetch: refetchNotes }] = createResource(() => params.id, fetchChatProjectNotes);
+  const [notesText, setNotesText] = createSignal("");
+  const [savingNotes, setSavingNotes] = createSignal(false);
+  const [tab, setTab] = createSignal<"overview" | "notes">("overview");
+  createEffect(() => setNotesText(notes()?.text ?? ""));
   const [uploading, setUploading] = createSignal(false);
   const [sessions, { refetch: refetchSessions }] = createResource(() => params.id, async () => (await fetchAgentSessions()).items);
   const refresh = () => { void refetch(); void refetchSessions(); };
@@ -61,6 +67,27 @@ export function ChatProject() {
             <button type="button" onClick={() => setChoosingAgent(false)}>Cancel</button>
           </div>
         </Show>
+        <div role="tablist" aria-label="Project content" class="project-agent-picker">
+          <button type="button" role="tab" id="project-overview-tab" aria-selected={tab() === "overview"} aria-controls="project-overview" onClick={() => setTab("overview")}>Overview</button>
+          <button type="button" role="tab" id="project-notes-tab" aria-selected={tab() === "notes"} aria-controls="project-notes-panel" onClick={() => setTab("notes")}>Notes</button>
+        </div>
+        <Show when={tab() === "notes"}>
+          <section role="tabpanel" id="project-notes-panel" aria-labelledby="project-notes-tab">
+            <Show when={notes.error}><p role="alert">Unable to load notes. Try again.</p><button type="button" onClick={() => void refetchNotes()}>Retry notes</button></Show>
+            <form class="project-instructions" onSubmit={async (event) => {
+              event.preventDefault(); setSavingNotes(true); setError("");
+              try { await updateChatProjectNotes(item().id, notesText()); await refetchNotes(); }
+              catch { setError("Unable to save notes. Try again."); }
+              finally { setSavingNotes(false); }
+            }}>
+              <label for="project-notes">Notes</label>
+              <textarea id="project-notes" value={notesText()} onInput={(event) => setNotesText(event.currentTarget.value)} rows={12} disabled={savingNotes() || notes.loading || Boolean(notes.error)} />
+              <button type="submit" disabled={savingNotes() || notes.loading || Boolean(notes.error)}>{savingNotes() ? "Saving…" : "Save notes"}</button>
+            </form>
+          </section>
+        </Show>
+        <Show when={tab() === "overview"}>
+        <section role="tabpanel" id="project-overview" aria-labelledby="project-overview-tab">
         <form class="project-instructions" onSubmit={async (event) => {
           event.preventDefault();
           setSaving(true);
@@ -96,6 +123,19 @@ export function ChatProject() {
             }}>Delete</button>
           </li>}</For></ul>
         </section>
+        <section class="project-instructions" aria-label="Project references">
+          <h2>References</h2>
+          <Show when={references.error}><p role="alert">Unable to load references. Try again.</p><button type="button" onClick={() => void refetchReferences()}>Retry references</button></Show>
+          <Show when={!references.loading && !references.error && references()?.items.length === 0}><p>No references yet.</p></Show>
+          <ul><For each={references()?.items ?? []}>{(reference) => <li>
+            <strong>{reference.title}</strong><p>{reference.description}</p>
+            <button type="button" aria-label={`Remove reference ${reference.title}`} onClick={async () => {
+              setError("");
+              try { await deleteChatProjectReference(item().id, reference.id); await refetchReferences(); }
+              catch { setError("Unable to remove reference. Try again."); }
+            }}>Remove</button>
+          </li>}</For></ul>
+        </section>
         <Show when={!sessions.loading && chats().length === 0}><p>No chats in this project. Use a chat's menu to move it here.</p></Show>
         <ul class="project-chats"><For each={chats()}>{(session) => <li>
           <A href={`/chat/${encodeURIComponent(session.agentId)}?session=${encodeURIComponent(session.sessionId)}`}>
@@ -105,6 +145,8 @@ export function ChatProject() {
             <span><strong>{session.title || session.firstUserMessage || "New chat"}</strong><small>{agents()?.find((agent) => agent.id === session.agentId)?.name || "Agent"}{session.pinned != null ? " · Pinned" : ""}</small></span>
           </A>
         </li>}</For></ul>
+        </section>
+        </Show>
       </>}</Show>
       <style>{`
         .chat-project-page { max-width: 800px; margin: 0 auto; padding: 32px; color: var(--text-primary); }

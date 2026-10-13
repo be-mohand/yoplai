@@ -2,6 +2,7 @@ import type { ContainerExtensionTool, GatewayConfig } from "@yoplai/shared";
 import { getExtensionSystemPromptContributions } from "../../extensions/prompts.js";
 import { getExtensionAgentTools } from "../../extensions/tools.js";
 import type { SdkRunParams } from "../types.js";
+import { projectTools } from "../../chat-projects/tools.js";
 
 export class ContainerToolBridge {
   async buildSystemPrompts(
@@ -39,6 +40,7 @@ export class ContainerToolBridge {
       extensionId: "gateway", name: "describe_image", description: "Describe an image under /workspace, optionally answering a specific question.",
       parameters: { type: "object", properties: { path: { type: "string", description: "Absolute container image path" }, question: { type: "string" } }, required: ["path"] },
     });
+    if (params.context?.project?.id) gatewayTools.push(...projectTools);
     return tools.map((tool) => ({
       extensionId: tool.extensionId,
       name: tool.name,

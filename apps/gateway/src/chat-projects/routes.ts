@@ -82,6 +82,38 @@ export function createChatProjectRoutes(deps: {
     if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
     return await store.deleteFile(id, fileId) ? c.json({ ok: true }) : c.json({ error: "File not found" }, 404);
   });
+  routes.get("/chat-projects/:id/references", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    return c.json({ items: (await store.listReferences(id)).map(({ id, title, description, createdAt }) => ({ id, title, description, createdAt })) });
+  });
+  routes.delete("/chat-projects/:id/references/:referenceId", async (c) => {
+    const id = c.req.param("id");
+    const referenceId = c.req.param("referenceId");
+    if (!isSafeChatProjectId(id) || !isSafeChatProjectId(referenceId)) return c.json({ error: "Invalid id" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    return await store.deleteReference(id, referenceId) ? c.json({ ok: true }) : c.json({ error: "Reference not found" }, 404);
+  });
+  routes.get("/chat-projects/:id/notes", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    return c.json({ text: await store.getNotes(id) });
+  });
+  routes.put("/chat-projects/:id/notes", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    const body = await c.req.json().catch(() => null);
+    if (typeof body?.text !== "string") return c.json({ error: "Note text must be a string" }, 400);
+    await store.putNotes(id, body.text);
+    return c.json({ text: body.text });
+  });
   routes.delete("/chat-projects/:id", async (c) => {
     const id = c.req.param("id");
     if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);

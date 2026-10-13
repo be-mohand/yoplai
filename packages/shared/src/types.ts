@@ -2310,7 +2310,7 @@ export type AgentContext = (
   | TelegramContext
   | IrcContext
   | UserContext
-) & { project?: { instructions: string; filesPath?: string; files?: string } };
+) & { project?: { id?: string; instructions: string; filesPath?: string; files?: string; references?: string; notes?: string } };
 
 const ContextHistoryBlockSchema = z.object({
   type: z.literal("history"),
@@ -2388,7 +2388,7 @@ export const AgentContextSchema: z.ZodType<AgentContext> = z.discriminatedUnion(
     }),
     z.object({ kind: z.literal("web"), name: z.string().optional() }),
   ]
-).and(z.object({ project: z.object({ instructions: z.string(), filesPath: z.string().optional(), files: z.string().optional() }).optional() })) as z.ZodType<AgentContext>;
+).and(z.object({ project: z.object({ id: z.string().optional(), instructions: z.string(), filesPath: z.string().optional(), files: z.string().optional(), references: z.string().optional(), notes: z.string().optional() }).optional() })) as z.ZodType<AgentContext>;
 
 export const HistoryEventSchema = z.discriminatedUnion("type", [
   z.object({

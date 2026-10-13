@@ -5,6 +5,8 @@ import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
 
 export type ChatProjectFile = { id: string; name: string; mimeType: string; size: number; createdAt: number; text?: string; extractionError?: string };
 
+export type ChatProjectReference = { id: string; title: string; description: string; path: string; createdAt: number };
+
 export type ChatProject = {
   id: string;
   name: string;
@@ -146,6 +148,76 @@ export class ChatProjectStore {
       await fs.rm(path.join(this.filesDirectory(id), fileId), { force: true });
       await this.writeFiles(id, files.filter((file) => file.id !== fileId));
       return true;
+    });
+  }
+
+  async listReferences(id: string): Promise<ChatProjectReference[]> {
+    try {
+      return JSON.parse(await fs.readFile(path.join(path.dirname(this.file(id)), "references.json"), "utf8")) as ChatProjectReference[];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private async writeReferences(id: string, references: ChatProjectReference[]): Promise<void> {
+    const target = path.join(path.dirname(this.file(id)), "references.json");
+    const tmp = target + "." + crypto.randomUUID() + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(references), "utf8");
+    await fs.rename(tmp, target);
+  }
+
+  async addReference(id: string, input: { title: string; description: string; path: string }): Promise<ChatProjectReference> {
+    if (![input.title, input.description, input.path].every((value) => typeof value === "string" && value.trim())) {
+      throw new Error("Reference title, description and path are required");
+    }
+    return this.mutateFiles(id, async () => {
+      if (!await this.get(id)) throw new Error("Project not found");
+      const reference = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description.trim(), path: input.path.trim(), createdAt: Date.now() };
+      await this.writeReferences(id, [...await this.listReferences(id), reference]);
+      return reference;
+    });
+  }
+
+  async deleteReference(id: string, referenceId: string): Promise<boolean> {
+    if (!isSafeChatProjectId(referenceId)) throw new Error("Invalid reference id");
+    return this.mutateFiles(id, async () => {
+      const references = await this.listReferences(id);
+      if (!references.some((reference) => reference.id === referenceId)) return false;
+      await this.writeReferences(id, references.filter((reference) => reference.id !== referenceId));
+      return true;
+    });
+  }
+
+  async getNotes(id: string): Promise<string> {
+    try { return await fs.readFile(path.join(path.dirname(this.file(id)), "NOTES.md"), "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw error;
+    }
+  }
+
+  private async writeNotes(id: string, text: string): Promise<void> {
+    const target = path.join(path.dirname(this.file(id)), "NOTES.md");
+    const tmp = target + "." + crypto.randomUUID() + ".tmp";
+    await fs.writeFile(tmp, text, "utf8");
+    await fs.rename(tmp, target);
+  }
+
+  async putNotes(id: string, text: string): Promise<void> {
+    await this.mutateFiles(id, async () => {
+      if (!await this.get(id)) throw new Error("Project not found");
+      await this.writeNotes(id, text);
+    });
+  }
+
+  async appendNotes(id: string, text: string): Promise<void> {
+    if (typeof text !== "string" || !text.trim()) throw new Error("Note text is required");
+    await this.mutateFiles(id, async () => {
+      if (!await this.get(id)) throw new Error("Project not found");
+      const notes = await this.getNotes(id);
+      const bullet = "- [" + new Date().toISOString().slice(0, 10) + "] " + text.trim().replace(/\r?\n/g, "\n  ") + "\n";
+      await this.writeNotes(id, notes + (notes && !notes.endsWith("\n") ? "\n" : "") + bullet);
     });
   }
 

@@ -26,6 +26,17 @@ vi.mock("../../extensions/tools.js", () => ({
 }));
 
 describe("container tool bridge", () => {
+  it("exposes project memory tools only for resolved project chats", async () => {
+    const bridge = new ContainerToolBridge();
+    const params = { agent: { id: "cloud" } };
+    const config = { agents: [params.agent], extensions: {} };
+    const plain = await bridge.buildTools(params as never, config as never);
+    expect(plain.map((tool) => tool.name)).not.toContain("project_references_add");
+    expect(plain.map((tool) => tool.name)).not.toContain("project_notes_append");
+    const project = await bridge.buildTools({ ...params, context: { kind: "web", project: { id: "research", instructions: "" } } } as never, config as never);
+    expect(project.map((tool) => tool.name)).toContain("project_references_add");
+    expect(project.map((tool) => tool.name)).toContain("project_notes_append");
+  });
   it("serializes extension prompts and tool metadata for the container", async () => {
     const bridge = new ContainerToolBridge();
     const params = { agent: { id: "cloud" } };

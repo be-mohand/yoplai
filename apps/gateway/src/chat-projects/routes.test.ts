@@ -62,3 +62,28 @@ describe("chat project files API", () => {
     expect(await store.listFiles(project.id)).toEqual([]);
   });
 });
+
+
+describe("chat project memory API", () => {
+  it("lists and removes references without exposing paths, and edits notes in the owning user scope", async () => {
+    const store = new ChatProjectStore(config.dir, "alice");
+    const project = await store.create("Memory");
+    const reference = await store.addReference(project.id, { title: "Wiki", description: "Useful source", path: "/private/wiki" });
+    const routes = createChatProjectRoutes({ getUserId: async (c) => c.req.header("x-user") ?? "alice", getAgentIds: () => [] });
+    const base = "/chat-projects/" + project.id;
+    const listed = await routes.request(base + "/references");
+    expect(await listed.json()).toEqual({ items: [{ id: reference.id, title: "Wiki", description: "Useful source", createdAt: reference.createdAt }] });
+    for (const suffix of ["/references", "/notes"]) expect((await routes.request(base + suffix, { headers: { "x-user": "bob" } })).status).toBe(404);
+    expect((await routes.request(base + "/references/" + reference.id, { method: "DELETE", headers: { "x-user": "bob" } })).status).toBe(404);
+    const put = (text: unknown, user = "alice") => routes.request(base + "/notes", { method: "PUT", headers: { "content-type": "application/json", "x-user": user }, body: JSON.stringify({ text }) });
+    expect((await put("Foreign", "bob")).status).toBe(404);
+    expect((await put(123)).status).toBe(400);
+    expect((await put("Editable notes")).status).toBe(200);
+    expect(await (await routes.request(base + "/notes")).json()).toEqual({ text: "Editable notes" });
+    expect((await put("")).status).toBe(200);
+    expect(await store.getNotes(project.id)).toBe("");
+    expect((await routes.request(base + "/references/" + reference.id, { method: "DELETE" })).status).toBe(200);
+    expect((await routes.request(base + "/references/" + reference.id, { method: "DELETE" })).status).toBe(404);
+    expect(await store.listReferences(project.id)).toEqual([]);
+  });
+});

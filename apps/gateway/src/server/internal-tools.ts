@@ -22,6 +22,7 @@ import {
   openDashboardFile,
 } from "../canvas/dashboard-files.js";
 import { dashboardCsp, renderDashboardHtml } from "../canvas/routes.js";
+import { executeProjectTool, projectTools } from "../chat-projects/tools.js";
 
 const InternalToolRequestSchema = z.object({
   tool: z.string(),
@@ -318,6 +319,8 @@ export function createInternalTools(
             await context.registerFileOutput(event, signal);
             return { registered: true };
           })()
+        : projectTools.some((tool) => tool.name === parsed.data.tool)
+        ? executeProjectTool(parsed.data.tool, parsed.data.args, context)
         : parsed.data.tool === "extract_document"
         ? extractDocument(deps, parsed.data.args, context, signal)
         : parsed.data.tool === "describe_image"

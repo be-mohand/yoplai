@@ -52,6 +52,7 @@ import { describeImage } from "../../media/describe.js";
 import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
 import { getBuiltInSkillsDir } from "./skills.js";
+import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
 
 function runFailureError(message: string): Error {
   return Object.assign(new Error(message), {
@@ -150,6 +151,21 @@ async function createPiExtensionTools(
       },
     };
   });
+  if (params.context?.project?.id) {
+    for (const tool of projectTools) piTools.push({
+      name: claimAgentToolName(tool.name, usedToolNames),
+      label: tool.description,
+      description: tool.description,
+      parameters: tool.parameters as unknown as AgentTool["parameters"],
+      execute: async (_toolCallId, args) => {
+        const result = await executeProjectTool(tool.name, args, {
+          agentId: params.agentId, sessionId: params.sessionId, userId: params.userId,
+          projectId: params.context?.project?.id,
+        });
+        return { content: [{ type: "text", text: stringifyToolResult(result) }], details: result };
+      },
+    });
+  }
   if (includeDescribeImage && config.imageDescription?.enabled === true) {
     const name = claimAgentToolName("describe_image", usedToolNames);
     piTools.push({

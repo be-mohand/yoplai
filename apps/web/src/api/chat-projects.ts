@@ -41,3 +41,9 @@ export async function uploadChatProjectFile(id: string, file: File): Promise<voi
     throw new Error(error.error || "Unable to upload file. Try again.");
   }
 }
+
+export type ChatProjectReference = { id: string; title: string; description: string; createdAt: number };
+export const fetchChatProjectReferences = (id: string) => request<{ items: ChatProjectReference[] }>(`/${encodeURIComponent(id)}/references`);
+export const deleteChatProjectReference = (id: string, referenceId: string) => request<unknown>(`/${encodeURIComponent(id)}/references/${encodeURIComponent(referenceId)}`, { method: "DELETE" });
+export const fetchChatProjectNotes = (id: string) => request<{ text: string }>(`/${encodeURIComponent(id)}/notes`);
+export const updateChatProjectNotes = (id: string, text: string) => request<{ text: string }>(`/${encodeURIComponent(id)}/notes`, { method: "PUT", body: JSON.stringify({ text }) });

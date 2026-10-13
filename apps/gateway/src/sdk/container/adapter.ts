@@ -342,6 +342,7 @@ export function getContainerAdapter(): SdkAdapter {
           requesterId: params.requesterId,
           registerFileOutput: (event, signal) =>
             fileOutputAdapter.handle(params, event, hostDataDir, signal),
+          projectId: params.context?.project?.id,
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
         });

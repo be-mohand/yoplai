@@ -1,22 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderAgentContext } from "@yoplai/shared";
 
-const { resolveSessionProject, get, listFiles } = vi.hoisted(() => ({ resolveSessionProject: vi.fn(), get: vi.fn(), listFiles: vi.fn() }));
+const { resolveSessionProject, get, listFiles, listReferences, getNotes } = vi.hoisted(() => ({ resolveSessionProject: vi.fn(), get: vi.fn(), listFiles: vi.fn(), listReferences: vi.fn(), getNotes: vi.fn() }));
 vi.mock("../history/store.js", () => ({ resolveSessionProject }));
 vi.mock("../config/index.js", () => ({ CONFIG_DIR: "/tmp/context-test" }));
 vi.mock("./store.js", () => ({
   isSafeChatProjectId: (id: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(id),
-  ChatProjectStore: class { get = get; listFiles = listFiles; filesDirectory = () => "/tmp/context-test/files"; },
+  ChatProjectStore: class { get = get; listFiles = listFiles; listReferences = listReferences; getNotes = getNotes; filesDirectory = () => "/tmp/context-test/files"; },
 }));
 import { ProjectContextResolver } from "./context-resolver.js";
 
 describe("ProjectContextResolver", () => {
-  beforeEach(() => { vi.clearAllMocks(); listFiles.mockResolvedValue([]); });
+  beforeEach(() => { vi.clearAllMocks(); listFiles.mockResolvedValue([]); listReferences.mockResolvedValue([]); getNotes.mockResolvedValue(""); });
   it("omits project context outside a project", async () => {
     resolveSessionProject.mockResolvedValue(null);
     expect(await new ProjectContextResolver().resolve({ agentId: "alpha", sessionId: "chat" })).toBeUndefined();
     expect(get).not.toHaveBeenCalled();
   });
+  it("strips supplied stale project memory outside projects and after deletion, preserving user context", async () => {
+    const context = { kind: "web" as const, name: "Alice", project: { id: "stale", instructions: "Private instructions", notes: "Private memory" } };
+    const resolver = new ProjectContextResolver();
+    resolveSessionProject.mockResolvedValue(null);
+    expect(await resolver.resolve({ agentId: "sally", sessionId: "removed", context })).toEqual({ kind: "web", name: "Alice" });
+    resolveSessionProject.mockResolvedValue("deleted");
+    get.mockResolvedValue(null);
+    expect(await resolver.resolve({ agentId: "casey", sessionId: "deleted", context })).toEqual({ kind: "web", name: "Alice" });
+    expect(context.project.notes).toBe("Private memory");
+  });
+
   it("resolves membership and edited instructions each turn, including moved chats", async () => {
     const resolver = new ProjectContextResolver();
     resolveSessionProject.mockResolvedValue("research");
@@ -54,6 +65,26 @@ describe("ProjectContextResolver", () => {
     expect(unicode).not.toContain("�");
     listFiles.mockResolvedValue([]);
     expect((await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files).toBe("");
+  });
+
+  it("refreshes shared references and the bounded notes tail across agents without exposing paths", async () => {
+    resolveSessionProject.mockResolvedValue("work");
+    get.mockResolvedValue({ instructions: "Read memory." });
+    listReferences.mockResolvedValue([{ title: "Wiki", description: "Useful source", path: "/private/wiki" }]);
+    getNotes.mockResolvedValue("- [2026-10-13] Sally learned this.\n");
+    const resolver = new ProjectContextResolver();
+    const sally = await resolver.resolve({ agentId: "sally", sessionId: "first" });
+    const casey = await resolver.resolve({ agentId: "casey", sessionId: "second" });
+    expect(casey?.project).toEqual(sally?.project);
+    const rendered = renderAgentContext(casey!);
+    expect(rendered).toContain("Wiki: Useful source");
+    expect(rendered).toContain("Sally learned this");
+    expect(rendered).not.toContain("/private/wiki");
+    getNotes.mockResolvedValue("old" + "x".repeat(5000) + "latest");
+    const tail = (await resolver.resolve({ agentId: "casey", sessionId: "second" }))?.project?.notes;
+    expect(tail).toHaveLength(4000);
+    expect(tail).toMatch(/latest$/);
+    expect(tail).not.toContain("old");
   });
 
   it("ignores a stale project hint after a move or removal", async () => {

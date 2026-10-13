@@ -6,6 +6,8 @@ import { ChatProjectStore, isSafeChatProjectId } from "./store.js";
 
 export const PROJECT_FILES_CONTEXT_BUDGET = 12_000;
 export const PROJECT_FILE_INLINE_LIMIT = 4_000;
+export const PROJECT_NOTES_CONTEXT_LIMIT = 4_000;
+export const PROJECT_REFERENCES_CONTEXT_LIMIT = 4_000;
 
 export class ProjectContextResolver {
   async resolve(params: {
@@ -15,6 +17,8 @@ export class ProjectContextResolver {
     projectId?: string;
     context?: AgentContext;
   }): Promise<AgentContext | undefined> {
+    const context = params.context ? { ...params.context } : undefined;
+    if (context) delete context.project;
     const store = new ChatProjectStore(CONFIG_DIR, params.userId);
     const id = await resolveSessionProject(
       params.agentId, params.sessionId, params.userId, params.projectId,
@@ -24,9 +28,9 @@ export class ProjectContextResolver {
         }
       }
     );
-    if (!id || !isSafeChatProjectId(id)) return params.context;
+    if (!id || !isSafeChatProjectId(id)) return context;
     const project = await store.get(id);
-    if (!project) return params.context;
+    if (!project) return context;
     const filesPath = store.filesDirectory(id);
     await fs.mkdir(filesPath, { recursive: true });
     let files = "";
@@ -41,6 +45,15 @@ export class ProjectContextResolver {
       }
       files += (files ? "\n" : "") + entry;
     }
-    return { ...(params.context ?? { kind: "web" }), project: { instructions: project.instructions ?? "", filesPath, files } };
+    let references = "";
+    for (const reference of await store.listReferences(id)) {
+      const entry = "- " + reference.title + ": " + reference.description;
+      if (references.length + entry.length + 1 > PROJECT_REFERENCES_CONTEXT_LIMIT) break;
+      references += (references ? "\n" : "") + entry;
+    }
+    const allNotes = await store.getNotes(id);
+    let notes = allNotes.slice(-PROJECT_NOTES_CONTEXT_LIMIT);
+    if (notes.length < allNotes.length && notes.charCodeAt(0) >= 0xdc00 && notes.charCodeAt(0) <= 0xdfff) notes = notes.slice(1);
+    return { ...(context ?? { kind: "web" }), project: { id, instructions: project.instructions ?? "", filesPath, files, references, notes } };
   }
 }

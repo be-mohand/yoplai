@@ -62,6 +62,27 @@ describe("ChatProjectStore", () => {
     expect(await store.listFiles(project.id)).toEqual([]);
   });
 
+  it("persists project references and notes with isolated, serialized mutations", async () => {
+    const store = new ChatProjectStore(dir, "alice");
+    const project = await store.create("Memory");
+    expect(await store.listReferences(project.id)).toEqual([]);
+    expect(await store.getNotes(project.id)).toBe("");
+    const references = await Promise.all(Array.from({ length: 5 }, (_, index) => new ChatProjectStore(dir, "alice").addReference(project.id, { title: "Wiki " + index, description: "Useful", path: "/wiki/" + index })));
+    expect(await store.listReferences(project.id)).toEqual(references);
+    expect(await new ChatProjectStore(dir, "bob").listReferences(project.id)).toEqual([]);
+    await expect(new ChatProjectStore(dir, "bob").appendNotes(project.id, "Foreign")).rejects.toThrow("Project not found");
+    await Promise.all([store.appendNotes(project.id, "Sally learned this"), new ChatProjectStore(dir, "alice").appendNotes(project.id, "Casey learned that")]);
+    expect(await store.getNotes(project.id)).toMatch(/- \[\d{4}-\d{2}-\d{2}\] Sally learned this\n- \[\d{4}-\d{2}-\d{2}\] Casey learned that\n/);
+    expect(await new ChatProjectStore(dir, "bob").getNotes(project.id)).toBe("");
+    await store.putNotes(project.id, "Edited notes");
+    expect(await new ChatProjectStore(dir, "alice").getNotes(project.id)).toBe("Edited notes");
+    await store.putNotes(project.id, "");
+    expect(await store.getNotes(project.id)).toBe("");
+    expect(await store.deleteReference(project.id, references[0]!.id)).toBe(true);
+    expect(await store.deleteReference(project.id, references[0]!.id)).toBe(false);
+    expect(await store.listReferences(project.id)).toEqual(references.slice(1));
+  });
+
   it("rejects unsafe paths and empty or oversized names", async () => {
     const store = new ChatProjectStore(dir);
     for (const id of ["", "..", "../escape", "a/b", "a\\b", "\0", "a".repeat(101)]) {
