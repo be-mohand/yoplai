@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Create project modal asks for the project's purpose and drafts starting instructions from it via a separate `POST /chat-projects/:id/instructions/draft` call (maintenance model, falls back to the raw text; retries never duplicate the project), and accepts optional files to upload on creation.
 - Share memory across agents in a personal chat project: agent-added wiki references with private paths, removable references, and editable dated project notes refreshed each turn.
 
 - Personal chat project files: upload, list, and delete documents/images, with bounded extracted context and read-only sandbox access.

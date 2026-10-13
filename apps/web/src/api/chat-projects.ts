@@ -6,7 +6,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(`${API_BASE}/chat-projects${path}`, {
     ...init,
     headers: { "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(10000),
+    signal: init?.signal ?? AbortSignal.timeout(10000),
   });
   if (!response.ok) throw new Error("Unable to update projects. Try again.");
   return response.json();
@@ -15,6 +15,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const fetchChatProjects = () => request<{ items: ChatProject[] }>("");
 export const fetchChatProject = (id: string) => request<ChatProject>(`/${encodeURIComponent(id)}`);
 export const createChatProject = (name: string) => request<ChatProject>("", { method: "POST", body: JSON.stringify({ name }) });
+export const draftChatProjectInstructions = (id: string, purpose: string) => request<ChatProject>(`/${encodeURIComponent(id)}/instructions/draft`, { method: "POST", body: JSON.stringify({ purpose }), signal: AbortSignal.timeout(45000) });
 export const renameChatProject = (id: string, name: string) => request<ChatProject>(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) });
 export const updateChatProjectInstructions = (id: string, instructions: string) => request<ChatProject>(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ instructions }) });
 export const deleteChatProject = (id: string) => request<unknown>(`/${encodeURIComponent(id)}`, { method: "DELETE" });

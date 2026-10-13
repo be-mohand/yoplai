@@ -8,6 +8,7 @@ import { extractText } from "../media/extract.js";
 import { MAX_UPLOAD_SIZE_BYTES, resolveUploadMimeType, UploadTypeError } from "../media/upload.js";
 import { appendSessionMeta } from "../history/store.js";
 import { isSafeSessionId, parseSessionFileName } from "../history/sessions.js";
+import { draftProjectInstructions } from "../maintenance/project-instructions.js";
 import { ChatProjectStore, isSafeChatProjectId } from "./store.js";
 
 export function createChatProjectRoutes(deps: {
@@ -24,6 +25,17 @@ export function createChatProjectRoutes(deps: {
     if (!validName(body?.name)) return c.json({ error: "Invalid project name" }, 400);
     const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
     return c.json(await store.create(body.name), 201);
+  });
+  routes.post("/chat-projects/:id/instructions/draft", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
+    const body = await c.req.json().catch(() => null);
+    if (typeof body?.purpose !== "string" || !body.purpose.trim()) return c.json({ error: "Invalid project purpose" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    const instructions = await draftProjectInstructions(body.purpose, deps.getAgentIds()[0] ?? "", id);
+    const project = await store.update(id, { instructions });
+    return project ? c.json(project) : c.json({ error: "Project not found" }, 404);
   });
   routes.get("/chat-projects/:id", async (c) => {
     const id = c.req.param("id");

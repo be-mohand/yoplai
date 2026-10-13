@@ -3,12 +3,13 @@ import { JSX, Show, splitProps } from "solid-js";
 type ButtonProps = {
   variant?: "primary" | "secondary" | "danger" | "ghost";
   loading?: boolean;
+  loadingLabel?: string;
   icon?: string;
   children: JSX.Element;
 } & JSX.ButtonHTMLAttributes<HTMLButtonElement>;
 
 export function Button(props: ButtonProps) {
-  const [local, rest] = splitProps(props, ["variant", "loading", "icon", "children"]);
+  const [local, rest] = splitProps(props, ["variant", "loading", "loadingLabel", "icon", "children"]);
   const variant = () => local.variant ?? "secondary";
 
   return (
@@ -27,7 +28,7 @@ export function Button(props: ButtonProps) {
         <Show when={local.icon}>
           {(iconClass) => <i class={iconClass()} aria-hidden="true" />}
         </Show>
-        {local.loading ? "…" : local.children}
+        {local.loading ? (local.loadingLabel ?? "…") : local.children}
       </button>
       <style>{`
         .ui-button {
