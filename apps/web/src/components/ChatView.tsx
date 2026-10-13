@@ -2806,7 +2806,11 @@ export function ChatView() {
       }}
     >
       <header class="header">
-        <A href="/agents" class="back-btn" aria-label="Go back">
+        <A
+          href={projectId() ? `/p/${projectId()}` : "/agents"}
+          class="back-btn"
+          aria-label={projectId() ? "Back to project" : "Go back"}
+        >
           <svg
             width="18"
             height="18"
@@ -2833,15 +2837,17 @@ export function ChatView() {
             )}
           </Show>
           <div class="agent-info-text">
-            <Show when={project()}>
-              {(proj) => (
-                <A href={`/p/${projectId()}`} class="chat-project-chip">
-                  <i class="fa-solid fa-folder" />
-                  {proj().name}
-                </A>
-              )}
-            </Show>
-            <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
+            <div class="agent-title-row">
+              <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
+              <Show when={project()}>
+                {(proj) => (
+                  <A href={`/p/${projectId()}`} class="chat-project-chip">
+                    <i class="fa-solid fa-folder" />
+                    <span>{proj().name}</span>
+                  </A>
+                )}
+              </Show>
+            </div>
             <div class="agent-status">
               <span class="status-dot" classList={{ active: isStreaming() }} />
               <span class="status-text">
@@ -3779,17 +3785,36 @@ export function ChatView() {
           white-space: nowrap;
         }
 
+        .agent-title-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+
         .chat-project-chip {
           display: inline-flex;
           align-items: center;
           gap: 6px;
+          min-width: 0;
+          padding: 2px 8px;
+          border: 1px solid var(--border-subtle);
+          border-radius: 999px;
           font-size: 12px;
           color: var(--text-secondary);
           text-decoration: none;
+          transition: color 150ms ease, border-color 150ms ease;
+        }
+
+        .chat-project-chip span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .chat-project-chip:hover {
           color: var(--text-primary);
+          border-color: var(--border-default);
         }
 
         .agent-name {

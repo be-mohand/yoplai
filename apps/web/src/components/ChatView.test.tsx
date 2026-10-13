@@ -2204,8 +2204,17 @@ describe("ChatView project chip", () => {
     expect(chip?.textContent?.trim()).toContain("My Project");
     expect(chip?.getAttribute("href")).toBe("/p/project-123");
     expect(fetchChatProjectMock).toHaveBeenCalledWith("project-123");
+    expect(container.querySelector(".back-btn")?.getAttribute("href")).toBe("/p/project-123");
 
     routeState.project = undefined;
+    dispose();
+  });
+
+  it("back button returns to the agent list outside a project", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+
+    expect(container.querySelector(".back-btn")?.getAttribute("href")).toBe("/agents");
     dispose();
   });
 });
