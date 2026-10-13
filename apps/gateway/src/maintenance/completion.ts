@@ -153,7 +153,7 @@ export async function completeMaintenance(
         } satisfies Context,
         {
           maxTokens: params.maxTokens,
-          temperature: 0,
+          // No temperature: reasoning models (e.g. openai-codex) reject it.
           maxRetries: 0,
           timeoutMs: params.timeoutMs,
           signal: controller.signal,

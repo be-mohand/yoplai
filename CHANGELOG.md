@@ -39,6 +39,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Maintenance-model calls (session auto-titles, tool labels, project instruction drafts) no longer send `temperature`, which reasoning models such as `openai-codex` reject with "Unsupported parameter: temperature".
 - Threadit: a download cannot write outside the workspace through a symlink. Sandbox uploads read `/workspace/data` and `/workspace/uploads`. A disabled agent drops its token. An agent that enables Threadit later gets a poller without a restart.
 - Slack's default `threadPolicy: always` keeps each opener and all thread replies in one persisted session owned by the opener, retaining attachments while each sender uses their own credentials; different senders wait for separate turns.
 - Container `send_file` now waits for gateway media registration and file-card emission before reporting success, returns registration failures to the agent, and logs failed outbound file requests.
