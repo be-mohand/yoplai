@@ -67,7 +67,7 @@ describe("ProjectContextResolver", () => {
     expect((await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files).toBe("");
   });
 
-  it("refreshes shared references and the bounded notes tail across agents without exposing paths", async () => {
+  it("refreshes shared references and the bounded notes tail across agents including reference paths", async () => {
     resolveSessionProject.mockResolvedValue("work");
     get.mockResolvedValue({ instructions: "Read memory." });
     listReferences.mockResolvedValue([{ title: "Wiki", description: "Useful source", path: "/private/wiki" }]);
@@ -77,9 +77,8 @@ describe("ProjectContextResolver", () => {
     const casey = await resolver.resolve({ agentId: "casey", sessionId: "second" });
     expect(casey?.project).toEqual(sally?.project);
     const rendered = renderAgentContext(casey!);
-    expect(rendered).toContain("Wiki: Useful source");
+    expect(rendered).toContain("Wiki: Useful source (path: /private/wiki)");
     expect(rendered).toContain("Sally learned this");
-    expect(rendered).not.toContain("/private/wiki");
     getNotes.mockResolvedValue("old" + "x".repeat(5000) + "latest");
     const tail = (await resolver.resolve({ agentId: "casey", sessionId: "second" }))?.project?.notes;
     expect(tail).toHaveLength(4000);

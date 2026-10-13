@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agents now receive saved project reference paths alongside title/description so they can read referenced wiki files directly; the reference API and UI still hide paths.
 - Create project modal asks for the project's purpose and drafts starting instructions from it via a separate `POST /chat-projects/:id/instructions/draft` call (maintenance model, falls back to the raw text; retries never duplicate the project), and accepts optional files to upload on creation.
 - Share memory across agents in a personal chat project: agent-added wiki references with private paths, removable references, and editable dated project notes refreshed each turn.
 

@@ -47,7 +47,7 @@ export class ProjectContextResolver {
     }
     let references = "";
     for (const reference of await store.listReferences(id)) {
-      const entry = "- " + reference.title + ": " + reference.description;
+      const entry = "- " + reference.title + ": " + reference.description + " (path: " + reference.path + ")";
       if (references.length + entry.length + 1 > PROJECT_REFERENCES_CONTEXT_LIMIT) break;
       references += (references ? "\n" : "") + entry;
     }
