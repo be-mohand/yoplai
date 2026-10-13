@@ -22,7 +22,12 @@ import {
   pinAgentSession,
   UnauthenticatedError,
 } from "../api";
-import { createChatProject, fetchChatProjects, moveChatToProject, type ChatProject } from "../api/chat-projects";
+import { fetchChatProjects, moveChatToProject, deleteChatProject, renameChatProject, type ChatProject } from "../api/chat-projects";
+import { CreateProjectModal } from "./project/CreateProjectModal";
+import { Modal } from "./ui/Modal";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
+import { TextField } from "./ui/Field";
+import { Button } from "./ui/Button";
 import type { SessionSummary } from "../api/types";
 import { hasStaffRole as hasAdminRole } from "../lib/roles";
 
@@ -112,6 +117,19 @@ export function AgentSidebar(props: AgentSidebarProps) {
   const [collapsedProjects, setCollapsedProjects] = createSignal<string[]>(readCollapsedProjects());
   const [movingSession, setMovingSession] = createSignal<SessionSummary | null>(null);
   const [sessionError, setSessionError] = createSignal("");
+  const [showCreateProject, setShowCreateProject] = createSignal(false);
+  const [renamingProject, setRenamingProject] = createSignal<ChatProject | null>(null);
+  const [deletingProject, setDeletingProject] = createSignal<ChatProject | null>(null);
+  const [renamingSession, setRenamingSession] = createSignal<SessionSummary | null>(null);
+  const [deletingSession, setDeletingSession] = createSignal<SessionSummary | null>(null);
+  const [projectNameInput, setProjectNameInput] = createSignal("");
+  const [sessionTitleInput, setSessionTitleInput] = createSignal("");
+  const [renaming, setRenaming] = createSignal(false);
+  const [deleting, setDeleting] = createSignal(false);
+  const [renameChatError, setRenameChatError] = createSignal("");
+  const [renameProjectError, setRenameProjectError] = createSignal("");
+  const [deleteProjectError, setDeleteProjectError] = createSignal("");
+  const [moveChatError, setMoveChatError] = createSignal("");
   const [currentTime, setCurrentTime] = createSignal(Date.now());
   const [search, setSearch] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
@@ -220,6 +238,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
             <span class="session-meta">
               {relativeTime(session.lastActivity, currentTime())} · {session.agentId}
               <Show when={session.isMain}> <b>MAIN</b></Show>
+              <Show when={session.pinned != null}> <i class="fa-solid fa-thumbtack session-pin" aria-label="Pinned" /></Show>
             </span>
           </span>
         </button>
@@ -245,6 +264,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </button>
             <button type="button" class="session-action" onClick={(event) => {
               event.currentTarget.closest("details")?.removeAttribute("open");
+              setMoveChatError("");
               setMovingSession(session);
             }}>Move to project…</button>
             <Show when={session.projectId}>
@@ -257,12 +277,11 @@ export function AgentSidebar(props: AgentSidebarProps) {
               type="button"
               class="session-action"
               aria-label="Rename session"
-              onClick={async () => {
-                const title = prompt("Session title", session.title ?? session.firstUserMessage);
-                if (title === null) return;
-                await renameAgentSession(session.agentId, session.sessionId, title);
-                await refreshSessions();
-                window.dispatchEvent(new Event("chat-projects-changed"));
+              onClick={(event) => {
+                event.currentTarget.closest("details")?.removeAttribute("open");
+                setRenameChatError("");
+                setSessionTitleInput(session.title ?? session.firstUserMessage ?? "");
+                setRenamingSession(session);
               }}
             >
               Rename
@@ -271,12 +290,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
               type="button"
               class="session-action danger"
               aria-label="Delete session"
-              onClick={async () => {
-                if (!confirm("Delete session?")) return;
-                await deleteAgentSession(session.agentId, session.sessionId);
-                setSessions((items) => items.filter((item) => item.sessionId !== session.sessionId || item.agentId !== session.agentId));
-                window.dispatchEvent(new Event("chat-projects-changed"));
-                if (selected()) navigate(`/chat/${encodeURIComponent(session.agentId)}`);
+              onClick={(event) => {
+                event.currentTarget.closest("details")?.removeAttribute("open");
+                setDeletingSession(session);
               }}
             >
               Delete
@@ -421,28 +437,67 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </Show>
             <div class="sessions-list" classList={{ scrolling: listScrolling() }} onScroll={onListScroll}>
               <section class="sessions-section" aria-label="Projects">
-                <div class="sessions-header">Projects</div>
-                <button type="button" class="session-action" onClick={async () => {
-                  const name = prompt("Project name");
-                  if (!name?.trim()) return;
-                  try { const project = await createChatProject(name.trim()); await refreshProjects(); setSessionError(""); navigate(`/p/${project.id}`); }
-                  catch { setSessionError("Unable to create project. Try again."); }
-                }}>+ New project</button>
-                <For each={projects()}>{(project) => (
-                  <div class="chat-project">
-                    <div class="chat-project-header">
-                      <button type="button" aria-label={`Toggle ${project.name}`} aria-expanded={!collapsedProjects().includes(project.id)} onClick={() => {
-                        const next = collapsedProjects().includes(project.id) ? collapsedProjects().filter((id) => id !== project.id) : [...collapsedProjects(), project.id];
-                        setCollapsedProjects(next);
-                        localStorage.setItem("yoplai:collapsed-chat-projects", JSON.stringify(next));
-                      }}>{collapsedProjects().includes(project.id) ? "▸" : "▾"}</button>
-                      <A href={`/p/${project.id}`}>{project.name}</A>
+                <div class="sessions-header">
+                  <span>Projects</span>
+                  <button
+                    type="button"
+                    aria-label="New project"
+                    onClick={() => setShowCreateProject(true)}
+                  >
+                    <i class="fa-solid fa-plus" aria-hidden="true" />
+                  </button>
+                </div>
+                <For each={projects()}>{(project) => {
+                  const isActive = () => location.pathname === `/p/${project.id}`;
+                  return (
+                    <div class="chat-project">
+                    <div class="session-row-wrap">
+                      <div class="chat-project-header">
+                        <button type="button" class="project-chevron" aria-label={`Toggle ${project.name}`} aria-expanded={!collapsedProjects().includes(project.id)} onClick={() => {
+                          const next = collapsedProjects().includes(project.id) ? collapsedProjects().filter((id) => id !== project.id) : [...collapsedProjects(), project.id];
+                          setCollapsedProjects(next);
+                          localStorage.setItem("yoplai:collapsed-chat-projects", JSON.stringify(next));
+                        }}>{collapsedProjects().includes(project.id) ? "▸" : "▾"}</button>
+                        <i class="fa-solid fa-folder project-icon" aria-hidden="true" />
+                        <A href={`/p/${project.id}`} class="project-link" classList={{ active: isActive() }}>{project.name}</A>
+                      </div>
+                      <details class="session-actions">
+                        <summary aria-label="Project menu">⋯</summary>
+                        <div class="session-menu">
+                          <button
+                            type="button"
+                            class="session-action"
+                            onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              setRenameProjectError("");
+                              setProjectNameInput(project.name);
+                              setRenamingProject(project);
+                            }}
+                          >
+                            Rename…
+                          </button>
+                          <button
+                            type="button"
+                            class="session-action danger"
+                            onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              setDeleteProjectError("");
+                              setDeletingProject(project);
+                            }}
+                          >
+                            Delete…
+                          </button>
+                        </div>
+                      </details>
                     </div>
-                    <Show when={!collapsedProjects().includes(project.id)}>
-                      <For each={visibleSessions().filter((session) => session.projectId === project.id).sort((a, b) => Number(b.pinned != null) - Number(a.pinned != null) || b.lastActivity - a.lastActivity)}>{renderSession}</For>
-                    </Show>
-                  </div>
-                )}</For>
+                      <Show when={!collapsedProjects().includes(project.id)}>
+                        <div class="chat-project-sessions">
+                          <For each={visibleSessions().filter((session) => session.projectId === project.id).sort((a, b) => Number(b.pinned != null) - Number(a.pinned != null) || b.lastActivity - a.lastActivity)}>{renderSession}</For>
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                }}</For>
               </section>
               <For each={sessionsInSection(true).length > 0 ? [true, false] : [false]}>
                 {(pinned) => (
@@ -464,16 +519,220 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </div>
           </section>
         </div>
+        <Show when={showCreateProject()}>
+          <CreateProjectModal
+            onClose={() => setShowCreateProject(false)}
+            onSuccess={() => void refreshProjects()}
+          />
+        </Show>
+        <Show when={renamingProject()}>{(proj) => (
+          <Modal
+            title="Rename project"
+            onClose={() => setRenamingProject(null)}
+            size="sm"
+            dismissible={!renaming()}
+            error={renameProjectError()}
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setRenamingProject(null)} disabled={renaming()}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={async () => {
+                    const trimmed = projectNameInput().trim();
+                    if (!trimmed) return;
+                    setRenaming(true);
+                    setRenameProjectError("");
+                    try {
+                      await renameChatProject(proj().id, trimmed);
+                      await refreshProjects();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                      setRenamingProject(null);
+                    } catch {
+                      setRenameProjectError("Unable to rename project. Try again.");
+                    } finally {
+                      setRenaming(false);
+                    }
+                  }}
+                  disabled={!projectNameInput().trim() || renaming()}
+                  loading={renaming()}
+                >
+                  Rename
+                </Button>
+              </>
+            }
+          >
+            <TextField
+              label="Name"
+              value={projectNameInput()}
+              onInput={(e) => setProjectNameInput(e.currentTarget.value)}
+              disabled={renaming()}
+              autofocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && projectNameInput().trim()) {
+                  e.preventDefault();
+                  document.querySelector<HTMLButtonElement>(".ui-modal__footer .ui-button--primary")?.click();
+                }
+              }}
+            />
+          </Modal>
+        )}</Show>
+        <Show when={deletingProject()}>{(proj) => (
+          <ConfirmDialog
+            title={`Delete "${proj().name}"?`}
+            description="Its chats are kept and go back to Recent."
+            confirmLabel="Delete project"
+            danger
+            dismissible={!deleting()}
+            onConfirm={async () => {
+              setDeleting(true);
+              setDeleteProjectError("");
+              try {
+                await deleteChatProject(proj().id);
+                await refreshProjects();
+                window.dispatchEvent(new Event("chat-projects-changed"));
+                if (location.pathname === `/p/${proj().id}`) {
+                  navigate("/agents");
+                }
+                setDeletingProject(null);
+              } catch {
+                setDeleteProjectError("Unable to delete project. Try again.");
+              } finally {
+                setDeleting(false);
+              }
+            }}
+            onCancel={() => setDeletingProject(null)}
+            error={deleteProjectError()}
+          />
+        )}</Show>
+        <Show when={renamingSession()}>{(sess) => (
+          <Modal
+            title="Rename chat"
+            onClose={() => setRenamingSession(null)}
+            size="sm"
+            dismissible={!renaming()}
+            error={renameChatError()}
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setRenamingSession(null)} disabled={renaming()}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={async () => {
+                    setRenaming(true);
+                    setRenameChatError("");
+                    try {
+                      await renameAgentSession(sess().agentId, sess().sessionId, sessionTitleInput());
+                      await refreshSessions();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                      setRenamingSession(null);
+                    } catch {
+                      setRenameChatError("Unable to rename chat. Try again.");
+                    } finally {
+                      setRenaming(false);
+                    }
+                  }}
+                  disabled={renaming()}
+                  loading={renaming()}
+                >
+                  Rename
+                </Button>
+              </>
+            }
+          >
+            <TextField
+              label="Title"
+              value={sessionTitleInput()}
+              onInput={(e) => setSessionTitleInput(e.currentTarget.value)}
+              disabled={renaming()}
+              autofocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  document.querySelector<HTMLButtonElement>(".ui-modal__footer .ui-button--primary")?.click();
+                }
+              }}
+            />
+          </Modal>
+        )}</Show>
+        <Show when={deletingSession()}>{(sess) => (
+          <ConfirmDialog
+            title="Delete this chat?"
+            description="This can't be undone."
+            confirmLabel="Delete chat"
+            danger
+            onConfirm={async () => {
+              const selected = currentChat().agentId === sess().agentId && currentChat().sessionId === sess().sessionId;
+              await deleteAgentSession(sess().agentId, sess().sessionId);
+              setSessions((items) =>
+                items.filter((item) => item.sessionId !== sess().sessionId || item.agentId !== sess().agentId)
+              );
+              window.dispatchEvent(new Event("chat-projects-changed"));
+              if (selected) navigate(`/chat/${encodeURIComponent(sess().agentId)}`);
+              setDeletingSession(null);
+            }}
+            onCancel={() => setDeletingSession(null)}
+          />
+        )}</Show>
         <Show when={movingSession()}>{(session) => (
-          <div class="project-picker" role="dialog" aria-label="Move to project">
-            <h3>Move to project</h3>
-            <For each={projects()}>{(project) => <button type="button" class="session-action" onClick={async () => {
-              try { await moveChatToProject(session().agentId, session().sessionId, project.id); setMovingSession(null); await refreshSessions(); window.dispatchEvent(new Event("chat-projects-changed")); setSessionError(""); }
-              catch { setSessionError("Unable to move chat. Try again."); }
-            }}>{project.name}</button>}</For>
-            <Show when={projects().length === 0}><p>Create a project first.</p></Show>
-            <button type="button" class="session-action" onClick={() => setMovingSession(null)}>Cancel</button>
-          </div>
+          <Modal
+            title="Move to project"
+            onClose={() => setMovingSession(null)}
+            size="sm"
+            error={moveChatError()}
+            footer={
+              <Button variant="secondary" onClick={() => setMovingSession(null)}>
+                Cancel
+              </Button>
+            }
+          >
+            <div class="project-move-list">
+              <Show when={projects().length === 0}>
+                <p class="project-move-empty">No projects available.</p>
+              </Show>
+              <For each={projects()}>{(project) => (
+                <button
+                  type="button"
+                  class="project-move-row"
+                  onClick={async () => {
+                    setMoveChatError("");
+                    try {
+                      await moveChatToProject(session().agentId, session().sessionId, project.id);
+                      setMovingSession(null);
+                      await refreshSessions();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                    } catch {
+                      setMoveChatError("Unable to move chat. Try again.");
+                    }
+                  }}
+                >
+                  <i class="fa-solid fa-folder" aria-hidden="true" />
+                  <span>{project.name}</span>
+                </button>
+              )}</For>
+              <Show when={session().projectId}>
+                <button
+                  type="button"
+                  class="project-move-row project-move-row--remove"
+                  onClick={async () => {
+                    setMoveChatError("");
+                    try {
+                      await moveChatToProject(session().agentId, session().sessionId, null);
+                      setMovingSession(null);
+                      await refreshSessions();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                    } catch {
+                      setMoveChatError("Unable to remove chat from project. Try again.");
+                    }
+                  }}
+                >
+                  Remove from project
+                </button>
+              </Show>
+            </div>
+          </Modal>
         )}</Show>
         <div class="sidebar-footer">
           <Show when={capabilities.multiUser}>
@@ -537,10 +796,83 @@ export function AgentSidebar(props: AgentSidebarProps) {
       </div>
 
       <style>{`
-        .chat-project-header { display: flex; align-items: center; gap: 6px; padding: 6px 0; }
-        .chat-project-header button { border: none; background: transparent; color: var(--text-secondary); cursor: pointer; }
-        .chat-project-header a { color: var(--text-primary); text-decoration: none; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
-        .project-picker { position: fixed; z-index: 1000; top: 30%; left: 50%; transform: translateX(-50%); background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 8px 32px var(--shadow-md); }
+        .chat-project-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px;
+        }
+        .project-chevron,
+        .project-icon {
+          flex-shrink: 0;
+        }
+        .project-chevron {
+          border: none;
+          background: transparent;
+          color: var(--text-secondary);
+          cursor: pointer;
+          padding: 2px 4px;
+          font-size: 11px;
+        }
+        .project-icon {
+          font-size: 11px;
+          color: var(--text-tertiary);
+        }
+        .project-link {
+          flex: 1;
+          min-width: 0;
+          color: var(--text-primary);
+          text-decoration: none;
+          font-size: 12px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          padding: 2px 4px;
+          border-radius: 4px;
+        }
+        .project-link.active {
+          background: var(--bg-raised);
+        }
+        .project-move-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0;
+        }
+        .project-move-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 12px;
+          border: none;
+          border-radius: 8px;
+          background: transparent;
+          color: var(--text-primary);
+          font-size: 13px;
+          font-family: inherit;
+          text-align: left;
+          cursor: pointer;
+          transition: background 150ms;
+        }
+        .project-move-row:hover {
+          background: var(--bg-raised);
+        }
+        .project-move-row i {
+          color: var(--text-tertiary);
+          font-size: 12px;
+        }
+        .project-move-row--remove {
+          margin-top: 8px;
+          padding-top: 12px;
+          border-top: 1px solid var(--border-subtle);
+          color: var(--tone-error, #dc2626);
+        }
+        .project-move-empty {
+          margin: 0 0 12px;
+          padding: 12px;
+          text-align: center;
+          font-size: 13px;
+          color: var(--text-secondary);
+        }
         .agent-sidebar {
           position: relative;
           z-index: 40;
@@ -825,7 +1157,18 @@ export function AgentSidebar(props: AgentSidebarProps) {
           padding: 4px;
         }
 
+        .session-pin {
+          font-size: 10px;
+          color: var(--text-tertiary);
+        }
+
+        .chat-project-sessions {
+          padding-left: 14px;
+        }
+
         .session-menu {
+          white-space: nowrap;
+          min-width: 160px;
           position: absolute;
           top: 100%;
           right: 0;

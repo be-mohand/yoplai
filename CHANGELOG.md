@@ -13,6 +13,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
 - Threadit masking now hides JSON secret values with escaped quotes whole; tool names that are raw commands (Codex style) are labelled `Running: …` and masked.
+- Project create/rename/delete and chat rename/delete now use in-app dialogs instead of native prompts; project page redesigned with chats list and context cards (Instructions, Files, References, Notes) in a right rail.
 
 ### Added
 

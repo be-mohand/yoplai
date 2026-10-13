@@ -54,6 +54,7 @@ Solid.js SPA. It consumes `/api/capabilities` and loads optional extension route
 - `src/lib/chat-runtime.ts`: shared streaming/history/attachment runtime
 - `src/lib/web-route-registry.tsx`: optional extension route discovery
 - `src/extensions/`: extension-owned route bundles
+- `src/components/ui/`: shared primitives (Modal, ConfirmDialog, Button, TextField, TextAreaField) used by chat projects and sidebar; scoped styles, no external UI library
 - core chat supports simple/full history, streaming, attachments, aborts, and explicit sessions
 
 Core `App.tsx` must not hard-import optional board/projects route modules. Optional bundles must remain lazy and capability-gated so core web builds work without them.

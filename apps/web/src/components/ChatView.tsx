@@ -27,12 +27,14 @@ import {
   fetchFullHistory,
   fetchAgent,
   fetchAgentSuggestions,
+  fetchAgentSessions,
   subscribeToSession,
   subscribeToRealtime,
   postAbort,
   postCompact,
   type DoneMeta,
 } from "../api";
+import { fetchChatProject } from "../api/chat-projects";
 import type {
   Message,
   HistoryViewMode,
@@ -1066,6 +1068,46 @@ export function ChatView() {
   const [suggestions] = createResource(
     () => [params.agentId, explicitSessionId()] as const,
     ([agentId]) => fetchAgentSuggestions(agentId)
+  );
+
+  // Get project ID from query params or session
+  const currentProjectId = createMemo(() => {
+    // First try query param
+    if (typeof searchParams.project === "string" && searchParams.project.trim()) {
+      return searchParams.project;
+    }
+    // Otherwise use resolved session's projectId if available
+    // We'll need to fetch sessions to get this
+    return undefined;
+  });
+
+  const [allSessions] = createResource(
+    () => explicitSessionId(),
+    async (sessionId) => {
+      if (!sessionId) return { items: [] };
+      return fetchAgentSessions();
+    }
+  );
+
+  const sessionProjectId = createMemo(() => {
+    const sid = explicitSessionId();
+    if (!sid || !allSessions()) return undefined;
+    const session = allSessions()?.items.find(s => s.sessionId === sid);
+    return session?.projectId ?? undefined;
+  });
+
+  const projectId = () => currentProjectId() ?? sessionProjectId();
+
+  const [project] = createResource(
+    projectId,
+    async (id) => {
+      if (!id) return null;
+      try {
+        return await fetchChatProject(id);
+      } catch {
+        return null;
+      }
+    }
   );
 
   const isOAuth = () => agent()?.authMode === "oauth";
@@ -2791,6 +2833,14 @@ export function ChatView() {
             )}
           </Show>
           <div class="agent-info-text">
+            <Show when={project()}>
+              {(proj) => (
+                <A href={`/p/${projectId()}`} class="chat-project-chip">
+                  <i class="fa-solid fa-folder" />
+                  {proj().name}
+                </A>
+              )}
+            </Show>
             <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
             <div class="agent-status">
               <span class="status-dot" classList={{ active: isStreaming() }} />
@@ -3727,6 +3777,19 @@ export function ChatView() {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+
+        .chat-project-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          color: var(--text-secondary);
+          text-decoration: none;
+        }
+
+        .chat-project-chip:hover {
+          color: var(--text-primary);
         }
 
         .agent-name {

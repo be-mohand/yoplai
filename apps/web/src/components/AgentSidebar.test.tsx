@@ -255,7 +255,7 @@ describe("AgentSidebar", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(container.textContent).toContain("🦊");
-    expect(container.textContent).toContain("+ New project");
+    expect(container.querySelector('button[aria-label="New project"]')).toBeTruthy();
 
     dispose();
   });
