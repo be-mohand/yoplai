@@ -78,6 +78,8 @@ import {
 } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
+import { createChatProjectRoutes } from "../chat-projects/routes.js";
+import { ChatProjectStore, isSafeChatProjectId } from "../chat-projects/store.js";
 import { getOAuthService } from "../oauth/service.js";
 import { readToolLabels } from "../maintenance/tool-labels.js";
 import { loadSuggestions } from "../suggestions/loader.js";
@@ -365,6 +367,7 @@ function contentDispositionFilename(filename: string): string {
 
 // OAuth connect framework (authorize + callback + status/disconnect).
 api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId }));
+api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
 api.route("/", createOAuthRoutes(
   undefined,
   callerHasAgentAccess,
@@ -667,11 +670,22 @@ api.patch("/agents/:agentId/sessions/:sessionId", async (c) => {
     sessionId,
   });
   if (!filePath) return c.json({ error: "Session not found" }, 404);
-  const body = await c.req.json().catch(() => ({}));
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid session metadata" }, 400);
+  }
   if (body.pinned !== undefined && typeof body.pinned !== "boolean") {
     return c.json({ error: "Pinned must be a boolean" }, 400);
   }
-  const updates: { title?: string; pinned?: number | null } = {};
+  if (body.projectId !== undefined && body.projectId !== null) {
+    if (typeof body.projectId !== "string" || !isSafeChatProjectId(body.projectId)) {
+      return c.json({ error: "Invalid project id" }, 400);
+    }
+    if (!await new ChatProjectStore(CONFIG_DIR, userId).get(body.projectId)) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+  }
+  const updates: { title?: string; pinned?: number | null; projectId?: string | null } = {};
   if (body.title !== undefined) {
     updates.title = typeof body.title === "string" ? body.title.trim() : "";
     await appendSessionMeta(agentId, sessionId, "title", updates.title, userId);
@@ -679,6 +693,10 @@ api.patch("/agents/:agentId/sessions/:sessionId", async (c) => {
   if (typeof body.pinned === "boolean") {
     updates.pinned = body.pinned ? Date.now() : null;
     await appendSessionMeta(agentId, sessionId, "pinned", updates.pinned, userId);
+  }
+  if (body.projectId !== undefined) {
+    updates.projectId = body.projectId;
+    await appendSessionMeta(agentId, sessionId, "project", updates.projectId, userId);
   }
   invalidateResolvedHistoryFile(agentId, sessionId, userId);
   return c.json({ ok: true, ...updates });

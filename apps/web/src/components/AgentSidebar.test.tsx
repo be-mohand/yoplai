@@ -9,6 +9,8 @@ window.matchMedia = vi.fn().mockReturnValue({ matches: false });
 const [pathname, setPathname] = createSignal("/projects");
 const fetchProjectsMock = vi.fn<() => Promise<unknown[]>>();
 const fetchAgentSessionsMock = vi.fn(async () => ({ items: [] as unknown[] }));
+const fetchChatProjectsMock = vi.fn(async () => ({ items: [] as { id: string; name: string; createdAt: number; updatedAt: number }[] }));
+const moveChatToProjectMock = vi.fn(async () => {});
 const navigateMock = vi.fn();
 const pinAgentSessionMock = vi.fn(async () => {});
 const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
@@ -28,6 +30,8 @@ vi.mock("../api", () => ({
   pinAgentSession: pinAgentSessionMock,
   UnauthenticatedError,
 }));
+
+vi.mock("../api/chat-projects", () => ({ fetchChatProjects: fetchChatProjectsMock, createChatProject: vi.fn(), moveChatToProject: moveChatToProjectMock }));
 
 vi.mock("../api/top-extensions", () => ({
   EMPTY_TOP_EXTENSIONS: { extensions: [], mcp: [] },
@@ -57,6 +61,11 @@ describe("AgentSidebar", () => {
     document.documentElement.removeAttribute("data-theme");
     localStorage.removeItem("yoplai-theme");
     localStorage.removeItem("yoplai:recent-project-views");
+    localStorage.removeItem("yoplai:collapsed-chat-projects");
+    fetchChatProjectsMock.mockReset();
+    fetchChatProjectsMock.mockResolvedValue({ items: [] });
+    moveChatToProjectMock.mockReset();
+    moveChatToProjectMock.mockResolvedValue(undefined);
     setPathname("/projects");
     pinAgentSessionMock.mockReset();
     pinAgentSessionMock.mockResolvedValue(undefined);
@@ -112,7 +121,7 @@ describe("AgentSidebar", () => {
     );
 
     const expectedIcons = [
-      ["Projects", "fa-folder-tree"],
+      ["Board", "fa-folder-tree"],
       ["Orchestrator", "fa-diagram-project"],
       ["Agents", "fa-comments"],
     ];
@@ -246,8 +255,57 @@ describe("AgentSidebar", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(container.textContent).toContain("🦊");
-    expect(container.textContent).not.toContain("+ New");
+    expect(container.textContent).toContain("+ New project");
 
+    dispose();
+  });
+
+  it("groups projects before pins/recent, persists collapse and moves chats in/out", async () => {
+    vi.useFakeTimers();
+    fetchChatProjectsMock.mockResolvedValue({ items: [{ id: "p1", name: "Work", createdAt: 1, updatedAt: 1 }] });
+    const items = [
+      { agentId: "a", sessionId: "new", lastActivity: 30, firstUserMessage: "New", pinned: null, projectId: "p1" },
+      { agentId: "a", sessionId: "pin", lastActivity: 10, firstUserMessage: "Project pin", pinned: 10, projectId: "p1" },
+      { agentId: "a", sessionId: "recent", lastActivity: 40, firstUserMessage: "Recent", pinned: null, projectId: null },
+      { agentId: "a", sessionId: "global", lastActivity: 20, firstUserMessage: "Global pin", pinned: 20, projectId: null },
+    ];
+    fetchAgentSessionsMock.mockResolvedValue({ items });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    let dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(Array.from(container.querySelectorAll(".sessions-section")).map((node) => node.getAttribute("aria-label"))).toEqual(["Projects", "Pinned", "Recent"]);
+    expect(Array.from(container.querySelectorAll(".session-title-text")).map((node) => node.textContent)).toEqual(["Project pin", "New", "Global pin", "Recent"]);
+    const toggle = () => container.querySelector<HTMLButtonElement>('[aria-label="Toggle Work"]')!;
+    toggle().click();
+    expect(container.querySelector('[aria-label="Projects"]')!.textContent).not.toContain("Project pin");
+    dispose();
+    dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    toggle().click();
+    const buttons = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action"));
+    buttons().find((button) => button.textContent === "Remove from project")!.click();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(moveChatToProjectMock).toHaveBeenCalledWith("a", "pin", null);
+    buttons().find((button) => button.textContent === "Move to project…")!.click();
+    container.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(moveChatToProjectMock).toHaveBeenCalledWith("a", "pin", "p1");
+    dispose();
+  });
+
+  it("keeps refreshing chats when project requests hang or fail", async () => {
+    vi.useFakeTimers();
+    fetchChatProjectsMock.mockImplementationOnce(() => new Promise(() => {}));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    await vi.advanceTimersByTimeAsync(1);
+    fetchChatProjectsMock.mockRejectedValueOnce(new Error("offline"));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain("Unable to load projects");
     dispose();
   });
 
@@ -266,7 +324,7 @@ describe("AgentSidebar", () => {
     await vi.advanceTimersByTimeAsync(1);
     const labels = () => Array.from(container.querySelectorAll(".session-title-text")).map((node) => node.textContent);
     expect(labels()).toEqual(["Pinned today", "Pinned old", "Recent chat"]);
-    const sections = container.querySelectorAll(".sessions-section");
+    const sections = container.querySelectorAll(".sessions-section:not([aria-label=Projects])");
     expect(sections[0].getAttribute("aria-label")).toBe("Pinned");
     expect(sections[1].getAttribute("aria-label")).toBe("Recent");
     expect(sections[0].querySelectorAll(".sessions-group")).toHaveLength(2);
@@ -334,12 +392,12 @@ describe("AgentSidebar", () => {
     document.body.appendChild(container);
     const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
     await vi.advanceTimersByTimeAsync(1);
-    container.querySelector<HTMLButtonElement>(".session-action")!.click();
+    container.querySelector<HTMLButtonElement>(".session-row-wrap .session-action")!.click();
     await vi.advanceTimersByTimeAsync(1);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Failed to update session pin");
     let finishPin: (() => void) | undefined;
     pinAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishPin = resolve; }));
-    container.querySelector<HTMLButtonElement>(".session-action")!.click();
+    container.querySelector<HTMLButtonElement>(".session-row-wrap .session-action")!.click();
     await vi.advanceTimersByTimeAsync(1);
     expect(container.querySelector('[role="alert"]')).toBeNull();
     fetchAgentSessionsMock.mockResolvedValue({ items: [{ ...item, title: "Updated while pin waits" }] });
@@ -368,7 +426,7 @@ describe("AgentSidebar", () => {
       container
     );
 
-    expect(container.textContent).not.toContain("Projects");
+    expect(container.querySelector('a[href="/projects"]')).toBeNull();
     expect(container.textContent).not.toContain("Teams");
     expect(container.textContent).toContain("Agents");
 
@@ -490,6 +548,11 @@ describe("AgentSidebar", () => {
       user: { id: "u1", role: "user" },
       extensions: { projects: true },
     } as never);
+    localStorage.removeItem("yoplai:collapsed-chat-projects");
+    fetchChatProjectsMock.mockReset();
+    fetchChatProjectsMock.mockResolvedValue({ items: [] });
+    moveChatToProjectMock.mockReset();
+    moveChatToProjectMock.mockResolvedValue(undefined);
     setPathname("/projects");
     const container = document.createElement("div");
     document.body.appendChild(container);

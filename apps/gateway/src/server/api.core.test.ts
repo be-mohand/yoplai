@@ -466,6 +466,65 @@ describe("api core session resolution", () => {
     expect(await fs.readFile(file, "utf8")).toBe(raw);
   });
 
+  it("scopes project CRUD and session membership to the requester, preserving chats on deletion", async () => {
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    const { api } = await import("./api.core.js");
+    multiUserState.loaded = true;
+    const asUser = (id: string) => {
+      multiUserState.authContext = { user: { id }, session: { id: `session-${id}`, userId: id } };
+    };
+    const request = (url: string, method = "GET", body?: unknown) => api.request(new Request(`http://localhost${url}`, {
+      method, headers: { "content-type": "application/json" },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    }));
+    asUser("alice");
+    expect((await request("/chat-projects", "POST", { name: " " })).status).toBe(400);
+    const created = await request("/chat-projects", "POST", { name: "Research" });
+    expect(created.status).toBe(201);
+    const project = await created.json();
+    expect(await (await request(`/chat-projects/${project.id}`)).json()).toEqual(project);
+    expect(await (await request(`/chat-projects/${project.id}`, "PATCH", { name: "Work" })).json()).toMatchObject({ name: "Work" });
+    loadConfigValue.agents = [{ id: "alpha" }];
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    getSessionEntry.mockResolvedValue(null);
+    const dir = "/tmp/yoplai-test/sessions/users/alice/history";
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, "alpha-groupable.jsonl");
+    await fs.writeFile(file, JSON.stringify({ type: "history", role: "user", timestamp: 1000, content: [{ type: "text", text: "Hello" }] }) + "\n");
+    const sessionUrl = "/agents/alpha/sessions/groupable";
+    const list = async () => (await (await request("/agents/sessions")).json()).items[0];
+    const initial = await list();
+    expect(initial).toMatchObject({ projectId: null });
+    expect((await request(sessionUrl, "PATCH", { projectId: project.id })).status).toBe(200);
+    expect(await list()).toMatchObject({ projectId: project.id, lastActivity: initial.lastActivity });
+    expect((await request(sessionUrl, "PATCH", { projectId: "../escape", title: "Wrong" })).status).toBe(400);
+    expect((await request(sessionUrl, "PATCH", { projectId: "missing" })).status).toBe(404);
+    expect((await request(sessionUrl, "PATCH", { projectId: 42 })).status).toBe(400);
+    expect((await request(sessionUrl, "PATCH", { projectId: null })).status).toBe(200);
+    expect(await list()).toMatchObject({ projectId: null });
+    expect((await request(sessionUrl, "PATCH", { projectId: project.id })).status).toBe(200);
+    asUser("bob");
+    expect(await (await request("/chat-projects")).json()).toEqual({ items: [] });
+    for (const method of ["GET", "PATCH", "DELETE"]) {
+      expect((await request(`/chat-projects/${project.id}`, method, method === "PATCH" ? { name: "Stolen" } : undefined)).status).toBe(404);
+    }
+    await fs.mkdir("/tmp/yoplai-test/sessions/users/bob/history", { recursive: true });
+    await fs.writeFile("/tmp/yoplai-test/sessions/users/bob/history/alpha-groupable.jsonl", await fs.readFile(file));
+    expect((await request(sessionUrl, "PATCH", { projectId: project.id })).status).toBe(404);
+    asUser("alice");
+    const removedAgentFile = path.join(dir, "removed-agent-archived.jsonl");
+    await fs.writeFile(removedAgentFile, await fs.readFile(file));
+    expect((await request(`/chat-projects/${project.id}`, "DELETE")).status).toBe(200);
+    expect(await list()).toMatchObject({ projectId: null, lastActivity: initial.lastActivity, messageCount: 1 });
+    expect((await fs.readFile(removedAgentFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).at(-1)).toMatchObject({ key: "project", value: null });
+    expect(await fs.readFile("/tmp/yoplai-test/sessions/users/bob/history/alpha-groupable.jsonl", "utf8")).toContain(project.id);
+    expect(await (await request("/chat-projects")).json()).toEqual({ items: [] });
+    multiUserState.loaded = false;
+    multiUserState.authContext = null;
+    expect((await request("/chat-projects", "POST", { name: "Personal" })).status).toBe(201);
+    expect((await (await request("/chat-projects")).json()).items).toHaveLength(1);
+  });
+
   it("excludes ephemeral compact sessions from the sidebar listing", async () => {
     const sessionsDir = "/tmp/yoplai-test/history";
     await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });

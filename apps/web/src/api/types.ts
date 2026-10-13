@@ -104,6 +104,7 @@ export type SessionSummary = {
   firstUserMessage: string;
   title?: string;
   pinned: number | null;
+  projectId?: string | null;
   avatar?: string;
   isMain: boolean;
 };
