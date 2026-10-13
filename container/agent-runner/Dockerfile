@@ -23,7 +23,8 @@ RUN corepack enable && pnpm install --frozen-lockfile --prod --filter @yoplai/ag
 COPY packages/shared/dist/ ./packages/shared/dist/
 COPY container/agent-runner/dist/ ./container/agent-runner/dist/
 ENV UV_CACHE_DIR=/tmp/uv-cache \
-    XDG_CACHE_HOME=/tmp/playwright/cache
+    XDG_CACHE_HOME=/tmp/playwright/cache \
+    XDG_CONFIG_HOME=/tmp/playwright/config
 # OneCLI CA cert will be bind-mounted at runtime
 WORKDIR /app/container/agent-runner
 USER node
