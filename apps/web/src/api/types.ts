@@ -103,6 +103,7 @@ export type SessionSummary = {
   messageCount: number;
   firstUserMessage: string;
   title?: string;
+  pinned: number | null;
   avatar?: string;
   isMain: boolean;
 };

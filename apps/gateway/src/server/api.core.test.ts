@@ -426,6 +426,46 @@ describe("api core session resolution", () => {
     expect(body.items[1]).toMatchObject({ title: "renamed", avatar: "🦊" });
   });
 
+  it("round-trips append-only pins and reads the latest metadata without changing recency", async () => {
+    const sessionsDir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    getSessionEntry.mockResolvedValue(null);
+    const file = path.join(sessionsDir, "alpha-pinnable.jsonl");
+    const history = JSON.stringify({
+      type: "history", role: "user", timestamp: Date.now(),
+      content: [{ type: "text", text: "Keep this chat" }],
+    }) + "\n";
+    await fs.writeFile(file, history);
+    const { api } = await import("./api.core.js");
+    const list = async () => {
+      const response = await api.request(new Request("http://localhost/agents/sessions"));
+      return (await response.json()).items[0];
+    };
+    const initial = await list();
+    expect(initial.pinned).toBeNull();
+    const patch = (body: unknown) => api.request(new Request(
+      "http://localhost/agents/alpha/sessions/pinnable", {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ));
+    const pin = await patch({ pinned: true, title: "Saved" });
+    expect(pin.status).toBe(200);
+    expect((await pin.json()).pinned).toEqual(expect.any(Number));
+    expect(await list()).toMatchObject({ title: "Saved", pinned: expect.any(Number), lastActivity: initial.lastActivity });
+    expect((await patch({ pinned: false })).status).toBe(200);
+    expect(await list()).toMatchObject({ title: "Saved", pinned: null, lastActivity: initial.lastActivity });
+    expect((await patch({ pinned: true })).status).toBe(200);
+    expect((await list()).pinned).toEqual(expect.any(Number));
+    const raw = await fs.readFile(file, "utf8");
+    expect(raw.startsWith(history)).toBe(true);
+    expect(raw.trim().split("\n").map((line) => JSON.parse(line)).filter((entry) => entry.key === "pinned").map((entry) => entry.value)).toEqual([expect.any(Number), null, expect.any(Number)]);
+    expect((await patch({ pinned: "yes" })).status).toBe(400);
+    expect(await fs.readFile(file, "utf8")).toBe(raw);
+  });
+
   it("excludes ephemeral compact sessions from the sidebar listing", async () => {
     const sessionsDir = "/tmp/yoplai-test/history";
     await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });

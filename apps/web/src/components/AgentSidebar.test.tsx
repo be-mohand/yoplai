@@ -10,6 +10,7 @@ const [pathname, setPathname] = createSignal("/projects");
 const fetchProjectsMock = vi.fn<() => Promise<unknown[]>>();
 const fetchAgentSessionsMock = vi.fn(async () => ({ items: [] as unknown[] }));
 const navigateMock = vi.fn();
+const pinAgentSessionMock = vi.fn(async () => {});
 const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
 
 class UnauthenticatedError extends Error {
@@ -24,6 +25,7 @@ vi.mock("../api", () => ({
   fetchAgentSessions: fetchAgentSessionsMock,
   deleteAgentSession: vi.fn(),
   renameAgentSession: vi.fn(),
+  pinAgentSession: pinAgentSessionMock,
   UnauthenticatedError,
 }));
 
@@ -56,6 +58,10 @@ describe("AgentSidebar", () => {
     localStorage.removeItem("yoplai-theme");
     localStorage.removeItem("yoplai:recent-project-views");
     setPathname("/projects");
+    pinAgentSessionMock.mockReset();
+    pinAgentSessionMock.mockResolvedValue(undefined);
+    fetchAgentSessionsMock.mockResolvedValue({ items: [] });
+    vi.useRealTimers();
     fetchProjectsMock.mockReset();
     fetchProjectsMock.mockResolvedValue([]);
     resetCapabilitiesForTests();
@@ -242,6 +248,107 @@ describe("AgentSidebar", () => {
     expect(container.textContent).toContain("🦊");
     expect(container.textContent).not.toContain("+ New");
 
+    dispose();
+  });
+
+  it("orders pinned above recent with recency groups, shared search and live unpin", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const session = (sessionId: string, lastActivity: number, pinned: number | null) => ({
+      agentId: "alpha", sessionId, createdAt: lastActivity, lastActivity,
+      messageCount: 1, firstUserMessage: sessionId, isMain: false, pinned,
+    });
+    const items = [session("Recent chat", now, null), session("Pinned today", now - 1000, now), session("Pinned old", now - 10 * 86400000, now)];
+    fetchAgentSessionsMock.mockResolvedValue({ items });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    await vi.advanceTimersByTimeAsync(1);
+    const labels = () => Array.from(container.querySelectorAll(".session-title-text")).map((node) => node.textContent);
+    expect(labels()).toEqual(["Pinned today", "Pinned old", "Recent chat"]);
+    const sections = container.querySelectorAll(".sessions-section");
+    expect(sections[0].getAttribute("aria-label")).toBe("Pinned");
+    expect(sections[1].getAttribute("aria-label")).toBe("Recent");
+    expect(sections[0].querySelectorAll(".sessions-group")).toHaveLength(2);
+    expect(sections[1].textContent).not.toContain("Pinned today");
+    container.querySelector<HTMLButtonElement>('[aria-label="Search sessions"]')!.click();
+    const input = container.querySelector<HTMLInputElement>(".sessions-search")!;
+    input.value = "Pinned old";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(labels()).toEqual(["Pinned old"]);
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const unpin = Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action")).find((button) => button.textContent?.trim() === "Unpin")!;
+    fetchAgentSessionsMock.mockResolvedValue({ items: items.map((item) => ({ ...item, pinned: null })) });
+    unpin.click();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pinAgentSessionMock).toHaveBeenCalledWith("alpha", "Pinned today", false);
+    expect(container.querySelector('[aria-label="Pinned"]')).toBeNull();
+    expect(labels()).toEqual(["Recent chat", "Pinned today", "Pinned old"]);
+    fetchAgentSessionsMock.mockResolvedValue({ items });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(labels()).toEqual(["Pinned today", "Pinned old", "Recent chat"]);
+    dispose();
+  });
+
+  it("keeps the session menu open and focused across an equivalent poll", async () => {
+    vi.useFakeTimers();
+    const item = {
+      agentId: "alpha", sessionId: "stable", createdAt: Date.now(), lastActivity: Date.now(),
+      messageCount: 1, firstUserMessage: "Stable chat", isMain: false, pinned: null,
+    };
+    fetchAgentSessionsMock.mockResolvedValue({ items: [item] });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    await vi.advanceTimersByTimeAsync(1);
+    const menu = container.querySelector<HTMLDetailsElement>("details")!;
+    menu.open = true;
+    const action = menu.querySelector<HTMLButtonElement>("button")!;
+    action.focus();
+    fetchAgentSessionsMock.mockResolvedValue({ items: [{ ...item }] });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(container.querySelector("details")).toBe(menu);
+    expect(menu.open).toBe(true);
+    expect(document.activeElement).toBe(action);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(container.querySelector(".session-meta")?.textContent).toContain("1m");
+    expect(container.querySelector("details")).toBe(menu);
+    expect(menu.open).toBe(true);
+    expect(document.activeElement).toBe(action);
+    action.click();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pinAgentSessionMock).toHaveBeenCalledWith("alpha", "stable", true);
+    dispose();
+  });
+
+  it("reports pin failure, clears the error on retry, and polls during a hanging pin", async () => {
+    vi.useFakeTimers();
+    const item = {
+      agentId: "alpha", sessionId: "failure", createdAt: Date.now(), lastActivity: Date.now(),
+      messageCount: 1, firstUserMessage: "Original chat", isMain: false, pinned: null,
+    };
+    fetchAgentSessionsMock.mockResolvedValue({ items: [item] });
+    pinAgentSessionMock.mockRejectedValueOnce(new Error("Gateway unavailable"));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    await vi.advanceTimersByTimeAsync(1);
+    container.querySelector<HTMLButtonElement>(".session-action")!.click();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Failed to update session pin");
+    let finishPin: (() => void) | undefined;
+    pinAgentSessionMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishPin = resolve; }));
+    container.querySelector<HTMLButtonElement>(".session-action")!.click();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    fetchAgentSessionsMock.mockResolvedValue({ items: [{ ...item, title: "Updated while pin waits" }] });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(container.querySelector(".session-title-text")?.textContent).toBe("Updated while pin waits");
+    expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(2);
+    finishPin!();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
     dispose();
   });
 

@@ -16,6 +16,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Pin sessions from the sidebar row menu; pinned chats stay above Recent, remain searchable, and persist across reloads.
 - Threadit `activity: "safe" | "detailed"` setting (root or per agent). `detailed` posts `task.checkpoint` labels and redacted tool targets (file paths, first bash line, one identifying argument) to the board's activity pane; `safe` stays the default and is unchanged.
 - Threadit agent tools (`threadit.*`). Agents use the board through the gateway, so the sandbox needs no token. `threadit.register` makes an agent account and saves the token. It never shows the token. The poller starts with a new token and waits for approval of a new account. Threadit works with only a `baseUrl`.
 - Extensions can save their own per-agent config and secrets through `ctx.updateAgentExtensionConfig`.

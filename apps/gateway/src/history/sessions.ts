@@ -12,6 +12,7 @@ export type SessionSummary = {
   messageCount: number;
   firstUserMessage: string;
   title?: string;
+  pinned: number | null;
   avatar?: string;
   isMain: boolean;
 };
@@ -96,6 +97,7 @@ export async function summarizeSessionFile(params: {
   ]);
   let firstUserMessage = "";
   let title: string | undefined;
+  let pinned: number | null = null;
   let messageCount = 0;
   let lastActivity = params.createdAt || stat.birthtimeMs;
 
@@ -107,6 +109,10 @@ export async function summarizeSessionFile(params: {
         typeof entry.timestamp === "number" ? entry.timestamp : undefined;
       if (entry.type === "meta" && entry.key === "title") {
         title = typeof entry.value === "string" ? entry.value : undefined;
+        continue;
+      }
+      if (entry.type === "meta" && entry.key === "pinned") {
+        pinned = typeof entry.value === "number" ? entry.value : null;
         continue;
       }
       if (entry.type !== "history") continue;
@@ -129,6 +135,7 @@ export async function summarizeSessionFile(params: {
     createdAt: params.createdAt || stat.birthtimeMs,
     lastActivity,
     messageCount,
+    pinned,
     firstUserMessage,
     ...(title ? { title } : {}),
     isMain: main?.sessionId === params.sessionId,

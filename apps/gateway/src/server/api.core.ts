@@ -649,7 +649,7 @@ api.delete("/agents/:agentId/sessions/:sessionId", async (c) => {
   return c.json({ ok: true });
 });
 
-// PATCH /api/agents/:agentId/sessions/:sessionId - set session title
+// PATCH /api/agents/:agentId/sessions/:sessionId - update session metadata
 api.patch("/agents/:agentId/sessions/:sessionId", async (c) => {
   const agentId = c.req.param("agentId");
   const sessionId = c.req.param("sessionId");
@@ -668,10 +668,20 @@ api.patch("/agents/:agentId/sessions/:sessionId", async (c) => {
   });
   if (!filePath) return c.json({ error: "Session not found" }, 404);
   const body = await c.req.json().catch(() => ({}));
-  const title = typeof body.title === "string" ? body.title.trim() : "";
-  await appendSessionMeta(agentId, sessionId, "title", title, userId);
+  if (body.pinned !== undefined && typeof body.pinned !== "boolean") {
+    return c.json({ error: "Pinned must be a boolean" }, 400);
+  }
+  const updates: { title?: string; pinned?: number | null } = {};
+  if (body.title !== undefined) {
+    updates.title = typeof body.title === "string" ? body.title.trim() : "";
+    await appendSessionMeta(agentId, sessionId, "title", updates.title, userId);
+  }
+  if (typeof body.pinned === "boolean") {
+    updates.pinned = body.pinned ? Date.now() : null;
+    await appendSessionMeta(agentId, sessionId, "pinned", updates.pinned, userId);
+  }
   invalidateResolvedHistoryFile(agentId, sessionId, userId);
-  return c.json({ ok: true, title });
+  return c.json({ ok: true, ...updates });
 });
 
 // GET /api/agents/:id - get single agent

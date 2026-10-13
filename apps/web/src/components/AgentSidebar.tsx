@@ -19,6 +19,7 @@ import {
   deleteAgentSession,
   fetchAgentSessions,
   renameAgentSession,
+  pinAgentSession,
   UnauthenticatedError,
 } from "../api";
 import type { SessionSummary } from "../api/types";
@@ -33,8 +34,8 @@ const LazySidebarAccountPanel = lazy(
   () => import("../auth/SidebarAccountPanel")
 );
 
-function relativeTime(timestamp: number): string {
-  const diff = Math.max(0, Date.now() - timestamp);
+function relativeTime(timestamp: number, now: number): string {
+  const diff = Math.max(0, now - timestamp);
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "now";
   if (mins < 60) return `${mins}m`;
@@ -44,9 +45,9 @@ function relativeTime(timestamp: number): string {
   return `${days}d`;
 }
 
-function groupLabel(timestamp: number): string {
+function groupLabel(timestamp: number, currentTime: number): string {
   const date = new Date(timestamp);
-  const now = new Date();
+  const now = new Date(currentTime);
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startYesterday = startToday - 86400000;
   if (timestamp >= startToday) return "Today";
@@ -96,7 +97,11 @@ export function AgentSidebar(props: AgentSidebarProps) {
     const top = topExtensions();
     return !!top && top.extensions.length + top.mcp.length > 0;
   };
-  const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
+  const [sessions, setSessions] = createSignal<SessionSummary[]>([], {
+    equals: (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
+  });
+  const [sessionError, setSessionError] = createSignal("");
+  const [currentTime, setCurrentTime] = createSignal(Date.now());
   const [search, setSearch] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [listScrolling, setListScrolling] = createSignal(false);
@@ -124,11 +129,13 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
   createEffect(refreshSessions);
   const poll = window.setInterval(refreshSessions, 3000);
+  const clock = window.setInterval(() => setCurrentTime(Date.now()), 60000);
   window.addEventListener("focus", refreshSessions);
   document.addEventListener("visibilitychange", refreshSessions);
   onCleanup(() => {
     clearTimeout(scrollIdleTimer);
     window.clearInterval(poll);
+    window.clearInterval(clock);
     window.removeEventListener("focus", refreshSessions);
     document.removeEventListener("visibilitychange", refreshSessions);
   });
@@ -142,19 +149,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
       : sessions();
   };
 
-  const groupedSessions = () => {
-    const groups: Array<{ label: string; items: SessionSummary[] }> = [];
-    for (const session of visibleSessions()) {
-      const label = groupLabel(session.lastActivity);
-      let group = groups.find((item) => item.label === label);
-      if (!group) {
-        group = { label, items: [] };
-        groups.push(group);
-      }
-      group.items.push(session);
-    }
-    return groups;
-  };
+  const sessionsInSection = (pinned: boolean) =>
+    visibleSessions().filter((item) => (item.pinned != null) === pinned);
+  const groupLabels = (pinned: boolean) =>
+    [...new Set(sessionsInSection(pinned).map((session) => groupLabel(session.lastActivity, currentTime())))];
+  const sessionsInGroup = (pinned: boolean, label: string) =>
+    sessionsInSection(pinned).filter((session) => groupLabel(session.lastActivity, currentTime()) === label);
 
   const currentChat = () => chatRouteSession(location.pathname, location.search);
   const selectSession = (session: SessionSummary) => {
@@ -283,6 +283,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 ⌕
               </button>
             </div>
+            <Show when={sessionError()}>
+              <div role="alert">{sessionError()}</div>
+            </Show>
             <Show when={searchOpen()}>
               <input
                 class="sessions-search"
@@ -292,88 +295,114 @@ export function AgentSidebar(props: AgentSidebarProps) {
               />
             </Show>
             <div class="sessions-list" classList={{ scrolling: listScrolling() }} onScroll={onListScroll}>
-              <For each={groupedSessions()}>
-                {(group) => (
-                  <div class="sessions-group">
-                    <div class="sessions-group-label">{group.label}</div>
-                    <For each={group.items}>
-                      {(session) => {
-                        const selected = () =>
-                          currentChat().agentId === session.agentId &&
-                          currentChat().sessionId === session.sessionId;
-                        const label = () => session.title || session.firstUserMessage || session.sessionId;
-                        return (
-                          <div
-                            class="session-row-wrap"
-                            onMouseEnter={(e) => revealTitle(e.currentTarget)}
-                            onMouseLeave={(e) => resetTitle(e.currentTarget)}
-                            onFocusIn={(e) => revealTitle(e.currentTarget)}
-                            onFocusOut={(e) => resetTitle(e.currentTarget)}
-                          >
-                            <button
-                              type="button"
-                              class="session-row"
-                              classList={{ active: selected() }}
-                              onClick={() => selectSession(session)}
-                            >
-                              <span class="session-avatar">
-                                <Show
-                                  when={session.avatar}
-                                  fallback={session.agentId[0]?.toUpperCase()}
+              <For each={sessions().some((item) => item.pinned != null) ? [true, false] : [false]}>
+                {(pinned) => (
+                  <section class="sessions-section" aria-label={pinned ? "Pinned" : "Recent"}>
+                    <div class="sessions-header">{pinned ? "Pinned" : "Recent"}</div>
+                    <For each={groupLabels(pinned)}>
+                      {(group) => (
+                        <div class="sessions-group">
+                          <div class="sessions-group-label">{group}</div>
+                          <For each={sessionsInGroup(pinned, group)}>
+                            {(session) => {
+                              const selected = () =>
+                                currentChat().agentId === session.agentId &&
+                                currentChat().sessionId === session.sessionId;
+                              const label = () => session.title || session.firstUserMessage || session.sessionId;
+                              return (
+                                <div
+                                  class="session-row-wrap"
+                                  onMouseEnter={(e) => revealTitle(e.currentTarget)}
+                                  onMouseLeave={(e) => resetTitle(e.currentTarget)}
+                                  onFocusIn={(e) => revealTitle(e.currentTarget)}
+                                  onFocusOut={(e) => resetTitle(e.currentTarget)}
                                 >
-                                  {(avatar) => (
-                                    <Show
-                                      when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())}
-                                      fallback={avatar()}
-                                    >
-                                      <img src={avatar()} alt="" />
-                                    </Show>
-                                  )}
-                                </Show>
-                              </span>
-                              <span class="session-main">
-                                <span class="session-title">
-                                  <span class="session-title-text">{label()}</span>
-                                </span>
-                                <span class="session-meta">
-                                  {relativeTime(session.lastActivity)} · {session.agentId}
-                                  <Show when={session.isMain}> <b>MAIN</b></Show>
-                                </span>
-                              </span>
-                            </button>
-                            <span class="session-actions">
-                              <button
-                                type="button"
-                                class="session-action"
-                                aria-label="Rename session"
-                                onClick={async () => {
-                                  const title = prompt("Session title", session.title ?? session.firstUserMessage);
-                                  if (title === null) return;
-                                  await renameAgentSession(session.agentId, session.sessionId, title);
-                                  refreshSessions();
-                                }}
-                              >
-                                ✎
-                              </button>
-                              <button
-                                type="button"
-                                class="session-action danger"
-                                aria-label="Delete session"
-                                onClick={async () => {
-                                  if (!confirm("Delete session?")) return;
-                                  await deleteAgentSession(session.agentId, session.sessionId);
-                                  setSessions((items) => items.filter((item) => item.sessionId !== session.sessionId || item.agentId !== session.agentId));
-                                  if (selected()) navigate(`/chat/${encodeURIComponent(session.agentId)}`);
-                                }}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          </div>
-                        );
-                      }}
+                                  <button
+                                    type="button"
+                                    class="session-row"
+                                    classList={{ active: selected() }}
+                                    onClick={() => selectSession(session)}
+                                  >
+                                    <span class="session-avatar">
+                                      <Show
+                                        when={session.avatar}
+                                        fallback={session.agentId[0]?.toUpperCase()}
+                                      >
+                                        {(avatar) => (
+                                          <Show
+                                            when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())}
+                                            fallback={avatar()}
+                                          >
+                                            <img src={avatar()} alt="" />
+                                          </Show>
+                                        )}
+                                      </Show>
+                                    </span>
+                                    <span class="session-main">
+                                      <span class="session-title">
+                                        <span class="session-title-text">{label()}</span>
+                                      </span>
+                                      <span class="session-meta">
+                                        {relativeTime(session.lastActivity, currentTime())} · {session.agentId}
+                                        <Show when={session.isMain}> <b>MAIN</b></Show>
+                                      </span>
+                                    </span>
+                                  </button>
+                                  <details class="session-actions">
+                                    <summary aria-label="Session menu">⋯</summary>
+                                    <div class="session-menu">
+                                      <button
+                                        type="button"
+                                        class="session-action"
+                                        onClick={async (event) => {
+                                          event.currentTarget.closest("details")?.removeAttribute("open");
+                                          setSessionError("");
+                                          try {
+                                            await pinAgentSession(session.agentId, session.sessionId, session.pinned == null);
+                                            await refreshSessions();
+                                          } catch {
+                                            setSessionError("Failed to update session pin. Try again.");
+                                          }
+                                        }}
+                                      >
+                                        {session.pinned == null ? "Pin" : "Unpin"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="session-action"
+                                        aria-label="Rename session"
+                                        onClick={async () => {
+                                          const title = prompt("Session title", session.title ?? session.firstUserMessage);
+                                          if (title === null) return;
+                                          await renameAgentSession(session.agentId, session.sessionId, title);
+                                          refreshSessions();
+                                        }}
+                                      >
+                                        Rename
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="session-action danger"
+                                        aria-label="Delete session"
+                                        onClick={async () => {
+                                          if (!confirm("Delete session?")) return;
+                                          await deleteAgentSession(session.agentId, session.sessionId);
+                                          setSessions((items) => items.filter((item) => item.sessionId !== session.sessionId || item.agentId !== session.agentId));
+                                          if (selected()) navigate(`/chat/${encodeURIComponent(session.agentId)}`);
+                                        }}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </details>
+                                </div>
+                              );
+                            }}
+                          </For>
+                        </div>
+                      )}
                     </For>
-                  </div>
+                  </section>
                 )}
               </For>
             </div>
@@ -713,8 +742,34 @@ export function AgentSidebar(props: AgentSidebarProps) {
           pointer-events: auto;
         }
 
-        .session-action {
+        .session-actions[open] {
+          opacity: 1;
+          pointer-events: auto;
+          z-index: 1;
+        }
+
+        .session-actions summary {
+          cursor: pointer;
+          list-style: none;
           padding: 4px;
+        }
+
+        .session-menu {
+          position: absolute;
+          top: 100%;
+          right: 0;
+          display: flex;
+          flex-direction: column;
+          padding: 4px;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          background: var(--bg-surface);
+          box-shadow: 0 4px 12px var(--shadow-md);
+        }
+
+        .session-action {
+          padding: 6px 10px;
+          text-align: left;
         }
 
         @media (prefers-reduced-motion: reduce) {

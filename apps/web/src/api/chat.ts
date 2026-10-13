@@ -110,6 +110,22 @@ export async function renameAgentSession(
   if (!res.ok) throw new Error("Failed to rename session");
 }
 
+export async function pinAgentSession(
+  agentId: string,
+  sessionId: string,
+  pinned: boolean
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned }),
+    }
+  );
+  if (!res.ok) throw new Error("Failed to pin session");
+}
+
 export async function postCompact(
   agentId: string,
   sessionKey: string,
