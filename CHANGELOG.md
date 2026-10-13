@@ -16,6 +16,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Set instructions for a chat project and start a new chat with your chosen agent; project chats receive the latest instructions and a prompt to suggest useful wiki references on every turn.
+
 - Create personal chat projects, move chats between them, and browse project chats above Pinned and Recent; deleting a project keeps its chats. The orchestration Projects navigation is now labelled Board.
 
 - Pin sessions from the sidebar row menu; pinned chats stay above Recent, remain searchable, and persist across reloads.

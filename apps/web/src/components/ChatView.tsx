@@ -1960,9 +1960,10 @@ export function ChatView() {
           ? `/chat/${params.agentId}/full`
           : `/chat/${params.agentId}`;
       const session = explicitSessionId();
-      const path = session
-        ? `${basePath}?session=${encodeURIComponent(session)}`
-        : basePath;
+      const query = new URLSearchParams();
+      if (session) query.set("session", session);
+      if (searchParams.project) query.set("project", String(searchParams.project));
+      const path = query.size ? `${basePath}?${query}` : basePath;
       navigate(path, { replace: true });
     }
   };
@@ -2208,6 +2209,7 @@ export function ChatView() {
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
     const streamOptions = {
+      ...(searchParams.project ? { projectId: String(searchParams.project) } : {}),
       ...(attachments?.length ? { attachments } : {}),
       ...(levelToSend ? { thinkLevel: levelToSend } : {}),
       ...(!isResetCommand && explicitSessionId()

@@ -27,6 +27,16 @@ describe("ChatProjectStore", () => {
     expect(await store.update(project.id, "Missing")).toBeNull();
   });
 
+  it("stores instructions independently of the name and supports clearing them", async () => {
+    const store = new ChatProjectStore(dir);
+    const project = await store.create("Research");
+    await store.update(project.id, { instructions: "Use primary sources." });
+    await store.update(project.id, { name: "Work" });
+    expect(await store.get(project.id)).toMatchObject({ name: "Work", instructions: "Use primary sources." });
+    await store.update(project.id, { instructions: "" });
+    expect(await store.get(project.id)).toMatchObject({ instructions: "" });
+  });
+
   it("rejects unsafe paths and empty or oversized names", async () => {
     const store = new ChatProjectStore(dir);
     for (const id of ["", "..", "../escape", "a/b", "a\\b", "\0", "a".repeat(101)]) {

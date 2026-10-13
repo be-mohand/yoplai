@@ -42,6 +42,15 @@ describe("normalizeRunRequest", () => {
     });
   });
 
+  it("carries a project into a new session run", async () => {
+    const { normalizeRunRequest } = await import("./run-request.js");
+    const result = await normalizeRunRequest({
+      agent, input: { agentId: "alpha", message: "hello", projectId: "research" },
+      authContext: null, extensionRuntime, source: "web",
+    });
+    expect(result).toMatchObject({ type: "run", params: { projectId: "research" } });
+  });
+
   it("rejects unsafe explicit session ids", async () => {
     const { normalizeRunRequest } = await import("./run-request.js");
 

@@ -40,6 +40,26 @@ describe("history store isolation", () => {
     vi.clearAllMocks();
   });
 
+  it("tags a new session once, follows moves and does not retag existing turns", async () => {
+    const { resolveSessionProject } = await import("./store.js");
+    const validate = vi.fn(async () => undefined);
+    vi.mocked(fs.readFile).mockResolvedValueOnce("");
+    expect(await resolveSessionProject("agent-1", "session-1", undefined, "research", validate)).toBe("research");
+    expect(vi.mocked(fs.appendFile)).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('"key":"project","value":"research"'), "utf-8");
+    expect(validate).toHaveBeenCalledWith("research");
+    validate.mockClear();
+    vi.mocked(fs.appendFile).mockClear();
+    vi.mocked(fs.readFile).mockResolvedValueOnce('{"type":"history","role":"user"}\n');
+    expect(await resolveSessionProject("agent-1", "session-1", undefined, "research", validate)).toBeNull();
+    expect(vi.mocked(fs.appendFile)).not.toHaveBeenCalled();
+    vi.mocked(fs.readFile).mockResolvedValueOnce('{"type":"meta","key":"project","value":"research"}\n{"type":"meta","key":"project","value":"work"}\n');
+    expect(await resolveSessionProject("agent-1", "session-1", undefined, "research")).toBe("work");
+    vi.mocked(fs.readFile).mockResolvedValueOnce('{"type":"meta","key":"project","value":null}\n');
+    expect(await resolveSessionProject("agent-1", "session-1", undefined, "research", validate)).toBeNull();
+    expect(vi.mocked(fs.appendFile)).not.toHaveBeenCalled();
+    expect(validate).not.toHaveBeenCalled();
+  });
+
   it("keeps canonical history in the history dir by default", async () => {
     const { appendSessionMeta } = await import("./store.js");
 

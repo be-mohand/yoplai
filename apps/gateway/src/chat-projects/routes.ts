@@ -33,9 +33,13 @@ export function createChatProjectRoutes(deps: {
     const id = c.req.param("id");
     if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
     const body = await c.req.json().catch(() => null);
-    if (!validName(body?.name)) return c.json({ error: "Invalid project name" }, 400);
+    if (!body || (body.name === undefined && body.instructions === undefined) ||
+      (body.name !== undefined && !validName(body.name)) ||
+      (body.instructions !== undefined && typeof body.instructions !== "string")) {
+      return c.json({ error: "Invalid project update" }, 400);
+    }
     const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
-    const project = await store.update(id, body.name);
+    const project = await store.update(id, { name: body.name, instructions: body.instructions });
     return project ? c.json(project) : c.json({ error: "Project not found" }, 404);
   });
   routes.delete("/chat-projects/:id", async (c) => {

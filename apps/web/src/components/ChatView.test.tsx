@@ -43,6 +43,7 @@ const {
   routeState: {
     view: undefined as string | undefined,
     session: undefined as string | undefined,
+    project: undefined as string | undefined,
   },
 }));
 
@@ -52,6 +53,7 @@ vi.mock("@solidjs/router", () => ({
   useParams: () => ({ agentId: "agent-1", view: routeState.view }),
   useSearchParams: () => [
     {
+      get project() { return routeState.project; },
       get session() {
         routeVersion();
         return routeState.session;
@@ -161,6 +163,7 @@ describe("ChatView abort handling", () => {
     uploadFilesMock.mockResolvedValue([]);
     routeState.view = undefined;
     routeState.session = undefined;
+    routeState.project = undefined;
     setRouteVersion(0);
   });
 
@@ -217,6 +220,23 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(container.querySelector(".system-message")).not.toBeNull());
     expect(container.textContent?.split(text)).toHaveLength(2);
     expect(container.textContent).not.toContain("Error:");
+    dispose();
+  });
+
+  it("passes the project query to the first run", async () => {
+    routeState.project = "project-1";
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+    const textarea = container.querySelector("textarea")!;
+    textarea.value = "Hello project";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    const button = container.querySelector<HTMLButtonElement>(".send-btn")!;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    button.click();
+    await tick();
+    expect(streamMessageMock.mock.calls[0]?.[7]).toMatchObject({ projectId: "project-1" });
     dispose();
   });
 

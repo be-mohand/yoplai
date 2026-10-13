@@ -484,6 +484,9 @@ describe("api core session resolution", () => {
     const project = await created.json();
     expect(await (await request(`/chat-projects/${project.id}`)).json()).toEqual(project);
     expect(await (await request(`/chat-projects/${project.id}`, "PATCH", { name: "Work" })).json()).toMatchObject({ name: "Work" });
+    expect(await (await request(`/chat-projects/${project.id}`, "PATCH", { instructions: "Use primary sources." })).json()).toMatchObject({ name: "Work", instructions: "Use primary sources." });
+    expect((await request(`/chat-projects/${project.id}`, "PATCH", { instructions: 5 })).status).toBe(400);
+    expect(await (await request(`/chat-projects/${project.id}`, "PATCH", { instructions: "" })).json()).toMatchObject({ instructions: "" });
     loadConfigValue.agents = [{ id: "alpha" }];
     getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
     getSessionEntry.mockResolvedValue(null);

@@ -213,12 +213,19 @@ function renderUserContext(ctx: UserContext): string {
 }
 
 export function renderAgentContext(ctx: AgentContext): string {
-  if (ctx.kind === "discord") return renderDiscordContext(ctx);
-  if (ctx.kind === "slack") return renderSlackContext(ctx);
-  if (ctx.kind === "telegram") return renderTelegramContext(ctx);
-  if (ctx.kind === "irc") return renderIrcContext(ctx);
-  if (ctx.kind === "web") return renderUserContext(ctx);
-  return "";
+  let rendered = "";
+  if (ctx.kind === "discord") rendered = renderDiscordContext(ctx);
+  if (ctx.kind === "slack") rendered = renderSlackContext(ctx);
+  if (ctx.kind === "telegram") rendered = renderTelegramContext(ctx);
+  if (ctx.kind === "irc") rendered = renderIrcContext(ctx);
+  if (ctx.kind === "web") rendered = renderUserContext(ctx);
+  if (ctx.project) {
+    const block = ["[PROJECT CONTEXT]", ctx.project.instructions,
+      "from the project instructions, files and notes, look for additional useful wiki sources and propose adding them as project references",
+      "[END PROJECT CONTEXT]"].filter(Boolean).join("\n");
+    rendered = [rendered, block].filter(Boolean).join("\n\n");
+  }
+  return rendered;
 }
 
 export function buildUserContext(opts: { name?: string | null }): UserContext {

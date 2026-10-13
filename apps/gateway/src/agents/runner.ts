@@ -17,6 +17,7 @@ import {
   CONFIG_DIR,
 } from "../config/index.js";
 import { waitForCompactionActivation } from "./compaction-activation.js";
+import { ProjectContextResolver } from "../chat-projects/context-resolver.js";
 import { SessionRunLifecycle } from "./run-lifecycle.js";
 import {
   resolveSessionId,
@@ -402,6 +403,11 @@ export async function runAgent(
   const holdback = createNoReplyHoldback(emit);
 
   try {
+    const context = await new ProjectContextResolver().resolve({
+      agentId: params.agentId, sessionId, userId: params.userId,
+      projectId: params.projectId, context: params.context,
+    });
+
     // Persist the user message before the adapter runs so a failure before
     // the model starts (model resolution, auth, ...) cannot lose it. Must be
     // awaited: a persistence error aborts the run via the normal catch path.
@@ -430,7 +436,7 @@ export async function runAgent(
       attachments: params.attachments,
       workspaceDir,
       model: params.model,
-      context: params.context,
+      context,
       extensionRuntime,
       onEvent: (event: StreamEvent) => {
         // Adapters may emit an error and then reject. Only the runner emits

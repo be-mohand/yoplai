@@ -48,6 +48,7 @@ export type StreamCallbacks = {
 };
 
 export type StreamMessageOptions = {
+  projectId?: string;
   attachments?: FileAttachment[];
   thinkLevel?: ThinkLevel;
   sessionId?: string;
@@ -201,6 +202,7 @@ export function streamMessage(
       message,
     };
     if (options?.sessionId) payload.sessionId = options.sessionId;
+    if (options?.projectId) payload.projectId = options.projectId;
     if (options?.attachments && options.attachments.length > 0) {
       payload.attachments = options.attachments;
     }

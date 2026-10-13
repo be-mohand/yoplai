@@ -6,6 +6,7 @@ import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
 export type ChatProject = {
   id: string;
   name: string;
+  instructions?: string;
   createdAt: number;
   updatedAt: number;
 };
@@ -69,11 +70,15 @@ export class ChatProjectStore {
     return project;
   }
 
-  async update(id: string, name: string): Promise<ChatProject | null> {
-    name = this.validateName(name);
+  async update(id: string, patch: string | { name?: string; instructions?: string }): Promise<ChatProject | null> {
+    const updates = typeof patch === "string" ? { name: patch } : {
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
+    };
+    if (updates.name !== undefined) updates.name = this.validateName(updates.name);
     const project = await this.get(id);
     if (!project) return null;
-    const updated = { ...project, name, updatedAt: Date.now() };
+    const updated = { ...project, ...updates, updatedAt: Date.now() };
     await this.write(updated);
     return updated;
   }

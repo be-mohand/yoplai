@@ -61,6 +61,13 @@ describe("streamMessage", () => {
     vi.unstubAllGlobals();
   });
 
+  it("carries a project on the run request", () => {
+    streamMessage("agent-1", "hello", "fresh", vi.fn(), vi.fn(), vi.fn(), undefined, { projectId: "project-1" });
+    const ws = MockWebSocket.instances[0]!;
+    ws.open();
+    expect(JSON.parse(ws.sent[0]!)).toMatchObject({ projectId: "project-1", sessionKey: "fresh" });
+  });
+
   it("routes streaming events to callbacks", () => {
     const onText = vi.fn();
     const onDone = vi.fn();

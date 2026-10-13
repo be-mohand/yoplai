@@ -49,6 +49,7 @@ vi.mock("../sessions/store.js", () => ({
 }));
 
 vi.mock("../history/store.js", () => ({
+  resolveSessionProject: vi.fn(async () => null),
   appendSessionMeta,
   appendRunFailureNotice,
   backfillFromPiSession: vi.fn(async () => false),
