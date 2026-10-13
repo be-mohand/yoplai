@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
 
+export type ChatProjectFile = { id: string; name: string; mimeType: string; size: number; createdAt: number; text?: string; extractionError?: string };
+
 export type ChatProject = {
   id: string;
   name: string;
@@ -14,6 +16,8 @@ export type ChatProject = {
 export function isSafeChatProjectId(id: string): boolean {
   return /^[a-zA-Z0-9_-]{1,100}$/.test(id);
 }
+
+const fileMutations = new Map<string, Promise<void>>();
 
 export class ChatProjectStore {
   private readonly root: string;
@@ -87,6 +91,62 @@ export class ChatProjectStore {
     if (!await this.get(id)) return false;
     await fs.rm(path.dirname(this.file(id)), { recursive: true });
     return true;
+  }
+
+  filesDirectory(id: string): string {
+    return path.join(path.dirname(this.file(id)), "files");
+  }
+
+  async listFiles(id: string): Promise<ChatProjectFile[]> {
+    try {
+      return JSON.parse(await fs.readFile(path.join(path.dirname(this.file(id)), "files.json"), "utf8")) as ChatProjectFile[];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private async writeFiles(id: string, files: ChatProjectFile[]): Promise<void> {
+    const target = path.join(path.dirname(this.file(id)), "files.json");
+    const tmp = target + "." + crypto.randomUUID() + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(files), "utf8");
+    await fs.rename(tmp, target);
+  }
+
+  private async mutateFiles<T>(id: string, mutate: () => Promise<T>): Promise<T> {
+    const key = this.file(id);
+    const previous = fileMutations.get(key) ?? Promise.resolve();
+    const result = previous.then(mutate);
+    const settled = result.then(() => {}, () => {});
+    fileMutations.set(key, settled);
+    try { return await result; }
+    finally { if (fileMutations.get(key) === settled) fileMutations.delete(key); }
+  }
+
+  async addFile(id: string, file: ChatProjectFile, data: Buffer): Promise<void> {
+    if (!isSafeChatProjectId(file.id)) throw new Error("Invalid file id");
+    await this.mutateFiles(id, async () => {
+      await fs.mkdir(this.filesDirectory(id), { recursive: true });
+      await fs.writeFile(path.join(this.filesDirectory(id), file.id), data);
+      await this.writeFiles(id, [...await this.listFiles(id), file]);
+    });
+  }
+
+  async updateFile(id: string, file: ChatProjectFile): Promise<void> {
+    await this.mutateFiles(id, async () => {
+      await this.writeFiles(id, (await this.listFiles(id)).map((item) => item.id === file.id ? file : item));
+    });
+  }
+
+  async deleteFile(id: string, fileId: string): Promise<boolean> {
+    if (!isSafeChatProjectId(fileId)) throw new Error("Invalid file id");
+    return this.mutateFiles(id, async () => {
+      const files = await this.listFiles(id);
+      if (!files.some((file) => file.id === fileId)) return false;
+      await fs.rm(path.join(this.filesDirectory(id), fileId), { force: true });
+      await this.writeFiles(id, files.filter((file) => file.id !== fileId));
+      return true;
+    });
   }
 
   private validateName(name: string): string {

@@ -42,6 +42,7 @@ import {
   buildContainerLaunchSpec,
   cleanupLaunchFilesystem,
   remapAttachmentsToContainer,
+  remapProjectContextToContainer,
   prepareLaunchFilesystem,
 } from "./launch-spec.js";
 import { ContainerInputBuilder } from "./input-builder.js";
@@ -412,8 +413,9 @@ export function getContainerAdapter(): SdkAdapter {
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       let toolTimer: ReturnType<typeof setTimeout> | undefined;
       let maxRunTimeTimer: ReturnType<typeof setTimeout> | undefined;
-      const renderedContext = params.context
-        ? renderAgentContext(params.context)
+      const containerContext = remapProjectContextToContainer(params.context);
+      const renderedContext = containerContext
+        ? renderAgentContext(containerContext)
         : "";
       let handleSettled = false;
 
@@ -521,10 +523,10 @@ export function getContainerAdapter(): SdkAdapter {
         };
         params.onSessionHandle?.(handle);
 
-        if (renderedContext && params.context) {
+        if (renderedContext && containerContext) {
           params.onHistoryEvent({
             type: "system_context",
-            context: params.context,
+            context: containerContext,
             rendered: renderedContext,
             timestamp: Date.now(),
           });

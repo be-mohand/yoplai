@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderAgentContext } from "@yoplai/shared";
 
-const { resolveSessionProject, get } = vi.hoisted(() => ({ resolveSessionProject: vi.fn(), get: vi.fn() }));
+const { resolveSessionProject, get, listFiles } = vi.hoisted(() => ({ resolveSessionProject: vi.fn(), get: vi.fn(), listFiles: vi.fn() }));
 vi.mock("../history/store.js", () => ({ resolveSessionProject }));
 vi.mock("../config/index.js", () => ({ CONFIG_DIR: "/tmp/context-test" }));
 vi.mock("./store.js", () => ({
   isSafeChatProjectId: (id: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(id),
-  ChatProjectStore: class { get = get; },
+  ChatProjectStore: class { get = get; listFiles = listFiles; filesDirectory = () => "/tmp/context-test/files"; },
 }));
 import { ProjectContextResolver } from "./context-resolver.js";
 
 describe("ProjectContextResolver", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.clearAllMocks(); listFiles.mockResolvedValue([]); });
   it("omits project context outside a project", async () => {
     resolveSessionProject.mockResolvedValue(null);
     expect(await new ProjectContextResolver().resolve({ agentId: "alpha", sessionId: "chat" })).toBeUndefined();
@@ -33,6 +33,29 @@ describe("ProjectContextResolver", () => {
     resolveSessionProject.mockResolvedValue(null);
     expect(await resolver.resolve({ agentId: "alpha", sessionId: "chat" })).toBeUndefined();
   });
+  it("includes small text and large file names within budget, refreshing deletions next turn", async () => {
+    resolveSessionProject.mockResolvedValue("work");
+    get.mockResolvedValue({ instructions: "Read files." });
+    const small = { id: "small", name: "notes.txt", size: 12, text: "Useful notes" };
+    const large = { id: "large", name: "book.txt", size: 5000, text: "x".repeat(5000) };
+    listFiles.mockResolvedValue([small, large]);
+    const resolver = new ProjectContextResolver();
+    const result = await resolver.resolve({ agentId: "alpha", sessionId: "chat" });
+    expect(result?.project?.files).toContain("Useful notes");
+    expect(result?.project?.files).toContain("book.txt");
+    expect(result?.project?.files).not.toContain(large.text);
+    expect(result?.project?.filesPath).toBe("/tmp/context-test/files");
+    listFiles.mockResolvedValue(Array.from({ length: 100 }, (_, index) => ({ ...small, id: String(index), text: "z".repeat(4000) })));
+    expect((await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files?.length).toBeLessThanOrEqual(12000);
+    listFiles.mockResolvedValue(Array.from({ length: 20 }, (_, index) => ({ ...small, id: String(index), text: "😀".repeat(1900) })));
+    const unicode = (await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files ?? "";
+    expect(Buffer.byteLength(unicode, "utf8")).toBeLessThanOrEqual(12000);
+    expect(unicode).toContain("Additional files omitted");
+    expect(unicode).not.toContain("�");
+    listFiles.mockResolvedValue([]);
+    expect((await resolver.resolve({ agentId: "alpha", sessionId: "chat" }))?.project?.files).toBe("");
+  });
+
   it("ignores a stale project hint after a move or removal", async () => {
     resolveSessionProject.mockResolvedValue("work");
     get.mockImplementation(async (id) => id === "work" ? { instructions: "Current instructions." } : null);

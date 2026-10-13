@@ -13,7 +13,7 @@ import {
   getMountedOnecliCaPath,
   usesGatewaySocket,
 } from "../../agents/container.js";
-import { remapAttachmentsToContainer } from "./launch-spec.js";
+import { remapAttachmentsToContainer, remapProjectContextToContainer } from "./launch-spec.js";
 import { ContainerToolBridge } from "./tool-bridge.js";
 import { logWarn } from "../../logging.js";
 import { configuredModelSupportsImages } from "../../media/describe.js";
@@ -70,7 +70,7 @@ export class ContainerInputBuilder {
       attachments: remapAttachmentsToContainer(params.attachments),
       imageInputSupported,
       thinkLevel: params.thinkLevel,
-      context: params.context,
+      context: remapProjectContextToContainer(params.context),
       systemFiles: systemFiles.map((file) => ({
         path: file.path,
         content: file.content,

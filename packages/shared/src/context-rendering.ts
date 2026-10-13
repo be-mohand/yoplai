@@ -221,6 +221,8 @@ export function renderAgentContext(ctx: AgentContext): string {
   if (ctx.kind === "web") rendered = renderUserContext(ctx);
   if (ctx.project) {
     const block = ["[PROJECT CONTEXT]", ctx.project.instructions,
+      ctx.project.filesPath ? `Project files (read-only): ${ctx.project.filesPath}` : "",
+      ctx.project.files,
       "from the project instructions, files and notes, look for additional useful wiki sources and propose adding them as project references",
       "[END PROJECT CONTEXT]"].filter(Boolean).join("\n");
     rendered = [rendered, block].filter(Boolean).join("\n\n");

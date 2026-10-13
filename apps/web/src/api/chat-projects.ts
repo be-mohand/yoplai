@@ -28,3 +28,16 @@ export async function moveChatToProject(agentId: string, sessionId: string, proj
   });
   if (!response.ok) throw new Error("Unable to move chat. Try again.");
 }
+
+export type ChatProjectFile = { id: string; name: string; size: number; mimeType: string; extracted?: boolean; extractionError?: string };
+export const fetchChatProjectFiles = (id: string) => request<{ items: ChatProjectFile[] }>(`/${encodeURIComponent(id)}/files`);
+export const deleteChatProjectFile = (id: string, fileId: string) => request<unknown>(`/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+export async function uploadChatProjectFile(id: string, file: File): Promise<void> {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await apiFetch(`${API_BASE}/chat-projects/${encodeURIComponent(id)}/files`, { method: "POST", body, signal: AbortSignal.timeout(90000) });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Unable to upload file. Try again." }));
+    throw new Error(error.error || "Unable to upload file. Try again.");
+  }
+}

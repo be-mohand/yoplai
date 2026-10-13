@@ -1,12 +1,14 @@
 import { A, useNavigate, useParams } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { fetchAgents, fetchAgentSessions, startNewChat } from "../api";
-import { deleteChatProject, fetchChatProject, renameChatProject, updateChatProjectInstructions } from "../api/chat-projects";
+import { deleteChatProjectFile, fetchChatProjectFiles, uploadChatProjectFile, deleteChatProject, fetchChatProject, renameChatProject, updateChatProjectInstructions } from "../api/chat-projects";
 
 export function ChatProject() {
   const params = useParams();
   const navigate = useNavigate();
   const [project, { refetch }] = createResource(() => params.id, fetchChatProject);
+  const [files, { refetch: refetchFiles }] = createResource(() => params.id, fetchChatProjectFiles);
+  const [uploading, setUploading] = createSignal(false);
   const [sessions, { refetch: refetchSessions }] = createResource(() => params.id, async () => (await fetchAgentSessions()).items);
   const refresh = () => { void refetch(); void refetchSessions(); };
   window.addEventListener("chat-projects-changed", refresh);
@@ -71,6 +73,29 @@ export function ChatProject() {
           <textarea id="project-instructions" value={instructions()} onInput={(event) => setInstructions(event.currentTarget.value)} rows={6} />
           <button type="submit" disabled={saving()}>{saving() ? "Saving…" : "Save instructions"}</button>
         </form>
+        <section class="project-instructions" aria-label="Project files">
+          <h2>Files</h2>
+          <label for="project-file-upload">Upload file</label>
+          <input id="project-file-upload" type="file" disabled={uploading()} onChange={async (event) => {
+            const input = event.currentTarget;
+            const file = input.files?.[0];
+            if (!file) return;
+            setUploading(true); setError("");
+            try { await uploadChatProjectFile(item().id, file); await refetchFiles(); }
+            catch (error) { setError(error instanceof Error ? error.message : "Unable to upload file. Try again."); }
+            finally { setUploading(false); input.value = ""; }
+          }} />
+          <Show when={uploading()}><p>Uploading…</p></Show>
+          <Show when={files.error}><p role="alert">Unable to load files. Try again.</p></Show>
+          <ul><For each={files()?.items ?? []}>{(file) => <li>
+            <span>{file.name} · {file.size} bytes{file.extractionError ? " · Text extraction unavailable" : ""}</span>
+            <button type="button" aria-label={`Delete ${file.name}`} onClick={async () => {
+              setError("");
+              try { await deleteChatProjectFile(item().id, file.id); await refetchFiles(); }
+              catch { setError("Unable to delete file. Try again."); }
+            }}>Delete</button>
+          </li>}</For></ul>
+        </section>
         <Show when={!sessions.loading && chats().length === 0}><p>No chats in this project. Use a chat's menu to move it here.</p></Show>
         <ul class="project-chats"><For each={chats()}>{(session) => <li>
           <A href={`/chat/${encodeURIComponent(session.agentId)}?session=${encodeURIComponent(session.sessionId)}`}>

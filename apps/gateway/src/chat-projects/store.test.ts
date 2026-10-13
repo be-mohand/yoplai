@@ -37,6 +37,31 @@ describe("ChatProjectStore", () => {
     expect(await store.get(project.id)).toMatchObject({ instructions: "" });
   });
 
+  it("stores originals, metadata and deletions within the owning user project", async () => {
+    const store = new ChatProjectStore(dir, "alice");
+    const project = await store.create("Research");
+    const file = { id: "file-1", name: "notes.txt", mimeType: "text/plain", size: 5, createdAt: 1, text: "Notes" };
+    await store.addFile(project.id, file, Buffer.from("Notes"));
+    expect(await fs.readFile(path.join(store.filesDirectory(project.id), file.id), "utf8")).toBe("Notes");
+    expect(await store.listFiles(project.id)).toEqual([file]);
+    expect(await new ChatProjectStore(dir, "bob").listFiles(project.id)).toEqual([]);
+    expect(await store.deleteFile(project.id, "../escape").catch((error: Error) => error.message)).toBe("Invalid file id");
+    expect(await store.deleteFile(project.id, file.id)).toBe(true);
+    expect(await store.listFiles(project.id)).toEqual([]);
+    expect(await fs.readdir(store.filesDirectory(project.id))).toEqual([]);
+    expect(await store.deleteFile(project.id, file.id)).toBe(false);
+  });
+
+  it("serializes concurrent file mutations across store instances", async () => {
+    const store = new ChatProjectStore(dir);
+    const project = await store.create("Research");
+    const files = Array.from({ length: 10 }, (_, index) => ({ id: "file-" + index, name: "notes.txt", mimeType: "text/plain", size: 5, createdAt: 1 }));
+    await Promise.all(files.map((file) => new ChatProjectStore(dir).addFile(project.id, file, Buffer.from("Notes"))));
+    expect(await store.listFiles(project.id)).toHaveLength(10);
+    await Promise.all(files.map((file) => store.deleteFile(project.id, file.id)));
+    expect(await store.listFiles(project.id)).toEqual([]);
+  });
+
   it("rejects unsafe paths and empty or oversized names", async () => {
     const store = new ChatProjectStore(dir);
     for (const id of ["", "..", "../escape", "a/b", "a\\b", "\0", "a".repeat(101)]) {

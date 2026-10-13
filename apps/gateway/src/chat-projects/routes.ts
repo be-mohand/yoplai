@@ -1,8 +1,11 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { CONFIG_DIR } from "../config/index.js";
+import { extractText } from "../media/extract.js";
+import { MAX_UPLOAD_SIZE_BYTES, resolveUploadMimeType, UploadTypeError } from "../media/upload.js";
 import { appendSessionMeta } from "../history/store.js";
 import { isSafeSessionId, parseSessionFileName } from "../history/sessions.js";
 import { ChatProjectStore, isSafeChatProjectId } from "./store.js";
@@ -41,6 +44,43 @@ export function createChatProjectRoutes(deps: {
     const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
     const project = await store.update(id, { name: body.name, instructions: body.instructions });
     return project ? c.json(project) : c.json({ error: "Project not found" }, 404);
+  });
+  routes.get("/chat-projects/:id/files", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    return c.json({ items: (await store.listFiles(id)).map(({ text, ...file }) => ({ ...file, extracted: Boolean(text) })) });
+  });
+  routes.post("/chat-projects/:id/files", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    const body = await c.req.parseBody();
+    const upload = body.file;
+    if (!(upload instanceof File)) return c.json({ error: "File required" }, 400);
+    if (upload.size > MAX_UPLOAD_SIZE_BYTES) return c.json({ error: "File exceeds the 25MB upload limit" }, 413);
+    let mimeType: string;
+    try { mimeType = resolveUploadMimeType(upload.type, upload.name); }
+    catch (error) { if (error instanceof UploadTypeError) return c.json({ error: error.message }, 400); throw error; }
+    const file = { id: crypto.randomUUID(), name: upload.name.split(/[\\/]/).pop()!.slice(0, 200), mimeType, size: upload.size, createdAt: Date.now() };
+    await store.addFile(id, file, Buffer.from(await upload.arrayBuffer()));
+    try {
+      const text = await extractText(path.join(store.filesDirectory(id), file.id), mimeType);
+      await store.updateFile(id, { ...file, ...(text ? { text: text.slice(0, 250_000) } : {}) });
+    } catch {
+      await store.updateFile(id, { ...file, extractionError: "Text extraction unavailable; the original file is retained." });
+    }
+    return c.json(file, 201);
+  });
+  routes.delete("/chat-projects/:id/files/:fileId", async (c) => {
+    const id = c.req.param("id");
+    const fileId = c.req.param("fileId");
+    if (!isSafeChatProjectId(id) || !isSafeChatProjectId(fileId)) return c.json({ error: "Invalid id" }, 400);
+    const store = new ChatProjectStore(CONFIG_DIR, await deps.getUserId(c));
+    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    return await store.deleteFile(id, fileId) ? c.json({ ok: true }) : c.json({ error: "File not found" }, 404);
   });
   routes.delete("/chat-projects/:id", async (c) => {
     const id = c.req.param("id");
