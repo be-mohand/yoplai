@@ -406,6 +406,7 @@ export async function runAgent(
     const context = await new ProjectContextResolver().resolve({
       agentId: params.agentId, sessionId, userId: params.userId,
       projectId: params.projectId, context: params.context,
+      sessionHistory: sdkId !== "openclaw" && loadConfig().sessionHistory?.enabled !== false,
     });
 
     // Persist the user message before the adapter runs so a failure before

@@ -15,6 +15,7 @@ export class ProjectContextResolver {
     sessionId: string;
     userId?: string;
     projectId?: string;
+    sessionHistory?: boolean;
     context?: AgentContext;
   }): Promise<AgentContext | undefined> {
     const context = params.context ? { ...params.context } : undefined;
@@ -54,6 +55,6 @@ export class ProjectContextResolver {
     const allNotes = await store.getNotes(id);
     let notes = allNotes.slice(-PROJECT_NOTES_CONTEXT_LIMIT);
     if (notes.length < allNotes.length && notes.charCodeAt(0) >= 0xdc00 && notes.charCodeAt(0) <= 0xdfff) notes = notes.slice(1);
-    return { ...(context ?? { kind: "web" }), project: { id, instructions: project.instructions ?? "", filesPath, files, references, notes } };
+    return { ...(context ?? { kind: "web" }), project: { id, instructions: project.instructions ?? "", filesPath, files, references, notes, ...(params.sessionHistory ? { sessionHistory: true } : {}) } };
   }
 }

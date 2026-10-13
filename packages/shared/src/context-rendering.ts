@@ -225,6 +225,7 @@ export function renderAgentContext(ctx: AgentContext): string {
       ctx.project.files,
       ctx.project.references ? `Project references:\n${ctx.project.references}` : "",
       ctx.project.notes ? `Project notes (latest):\n${ctx.project.notes}` : "",
+      ctx.project.sessionHistory ? "session_history: you can list, search and read earlier chats in this project, including those of other agents." : "",
       "from the project instructions, files and notes, look for additional useful wiki sources and propose adding them as project references",
       "[END PROJECT CONTEXT]"].filter(Boolean).join("\n");
     rendered = [rendered, block].filter(Boolean).join("\n\n");

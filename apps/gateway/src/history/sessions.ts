@@ -18,9 +18,37 @@ export type SessionSummary = {
   isMain: boolean;
 };
 
+/** Owner persisted in the first canonical history entry of a file, or null (legacy/unreadable). */
+export function readPersistedOwner(
+  raw: string
+): { agentId: string; sessionId: string } | null {
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("{")) continue;
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      if (
+        entry.type === "history" &&
+        typeof entry.agentId === "string" &&
+        typeof entry.sessionId === "string"
+      ) {
+        return { agentId: entry.agentId, sessionId: entry.sessionId };
+      }
+    } catch {
+      // Ignore malformed history lines.
+    }
+  }
+  return null;
+}
+
+/**
+ * Split a history filename into agent and session. A persisted owner is used
+ * only when it reproduces the filename exactly; otherwise fall back to
+ * configured-agent prefix matching (legacy entries).
+ */
 export function parseSessionFileName(
   file: string,
-  agentIds: string[]
+  agentIds: string[],
+  persisted?: { agentId: string; sessionId: string } | null
 ): { agentId: string; sessionId: string; createdAt: number } | null {
   if (!file.endsWith(".jsonl")) return null;
   const base = file.slice(0, -".jsonl".length);
@@ -33,6 +61,14 @@ export function parseSessionFileName(
         `${timestampMatch[1]}:${timestampMatch[2]}:${timestampMatch[3]}.${timestampMatch[4]}`
       )
     : 0;
+  const createdAtValue = Number.isFinite(createdAt) ? createdAt : 0;
+  if (
+    persisted &&
+    persisted.sessionId &&
+    name === `${persisted.agentId}-${persisted.sessionId}`
+  ) {
+    return { ...persisted, createdAt: createdAtValue };
+  }
   const agentId = [...agentIds]
     .sort((a, b) => b.length - a.length)
     .find((id) => name.startsWith(`${id}-`));
@@ -42,7 +78,7 @@ export function parseSessionFileName(
   return {
     agentId,
     sessionId,
-    createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+    createdAt: createdAtValue,
   };
 }
 
@@ -149,10 +185,50 @@ export async function summarizeSessionFile(params: {
   };
 }
 
-/** Interactive sessions of one agent for one user, newest activity first. Excludes CLI/subagent run histories. */
-export async function listAgentSessionSummaries(
+/** Current project of one session read from disk without writing; null when untagged or missing. */
+export async function readSessionProjectId(
   agentId: string,
+  sessionId: string,
   userId?: string
+): Promise<string | null> {
+  const dir = getUserHistoryDir(userId, CONFIG_DIR);
+  let files: string[] = [];
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return null;
+  }
+  for (const file of files) {
+    const parsed = parseSessionFileName(file, [agentId]);
+    if (parsed?.sessionId !== sessionId) continue;
+    const raw = await fs.readFile(path.join(dir, file), "utf8").catch(() => "");
+    const owner = readPersistedOwner(raw);
+    if (owner && (owner.agentId !== agentId || owner.sessionId !== sessionId)) continue;
+    let projectId: string | null = null;
+    for (const line of raw.split(/\r?\n/)) {
+      try {
+        const entry = JSON.parse(line) as Record<string, unknown>;
+        if (entry.type === "meta" && entry.key === "project") {
+          projectId = typeof entry.value === "string" ? entry.value : null;
+        }
+      } catch {
+        // Ignore malformed history lines, as session summaries do.
+      }
+    }
+    return projectId;
+  }
+  return null;
+}
+
+/**
+ * Interactive sessions for one user, newest activity first. Excludes CLI/subagent run histories.
+ * Owners come from persisted history entries (so removed agents resolve); `fallbackAgentIds`
+ * parse legacy files. `onlyAgentIds` restricts the result to those owners.
+ */
+async function listSessionSummaries(
+  userId: string | undefined,
+  fallbackAgentIds: string[],
+  onlyAgentIds?: string[]
 ): Promise<SessionSummary[]> {
   const dir = getUserHistoryDir(userId, CONFIG_DIR);
   let files: string[] = [];
@@ -163,9 +239,12 @@ export async function listAgentSessionSummaries(
   }
   const items = await Promise.all(
     files.map(async (file) => {
-      const parsed = parseSessionFileName(file, [agentId]);
+      if (!file.endsWith(".jsonl")) return null;
+      const raw = await fs.readFile(path.join(dir, file), "utf8").catch(() => "");
+      const parsed = parseSessionFileName(file, fallbackAgentIds, readPersistedOwner(raw));
       if (
         !parsed ||
+        (onlyAgentIds && !onlyAgentIds.includes(parsed.agentId)) ||
         !sessionIdIsInteractive(parsed.sessionId) ||
         /^(cli|subagent)[:-]/.test(parsed.sessionId)
       ) {
@@ -181,4 +260,21 @@ export async function listAgentSessionSummaries(
   return items
     .filter((item): item is SessionSummary => item !== null)
     .sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+/** Interactive sessions of the given agent(s) for one user. */
+export async function listAgentSessionSummaries(
+  agentId: string | string[],
+  userId?: string
+): Promise<SessionSummary[]> {
+  const ids = Array.isArray(agentId) ? agentId : [agentId];
+  return listSessionSummaries(userId, ids, ids);
+}
+
+/** Interactive sessions of every owner, including removed agents; `configuredAgentIds` parse legacy files. */
+export async function listAllSessionSummaries(
+  userId: string | undefined,
+  configuredAgentIds: string[]
+): Promise<SessionSummary[]> {
+  return listSessionSummaries(userId, configuredAgentIds);
 }

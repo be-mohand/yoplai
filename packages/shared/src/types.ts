@@ -2310,7 +2310,7 @@ export type AgentContext = (
   | TelegramContext
   | IrcContext
   | UserContext
-) & { project?: { id?: string; instructions: string; filesPath?: string; files?: string; references?: string; notes?: string } };
+) & { project?: { id?: string; instructions: string; filesPath?: string; files?: string; references?: string; notes?: string; sessionHistory?: boolean } };
 
 const ContextHistoryBlockSchema = z.object({
   type: z.literal("history"),

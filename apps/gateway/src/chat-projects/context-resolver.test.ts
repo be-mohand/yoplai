@@ -104,4 +104,14 @@ describe("ProjectContextResolver", () => {
     });
     await expect(new ProjectContextResolver().resolve({ agentId: "alpha", sessionId: "new", projectId: "research" })).rejects.toThrow("Project not found");
   });
+
+  it("renders the session_history hint only when enabled", async () => {
+    const resolver = new ProjectContextResolver();
+    resolveSessionProject.mockResolvedValue("research");
+    get.mockResolvedValue({ instructions: "x" });
+    const on = await resolver.resolve({ agentId: "alpha", sessionId: "c", sessionHistory: true });
+    const off = await resolver.resolve({ agentId: "alpha", sessionId: "c", sessionHistory: false });
+    expect(renderAgentContext(on!)).toContain("session_history:");
+    expect(renderAgentContext(off!)).not.toContain("session_history:");
+  });
 });

@@ -17,6 +17,10 @@ describe("project context", () => {
     expect(rendered.match(/\[PROJECT CONTEXT\]/g)).toHaveLength(1);
     expect(renderAgentContext({ kind: "web" })).not.toContain("PROJECT CONTEXT");
   });
+  it("announces session_history only when enabled for the project", () => {
+    expect(renderAgentContext({ kind: "web", project: { instructions: "", sessionHistory: true } })).toContain("session_history:");
+    expect(renderAgentContext({ kind: "web", project: { instructions: "" } })).not.toContain("session_history");
+  });
   it("keeps the discovery nudge when instructions are empty", () => {
     expect(renderAgentContext({ kind: "web", project: { instructions: "" } })).toContain("propose adding them as project references");
   });
