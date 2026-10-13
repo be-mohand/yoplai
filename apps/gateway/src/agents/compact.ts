@@ -105,6 +105,19 @@ async function resolvePiSessionFile(
   })) as string;
 }
 
+// Canonical file blocks hold only a fileId; Pi providers would send them as
+// dataless images (Anthropic 400s). Seed Pi with a text reference instead.
+function toPiContent(content: ContentBlock[]): ContentBlock[] {
+  return content.map((block) =>
+    block.type === "file"
+      ? {
+          type: "text",
+          text: `[Attached ${block.mimeType.startsWith("image/") ? "image" : "file"}: ${block.filename} (${block.mimeType}) — content not retained after compaction]`,
+        }
+      : block
+  );
+}
+
 async function seedPiSession(params: {
   agentId: string;
   sessionId: string;
@@ -160,7 +173,7 @@ async function seedPiSession(params: {
       type: "message",
       message: {
         role: message.role,
-        content: message.content,
+        content: toPiContent(message.content),
         ...(message.role === "assistant"
           ? { ...compactAssistantMeta(message.meta), usage: ZERO_PI_USAGE }
           : {}),

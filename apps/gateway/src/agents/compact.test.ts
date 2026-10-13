@@ -231,6 +231,51 @@ describe("compact agent session helpers", () => {
     expect(stored).toContain("Authorization: [REDACTED]");
   });
 
+  it("replaces retained file blocks with text so providers never get dataless images", async () => {
+    const { compactAgentSession } = await import("./compact.js");
+    getFullSessionHistory.mockResolvedValue([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "file",
+            fileId: "f1",
+            filename: "shot.png",
+            mimeType: "image/png",
+            size: 10,
+            direction: "inbound",
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+    runAgent.mockResolvedValue({ payloads: [{ text: "summary" }] });
+
+    await compactAgentSession({
+      agentId: "alpha",
+      sessionId: "s1",
+      sessionKey: "main",
+      userId: "u1",
+    });
+
+    const stored =
+      (writeFile.mock.calls.at(-1) as unknown as [string, string] | undefined)
+        ?.at(1) ?? "";
+    const user = stored
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.message?.role === "user")
+      .at(-1);
+    expect(user.message.content).toEqual([
+      { type: "text", text: "look" },
+      { type: "text", text: expect.stringContaining("shot.png") },
+    ]);
+    const canonical = replaceCanonicalHistoryWithCompaction.mock.calls.at(-1)?.[0];
+    expect(canonical.recentMessages[0].content[1].type).toBe("file");
+  });
+
   it("seeds retained assistant messages with zeroed usage so Pi can read it", async () => {
     const { compactAgentSession } = await import("./compact.js");
     getFullSessionHistory.mockResolvedValue([
