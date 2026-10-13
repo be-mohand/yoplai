@@ -88,30 +88,64 @@ describe("ChatProject", () => {
     expect(container.textContent).not.toContain("Wiki section");
   });
 
-  it("edits notes and preserves the draft after a timed out save", async () => {
+  const cardButton = (heading: string, label: string) =>
+    Array.from(container.querySelector(`#${heading}`)!.closest(".project-card")!.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === label
+    )!;
+  const modalButton = (label: string) =>
+    Array.from(document.querySelectorAll(".ui-modal button")).find((b) => b.textContent?.trim().startsWith(label)) as HTMLButtonElement;
+  const editorTextarea = () => document.querySelector<HTMLTextAreaElement>(".ui-modal textarea")!;
+  const typeInEditor = (value: string) => {
+    editorTextarea().value = value;
+    editorTextarea().dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const pressSave = (init: KeyboardEventInit) =>
+    editorTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
+
+  it("renders notes as static markdown and edits them in a modal with Ctrl+Enter", async () => {
+    fetchNotes.mockResolvedValue({ text: "# Learnings\n\n- Shared project learning" });
+    dispose?.(); dispose = render(() => <ChatProject />, container);
     await tick();
-    const textarea = container.querySelector<HTMLTextAreaElement>("#project-notes")!;
-    expect(textarea.value).toBe("- Shared project learning");
-    textarea.value = "- Another agent can use this";
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    const card = container.querySelector("#notes-heading")!.closest(".project-card")!;
+    expect(card.querySelector("textarea")).toBeNull();
+    expect(card.querySelector(".project-markdown h1")?.textContent).toBe("Learnings");
+    expect(card.querySelector(".project-markdown li")?.textContent).toBe("Shared project learning");
+    cardButton("notes-heading", "Edit").click();
     await tick();
+    expect(editorTextarea().value).toBe("# Learnings\n\n- Shared project learning");
+    expect(document.querySelector(".ui-modal h2")?.textContent).toBe("Edit notes");
+    typeInEditor("- Another agent can use this");
     await tick();
-    const notesCard = textarea.closest(".project-card")!;
-    const saveButton = Array.from(notesCard.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Save");
-    expect(saveButton).toBeTruthy();
-    saveButton!.click();
+    pressSave({ ctrlKey: true });
+    await tick();
     await tick();
     expect(saveNotes).toHaveBeenCalledWith("project-1", "- Another agent can use this");
+    expect(document.querySelector(".ui-modal")).toBeNull();
+  });
+
+  it("keeps the notes modal open with the draft when save fails", async () => {
+    await tick();
+    cardButton("notes-heading", "Edit").click();
+    await tick();
     saveNotes.mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError"));
-    fetchNotes.mockResolvedValue({ text: "- Shared project learning" });
-    textarea.value = "- New draft after save";
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    typeInEditor("- New draft");
     await tick();
-    saveButton!.click();
+    modalButton("Save").click();
     await tick();
     await tick();
-    expect(container.querySelector(".project-error")?.textContent).toContain("Unable to save notes");
-    expect(textarea.value).toBe("- New draft after save");
+    expect(document.querySelector(".ui-modal__error")?.textContent).toContain("Unable to save notes");
+    expect(editorTextarea().value).toBe("- New draft");
+  });
+
+  it("shows empty states with an Add affordance", async () => {
+    fetchNotes.mockResolvedValue({ text: "" });
+    fetchProject.mockResolvedValue({ id: "project-1", name: "Writing", instructions: "" });
+    dispose?.(); dispose = render(() => <ChatProject />, container);
+    await tick();
+    expect(container.textContent).toContain("No notes yet.");
+    expect(container.textContent).toContain("No instructions yet.");
+    expect(cardButton("notes-heading", "Add")).toBeTruthy();
+    expect(cardButton("instructions-heading", "Add")).toBeTruthy();
   });
 
   it("keeps project actions available after reference removal fails", async () => {
@@ -169,27 +203,52 @@ describe("ChatProject", () => {
     expect(input.disabled).toBe(false);
   });
 
-  it("loads and saves project instructions and reports save failures", async () => {
+  it("renders instructions as markdown and saves from the modal with Cmd+Enter", async () => {
+    fetchProject.mockResolvedValue({ id: "project-1", name: "Writing", instructions: "# Rules\n\nBe **concise**." });
+    dispose?.(); dispose = render(() => <ChatProject />, container);
     await tick();
-    const textarea = container.querySelector<HTMLTextAreaElement>("#project-instructions")!;
-    expect(textarea.value).toBe("Be concise.");
-    textarea.value = "Cite useful sources.";
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    const card = container.querySelector("#instructions-heading")!.closest(".project-card")!;
+    expect(card.querySelector(".project-markdown strong")?.textContent).toBe("concise");
+    cardButton("instructions-heading", "Edit").click();
     await tick();
+    expect(document.querySelector(".ui-modal h2")?.textContent).toBe("Edit instructions");
+    expect(editorTextarea().value).toBe("# Rules\n\nBe **concise**.");
+    typeInEditor("Cite useful sources.");
     await tick();
-    const instructionsCard = textarea.closest(".project-card")!;
-    const saveButton = Array.from(instructionsCard.querySelectorAll("button")).find((btn) => btn.textContent?.trim() === "Save");
-    expect(saveButton).toBeTruthy();
-    saveButton!.click();
+    pressSave({ metaKey: true });
+    await tick();
     await tick();
     expect(saveInstructions).toHaveBeenCalledWith("project-1", "Cite useful sources.");
+    expect(document.querySelector(".ui-modal")).toBeNull();
+  });
+
+  it("discards the draft on Esc and Cancel without calling the API", async () => {
+    await tick();
+    cardButton("instructions-heading", "Edit").click();
+    await tick();
+    typeInEditor("discard me");
+    await tick();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await tick();
+    expect(document.querySelector(".ui-modal")).toBeNull();
+    cardButton("instructions-heading", "Edit").click();
+    await tick();
+    expect(editorTextarea().value).toBe("Be concise.");
+    modalButton("Cancel").click();
+    await tick();
+    expect(document.querySelector(".ui-modal")).toBeNull();
+    expect(saveInstructions).not.toHaveBeenCalled();
+  });
+
+  it("keeps the instructions modal open when save fails", async () => {
+    await tick();
+    cardButton("instructions-heading", "Edit").click();
+    await tick();
     saveInstructions.mockRejectedValueOnce(new Error("Unavailable"));
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-    await tick();
-    saveButton!.click();
+    modalButton("Save").click();
     await tick();
     await tick();
-    expect(container.querySelector(".project-error")?.textContent).toContain("Unable to save instructions");
+    expect(document.querySelector(".ui-modal__error")?.textContent).toContain("Unable to save instructions");
   });
 
   it("renders 'Project not found.' and link to /agents when fetchChatProject rejects (404) without throwing", async () => {

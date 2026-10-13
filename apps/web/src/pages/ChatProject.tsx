@@ -17,7 +17,7 @@ import {
 import { Modal } from "../components/ui/Modal";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Button } from "../components/ui/Button";
-import { TextAreaField } from "../components/ui/Field";
+import { renderMarkdown } from "../lib/markdown";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -47,6 +47,12 @@ function getFileIcon(mimeType?: string): string {
   return "fa-file";
 }
 
+const IS_MAC =
+  typeof navigator !== "undefined" &&
+  /mac|iphone|ipad/i.test(
+    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? ""
+  );
+
 export function ChatProject() {
   const params = useParams();
   const navigate = useNavigate();
@@ -54,18 +60,6 @@ export function ChatProject() {
   const [files, { refetch: refetchFiles }] = createResource(() => params.id, fetchChatProjectFiles);
   const [references, { refetch: refetchReferences }] = createResource(() => params.id, fetchChatProjectReferences);
   const [notes, { refetch: refetchNotes }] = createResource(() => params.id, fetchChatProjectNotes);
-  const [notesText, setNotesText] = createSignal("");
-  const [savingNotes, setSavingNotes] = createSignal(false);
-  const [notesDirty, setNotesDirty] = createSignal(false);
-  const [noteSaved, setNoteSaved] = createSignal(false);
-  const [lastSubmittedNotes, setLastSubmittedNotes] = createSignal("");
-  createEffect(() => {
-    const text = notesData()?.text ?? "";
-    if (notesText() === lastSubmittedNotes()) {
-      setNotesText(text);
-      setNotesDirty(false);
-    }
-  });
   const [uploading, setUploading] = createSignal(false);
   // Reading an errored Solid resource throws; route all render-time reads through these.
   const projectData = () => (project.error ? undefined : project());
@@ -88,18 +82,10 @@ export function ChatProject() {
   onCleanup(() => window.removeEventListener("chat-projects-changed", refresh));
   const [agents] = createResource(fetchAgents);
   const [choosingAgent, setChoosingAgent] = createSignal(false);
-  const [instructions, setInstructions] = createSignal("");
-  const [savingInstructions, setSavingInstructions] = createSignal(false);
-  const [instructionsDirty, setInstructionsDirty] = createSignal(false);
-  const [instructionsSaved, setInstructionsSaved] = createSignal(false);
-  const [lastSubmittedInstructions, setLastSubmittedInstructions] = createSignal("");
-  createEffect(() => {
-    const text = projectData()?.instructions ?? "";
-    if (instructions() === lastSubmittedInstructions()) {
-      setInstructions(text);
-      setInstructionsDirty(false);
-    }
-  });
+  const [editing, setEditing] = createSignal<"instructions" | "notes" | null>(null);
+  const [draft, setDraft] = createSignal("");
+  const [savingEdit, setSavingEdit] = createSignal(false);
+  const [editError, setEditError] = createSignal("");
   const [error, setError] = createSignal("");
   const [editingTitle, setEditingTitle] = createSignal(false);
   const [titleInput, setTitleInput] = createSignal("");
@@ -191,42 +177,52 @@ export function ChatProject() {
     setTitleInput(projectData()?.name ?? "");
   };
 
-  const saveInstructions = async () => {
-    if (!projectData()) return;
-    const textToSave = instructions();
-    setSavingInstructions(true);
-    setError("");
+  const openEditor = (kind: "instructions" | "notes") => {
+    setDraft(kind === "instructions" ? projectData()?.instructions ?? "" : notesData()?.text ?? "");
+    setEditError("");
+    setEditing(kind);
+  };
+
+  const closeEditor = () => {
+    if (savingEdit()) return;
+    setEditing(null);
+  };
+
+  const saveEdit = async () => {
+    const kind = editing();
+    const current = projectData();
+    if (!kind || !current || savingEdit()) return;
+    setSavingEdit(true);
+    setEditError("");
     try {
-      await updateChatProjectInstructions(projectData()!.id, textToSave);
-      setLastSubmittedInstructions(textToSave);
-      await refetch();
-      changed();
-      setInstructionsDirty(false);
-      setInstructionsSaved(true);
-      setTimeout(() => setInstructionsSaved(false), 1500);
+      if (kind === "instructions") {
+        await updateChatProjectInstructions(current.id, draft());
+        await refetch();
+        changed();
+      } else {
+        await updateChatProjectNotes(current.id, draft());
+        await refetchNotes();
+      }
+      setEditing(null);
     } catch {
-      setError("Unable to save instructions. Try again.");
+      setEditError(`Unable to save ${kind}. Try again.`);
     } finally {
-      setSavingInstructions(false);
+      setSavingEdit(false);
     }
   };
 
-  const saveNotes = async () => {
-    if (!projectData()) return;
-    const textToSave = notesText();
-    setSavingNotes(true);
-    setError("");
-    try {
-      await updateChatProjectNotes(projectData()!.id, textToSave);
-      setLastSubmittedNotes(textToSave);
-      setNotesDirty(false);
-      setNoteSaved(true);
-      setTimeout(() => setNoteSaved(false), 1500);
-    } catch {
-      setError("Unable to save notes. Try again.");
-    } finally {
-      setSavingNotes(false);
+  const handleEditorKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void saveEdit();
     }
+  };
+
+  const focusEditorAtEnd = (el: HTMLTextAreaElement) => {
+    queueMicrotask(() => {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
   };
 
   const uploadSingleFile = async (file: File) => {
@@ -468,34 +464,19 @@ export function ChatProject() {
               <section class="project-card" aria-labelledby="instructions-heading">
                 <div class="project-card-header">
                   <h2 id="instructions-heading" class="project-card-label">Instructions</h2>
+                  <span class="project-card-edit">
+                    <Button variant="ghost" icon="fa-solid fa-pen" onClick={() => openEditor("instructions")}>
+                      {projectData()?.instructions?.trim() ? "Edit" : "Add"}
+                    </Button>
+                  </span>
                 </div>
                 <div class="project-card-body">
-                  <TextAreaField
-                    label=""
-                    placeholder="What should agents know when working in this project?"
-                    value={instructions()}
-                    onInput={(e) => {
-                      setInstructions(e.currentTarget.value);
-                      setInstructionsDirty(true);
-                      setInstructionsSaved(false);
-                    }}
-                    rows={5}
-                    id="project-instructions"
-                    aria-label="Instructions"
-                  />
-                  <div class="project-card-footer">
-                    <Show when={instructionsSaved()}>
-                    <span class="project-saved-label">Saved</span>
-                  </Show>
-                    <Button
-                    variant="primary"
-                    onClick={() => void saveInstructions()}
-                    disabled={!instructionsDirty() || savingInstructions()}
-                    loading={savingInstructions()}
+                  <Show
+                    when={projectData()?.instructions?.trim()}
+                    fallback={<p class="project-card-empty">No instructions yet.</p>}
                   >
-                    Save
-                  </Button>
-                  </div>
+                    {(text) => <div class="project-markdown markdown-content" innerHTML={renderMarkdown(text())} />}
+                  </Show>
                 </div>
               </section>
 
@@ -611,6 +592,13 @@ export function ChatProject() {
                     <h2 id="notes-heading" class="project-card-label">Notes</h2>
                     <span class="project-card-hint">Agents append here; you can edit.</span>
                   </div>
+                  <Show when={!notes.error}>
+                    <span class="project-card-edit">
+                      <Button variant="ghost" icon="fa-solid fa-pen" disabled={notes.loading} onClick={() => openEditor("notes")}>
+                        {notesData()?.text?.trim() ? "Edit" : "Add"}
+                      </Button>
+                    </span>
+                  </Show>
                 </div>
                 <div class="project-card-body">
                   <Show when={notes.error}>
@@ -620,39 +608,51 @@ export function ChatProject() {
                     </Button>
                   </Show>
                   <Show when={!notes.error}>
-                    <TextAreaField
-                      label=""
-                      value={notesText()}
-                      onInput={(e) => {
-                        setNotesText(e.currentTarget.value);
-                        setNotesDirty(true);
-                        setNoteSaved(false);
-                      }}
-                      rows={12}
-                      disabled={savingNotes() || notes.loading || Boolean(notes.error)}
-                      id="project-notes"
-                      aria-label="Notes"
-                    />
+                    <Show
+                      when={notesData()?.text?.trim()}
+                      fallback={<p class="project-card-empty">No notes yet.</p>}
+                    >
+                      {(text) => <div class="project-markdown markdown-content" innerHTML={renderMarkdown(text())} />}
+                    </Show>
                   </Show>
-                  <div class="project-card-footer">
-                    <Show when={noteSaved()}>
-                    <span class="project-saved-label">Saved</span>
-                  </Show>
-                    <Button
-                    variant="primary"
-                    onClick={() => void saveNotes()}
-                    disabled={!notesDirty() || savingNotes() || notes.loading || Boolean(notes.error)}
-                    loading={savingNotes()}
-                  >
-                    Save
-                  </Button>
-                  </div>
                 </div>
               </section>
             </div>
           </div>
         </>
       )}</Show>
+
+      <Show when={editing()}>
+        {(kind) => (
+          <Modal
+            title={kind() === "instructions" ? "Edit instructions" : "Edit notes"}
+            size="lg"
+            error={editError() || undefined}
+            onClose={closeEditor}
+            footer={
+              <>
+                <Button variant="secondary" onClick={closeEditor} disabled={savingEdit()}>
+                  Cancel <kbd class="project-kbd">esc</kbd>
+                </Button>
+                <Button variant="primary" onClick={() => void saveEdit()} loading={savingEdit()} loadingLabel="Saving…">
+                  Save <kbd class="project-kbd">{IS_MAC ? "⌘ ↵" : "Ctrl ↵"}</kbd>
+                </Button>
+              </>
+            }
+          >
+            <textarea
+              ref={focusEditorAtEnd}
+              class="project-editor-textarea"
+              aria-label={kind() === "instructions" ? "Instructions" : "Notes"}
+              placeholder={kind() === "instructions" ? "What should agents know when working in this project?" : undefined}
+              value={draft()}
+              disabled={savingEdit()}
+              onInput={(e) => setDraft(e.currentTarget.value)}
+              onKeyDown={handleEditorKeyDown}
+            />
+          </Modal>
+        )}
+      </Show>
 
       <Show when={choosingAgent()}>
         <Modal
@@ -1174,11 +1174,125 @@ export function ChatProject() {
           line-height: 1.5;
         }
 
-        .project-card-footer {
-          display: flex;
-          justify-content: flex-end;
-          align-items: center;
-          gap: 8px;
+        .project-card-edit {
+          opacity: 0;
+          transition: opacity 150ms;
+        }
+
+        .project-card-edit .ui-button {
+          padding: 3px 8px;
+          font-size: 12px;
+        }
+
+        .project-card:hover .project-card-edit,
+        .project-card:focus-within .project-card-edit {
+          opacity: 1;
+        }
+
+        @media (hover: none) {
+          .project-card-edit {
+            opacity: 1;
+          }
+        }
+
+        .project-card-empty {
+          margin: 0;
+          font-size: 13px;
+          color: var(--text-tertiary);
+        }
+
+        .project-markdown {
+          max-height: 240px;
+          overflow-y: auto;
+          font-size: 13px;
+          line-height: 1.55;
+          color: var(--text-primary);
+          overflow-wrap: anywhere;
+          scrollbar-width: thin;
+          scrollbar-gutter: stable;
+          scrollbar-color: transparent transparent;
+          transition: scrollbar-color 150ms ease;
+        }
+
+        .project-card:hover .project-markdown,
+        .project-markdown:focus-within {
+          scrollbar-color: var(--scrollbar-thumb) transparent;
+        }
+
+        .project-markdown::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .project-markdown::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .project-markdown::-webkit-scrollbar-thumb {
+          background: transparent;
+          border-radius: 999px;
+        }
+
+        .project-card:hover .project-markdown::-webkit-scrollbar-thumb {
+          background: var(--scrollbar-thumb);
+        }
+
+        .project-markdown h1,
+        .project-markdown h2,
+        .project-markdown h3,
+        .project-markdown h4,
+        .project-markdown h5,
+        .project-markdown h6 {
+          margin: 12px 0 4px;
+          font-size: 13px;
+          font-weight: 650;
+          text-transform: none;
+          letter-spacing: normal;
+          color: var(--text-primary);
+        }
+
+        .project-markdown p,
+        .project-markdown ul,
+        .project-markdown ol {
+          margin: 0 0 8px;
+        }
+
+        .project-markdown ul,
+        .project-markdown ol {
+          padding-left: 18px;
+        }
+
+        .project-markdown pre {
+          overflow-x: auto;
+        }
+
+        .project-editor-textarea {
+          width: 100%;
+          height: 60vh;
+          box-sizing: border-box;
+          resize: none;
+          border: 1px solid var(--border-default);
+          border-radius: 6px;
+          background: var(--bg-overlay);
+          color: var(--text-primary);
+          padding: 10px 12px;
+          font-size: 13px;
+          line-height: 1.55;
+          font-family: inherit;
+        }
+
+        .project-editor-textarea:focus-visible {
+          outline: 2px solid rgba(59, 130, 246, 0.6);
+          outline-offset: 2px;
+        }
+
+        .project-kbd {
+          padding: 0 5px;
+          border: 1px solid currentColor;
+          border-radius: 4px;
+          font-family: inherit;
+          font-size: 11px;
+          line-height: 1.5;
+          opacity: 0.65;
         }
 
         .project-not-found {
@@ -1190,11 +1304,6 @@ export function ChatProject() {
 
         .project-not-found a {
           color: var(--text-primary);
-        }
-
-        .project-saved-label {
-          font-size: 12px;
-          color: var(--text-tertiary);
         }
 
         .project-loading,

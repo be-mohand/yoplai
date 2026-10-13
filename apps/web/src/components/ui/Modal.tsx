@@ -5,7 +5,7 @@ type ModalProps = {
   onClose: () => void;
   children: JSX.Element;
   footer?: JSX.Element;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   initialFocus?: HTMLElement;
   dismissible?: boolean;
   error?: string;
@@ -93,7 +93,7 @@ export function Modal(props: ModalProps) {
       <section
         ref={panelRef}
         class="ui-modal"
-        classList={{ "ui-modal--sm": props.size === "sm" }}
+        classList={{ "ui-modal--sm": props.size === "sm", "ui-modal--lg": props.size === "lg" }}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -137,6 +137,10 @@ export function Modal(props: ModalProps) {
 
         .ui-modal--sm {
           width: min(400px, 100%);
+        }
+
+        .ui-modal--lg {
+          width: min(720px, 100%);
         }
 
         .ui-modal__header {
