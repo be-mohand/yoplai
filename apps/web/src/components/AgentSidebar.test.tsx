@@ -578,7 +578,7 @@ describe("AgentSidebar", () => {
 
   it("shows Archive menu item for non-main session and calls archiveAgentSession", async () => {
     vi.useFakeTimers();
-    fetchAgentSessionsMock.mockResolvedValue({
+    fetchAgentSessionsMock.mockResolvedValueOnce({
       items: [
         {
           agentId: "alpha",
@@ -591,7 +591,7 @@ describe("AgentSidebar", () => {
           pinned: null,
         },
       ],
-    });
+    }).mockResolvedValue({ items: [] });
     setPathname("/chat/alpha");
     const container = document.createElement("div");
     document.body.appendChild(container);

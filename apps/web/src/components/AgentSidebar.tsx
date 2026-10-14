@@ -353,6 +353,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                       navigate(`/chat/${session.agentId}`);
                     }
                     showToast("Chat archived", "success");
+                    window.dispatchEvent(new Event("chat-projects-changed"));
                   } catch (err) {
                     setSessionError(err instanceof Error ? err.message : "Failed to archive session. Try again.");
                   }

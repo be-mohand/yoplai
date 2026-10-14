@@ -65,6 +65,10 @@ export function SessionArchive() {
     void refresh();
   });
 
+  const onSessionsChanged = () => void refresh();
+  window.addEventListener("chat-projects-changed", onSessionsChanged);
+  onCleanup(() => window.removeEventListener("chat-projects-changed", onSessionsChanged));
+
   const restore = async (session: SessionSummary) => {
     setError(undefined);
     try {

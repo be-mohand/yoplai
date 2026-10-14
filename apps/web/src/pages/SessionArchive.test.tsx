@@ -196,4 +196,62 @@ describe("SessionArchive", () => {
     openButton!.click();
     expect(navigateMock).toHaveBeenCalledWith("/chat/delta?session=s4");
   });
+
+  it("refreshes list on chat-projects-changed event", async () => {
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "epsilon",
+          sessionId: "s5",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 5,
+          firstUserMessage: "First archived",
+          archived: Date.now() - 3600000,
+          isMain: false,
+          pinned: null,
+        },
+      ],
+    });
+    dispose = render(() => <SessionArchive />, root);
+    await tick();
+    expect(root.textContent).toContain("First archived");
+    const rows = root.querySelectorAll(".archive-session");
+    expect(rows.length).toBe(1);
+
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "epsilon",
+          sessionId: "s5",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 5,
+          firstUserMessage: "First archived",
+          archived: Date.now() - 3600000,
+          isMain: false,
+          pinned: null,
+        },
+        {
+          agentId: "zeta",
+          sessionId: "s6",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 3,
+          firstUserMessage: "Second archived",
+          archived: Date.now() - 1800000,
+          isMain: false,
+          pinned: null,
+        },
+      ],
+    });
+
+    window.dispatchEvent(new Event("chat-projects-changed"));
+    await tick();
+
+    const updatedRows = root.querySelectorAll(".archive-session");
+    expect(updatedRows.length).toBe(2);
+    expect(root.textContent).toContain("First archived");
+    expect(root.textContent).toContain("Second archived");
+  });
 });
