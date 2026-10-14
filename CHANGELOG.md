@@ -18,6 +18,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Preserve the complete chat transcript after Pi compaction, show expandable summaries and the compaction status in both history views, and load older messages on demand without counting archived usage toward active context.
 - Give gateway tools per-call timeouts and cooperative cancellation so a hung tool returns an error without losing the turn.
 - Preserve gateway tool deadlines and cancellation over Unix-socket transport, including dashboard tools.
 - Honor each sandbox tool call's timeout without false idle kills, clamp Bash to the remaining turn budget, and verify stop-to-kill shutdown enforcement.
