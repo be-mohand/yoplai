@@ -2080,6 +2080,7 @@ export type FullHistoryMessage =
       content: ContentBlock[];
       timestamp: number;
       context?: AgentContext;
+      compaction?: { id: string; coveredThrough: number; retainedFrom?: number };
     }
   | {
       role: "user";
