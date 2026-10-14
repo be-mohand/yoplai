@@ -615,9 +615,10 @@ function ActivityGroup(props: {
 }
 
 type FullDisplayRow =
-  | { kind: "activity"; item: ActivityItem }
+  | { kind: "activity"; item: ActivityItem; historyIndex: number }
   | {
       kind: "assistant-content";
+      historyIndex: number;
       block: Extract<ContentBlock, { type: "text" | "file" }>;
       timestamp: number;
       meta?: ModelMeta;
@@ -645,6 +646,7 @@ function fullHistoryDisplayRows(
       if (block.type === "thinking") {
         rows.push({
           kind: "activity",
+          historyIndex,
           item: {
             type: "thinking",
             content: block.thinking,
@@ -655,6 +657,7 @@ function fullHistoryDisplayRows(
       } else if (block.type === "toolCall") {
         rows.push({
           kind: "activity",
+          historyIndex,
           item: {
             type: "tool",
             name: block.name,
@@ -667,6 +670,7 @@ function fullHistoryDisplayRows(
         visibleIndex += 1;
         rows.push({
           kind: "assistant-content",
+          historyIndex,
           block,
           timestamp: message.timestamp,
           meta: message.meta,
@@ -1380,7 +1384,11 @@ export function ChatView() {
     const at = compactStatusForCurrentSession()?.at;
     if (at === undefined) return null;
     const list: { role: string; timestamp: number }[] =
-      viewMode() === "simple" ? simpleMessages() : visibleFullMessages();
+      viewMode() === "simple"
+        ? simpleMessages()
+        : fullHistoryDisplayRows(visibleFullMessages(), toolResultsMap()).map(
+            (row) => visibleFullMessages()[row.historyIndex]
+          );
     for (let i = list.length - 1; i >= 0; i--) {
       if (list[i].role !== "toolResult" && list[i].timestamp <= at) return i;
     }
@@ -3049,6 +3057,7 @@ export function ChatView() {
           <Show when={viewMode() === "full"}>
             <Index each={fullDisplaySegments()}>
               {(segment) => (
+                <>
                 <SegmentView
                   segment={segment()}
                   activity={(items) => (
@@ -3153,6 +3162,10 @@ export function ChatView() {
                     </Switch>
                   )}
                 />
+                <Show when={segment().endIndex === compactStatusAnchorIndex()}>
+                  <CompactStatusView status={compactStatusForCurrentSession()} />
+                </Show>
+                </>
               )}
             </Index>
           </Show>

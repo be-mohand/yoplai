@@ -1369,6 +1369,7 @@ export type ExtensionAgentToolContext = {
   env?: Record<string, string>;
   sessionId?: string;
   userId?: string;
+  signal?: AbortSignal;
   emitProgress?: (event: {
     label: string;
     current?: number;

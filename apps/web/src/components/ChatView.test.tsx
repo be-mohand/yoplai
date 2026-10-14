@@ -891,7 +891,23 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it("runs manual compaction without sending a chat message", async () => {
+  it.each([undefined, "full"])("runs manual compaction with a persisted summary in %s view", async (view) => {
+    routeState.view = view;
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [
+        { role: "assistant", content: [
+          { type: "thinking", thinking: "archived reasoning" },
+          { type: "text", text: "archived answer" },
+          { type: "text", text: "another archived block" },
+        ], timestamp: 1 },
+        { role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nEarlier summary" }], timestamp: 2 },
+        { role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY]\nLatest summary" }], timestamp: 3 },
+        { role: "assistant", content: [{ type: "thinking", thinking: "retained reasoning" }], timestamp: 4 },
+      ],
+      sessionId: "session-main",
+      isStreaming: false,
+      activeTurn: null,
+    });
     const { container, dispose } = renderView();
     await tick();
     await tick();
@@ -916,6 +932,13 @@ describe("ChatView abort handling", () => {
     expect(postCompactMock).toHaveBeenCalledWith("agent-1", "main", undefined);
     expect(streamMessageMock).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Context compacted.");
+    expect(container.querySelectorAll(".compact-status")).toHaveLength(1);
+    const latestSummary = container.querySelectorAll(".compaction-summary")[1];
+    expect(latestSummary.textContent).toContain("Latest summary");
+    expect(
+      latestSummary.compareDocumentPosition(container.querySelector(".compact-status")!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
 
     // Later messages flow below the status instead of above it.
     await new Promise((resolve) => setTimeout(resolve, 2));
@@ -927,6 +950,7 @@ describe("ChatView abort handling", () => {
     await tick();
 
     const status = container.querySelector(".compact-status");
+    expect(container.querySelectorAll(".compact-status")).toHaveLength(1);
     const userMessages = container.querySelectorAll(".message.user");
     const lastUser = userMessages[userMessages.length - 1];
     expect(lastUser?.textContent).toContain("after compact");
