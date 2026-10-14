@@ -493,6 +493,7 @@ function sortedFiles(root: string): string[] {
 export function getAgentImageHash(repoRoot: string): string | null {
   const inputs = [
     "container/agent-runner/Dockerfile",
+    "container/agent-runner/playwright-cli.json",
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",

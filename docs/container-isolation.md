@@ -19,6 +19,8 @@ docker build -t yoplai-agent:latest -f container/agent-runner/Dockerfile .
 
 Default image is also content-hashed and rebuilt by gateway when relevant build inputs drift; custom images are never auto-rebuilt.
 
+The image includes pinned `playwright-cli` and Chromium for dashboard visual checks, with headless launch defaults (`--no-sandbox`, `--disable-dev-shm-usage`). Browser binaries live in the image; browser state/output defaults to `/tmp/playwright`, never the workspace. Follow the dashboard skill's "Check it visually" recipe; no browser installation or custom rendering harness is needed.
+
 ### Rootless Docker
 
 Rootless Docker maps the daemon owner's host uid to container uid 0, so the gateway's own uid names an id that owns nothing inside the container and every bind mount fails with `EACCES`. Set `YOPLAI_CONTAINER_USER=0:0` in the gateway environment. A rootful daemon maps uid to uid and needs no change.
@@ -111,6 +113,10 @@ Custom mounts must resolve beneath allowed roots and avoid blocked patterns. Con
 Pi extension tools work in and out of containers. Sandbox Claude rejects configured extension tools rather than silently dropping them.
 
 Each run gets unique container name, authentication token, and IPC directory. Follow-ups and aborts are addressed by agent/session/run so concurrent containers cannot consume each other's messages.
+
+Pi tool subprocesses receive `YOPLAI_GATEWAY_URL`, `YOPLAI_AGENT_TOKEN`, and `YOPLAI_DASHBOARD_URL_PREFIX` (`$YOPLAI_GATEWAY_URL/internal/dashboards`). The per-run token already enters the container through stdin; exporting it to Bash adds no new trust boundary. Treat these private preview URLs as credentials.
+
+`GET /internal/dashboards/:slug/html` accepts `X-Agent-Token` or a `token` query parameter on this route only, because browser navigation cannot set headers. It renders only the token owner's dashboard, with null viewer bindings, normal query params, optional `theme=light|dark`, the viewer CSP, and `Cache-Control: no-store`. Drill-down links carry the token and theme. Previewing does not record a dashboard version. The browser still has only the sandbox's configured network access.
 
 ## Network and credentials
 

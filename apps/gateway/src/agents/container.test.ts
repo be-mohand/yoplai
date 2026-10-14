@@ -52,6 +52,7 @@ function imageBuildContext(): string {
   const root = tmpDir();
   for (const file of [
     "container/agent-runner/Dockerfile",
+    "container/agent-runner/playwright-cli.json",
     "container/agent-runner/dist/index.js",
     "packages/shared/dist/index.js",
     "package.json",
@@ -76,6 +77,17 @@ describe("ensureAgentImage", () => {
     fs.writeFileSync(
       path.join(root, "container/agent-runner/dist/index.js"),
       "changed"
+    );
+    expect(getAgentImageHash(root)).not.toBe(first);
+  });
+
+  it("changes the image hash when browser launch defaults change", () => {
+    const root = imageBuildContext();
+    const first = getAgentImageHash(root);
+    expect(first).not.toBeNull();
+    fs.writeFileSync(
+      path.join(root, "container/agent-runner/playwright-cli.json"),
+      JSON.stringify({ timeouts: { navigation: 5000 } })
     );
     expect(getAgentImageHash(root)).not.toBe(first);
   });
