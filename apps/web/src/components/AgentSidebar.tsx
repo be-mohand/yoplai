@@ -774,10 +774,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <LazySidebarAccountPanel collapsed={props.collapsed} />
             </Suspense>
           </Show>
-          <A href="/archive" class="archive-link" title="Archive">
-            <i class="fa-solid fa-box-archive" aria-hidden="true" />
-            <span class="archive-label">Archive</span>
-          </A>
+          <Show when={!capabilities.multiUser}>
+            <A href="/archive" class="archive-link" title="Archive">
+              <i class="fa-solid fa-box-archive" aria-hidden="true" />
+              <span class="archive-label">Archive</span>
+            </A>
+          </Show>
           <button
             class="theme-toggle"
             type="button"

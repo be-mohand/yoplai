@@ -632,7 +632,7 @@ describe("AgentSidebar", () => {
     dispose();
   });
 
-  it("shows separator before Delete and Archive link in footer", async () => {
+  it("shows separator before Delete", async () => {
     vi.useFakeTimers();
     fetchAgentSessionsMock.mockResolvedValue({
       items: [
@@ -657,10 +657,38 @@ describe("AgentSidebar", () => {
     );
     await vi.advanceTimersByTimeAsync(1);
     expect(container.querySelector("hr.session-menu-separator")).toBeTruthy();
-    const archiveLink = container.querySelector<HTMLAnchorElement>(".archive-link");
-    expect(archiveLink).toBeTruthy();
-    expect(archiveLink?.getAttribute("href")).toBe("/archive");
-    expect(archiveLink?.textContent).toContain("Archive");
     dispose();
+  });
+
+  it("shows Archive link in footer only when not multiUser", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({ items: [] });
+    setPathname("/chat/alpha");
+    
+    // Single-user mode: Archive link should be present
+    setCapabilitiesForTests({ multiUser: false });
+    const container1 = document.createElement("div");
+    document.body.appendChild(container1);
+    const dispose1 = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container1
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(container1.querySelector(".archive-link")).toBeTruthy();
+    dispose1();
+    container1.remove();
+    
+    // Multi-user mode: Archive link should NOT be present
+    setCapabilitiesForTests({ multiUser: true });
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    const dispose2 = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container2
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(container2.querySelector(".archive-link")).toBeNull();
+    dispose2();
+    container2.remove();
   });
 });

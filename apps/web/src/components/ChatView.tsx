@@ -16,6 +16,7 @@ import {
 } from "solid-js";
 
 import { useParams, useNavigate, useSearchParams, A } from "@solidjs/router";
+import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { toolLabel } from "@yoplai/shared/tool-labels";
 import { refreshToolLabels, toolLabelTemplates } from "../lib/tool-labels";
@@ -28,6 +29,7 @@ import {
   fetchAgent,
   fetchAgentSuggestions,
   fetchAgentSessions,
+  archiveAgentSession,
   subscribeToSession,
   subscribeToRealtime,
   postAbort,
@@ -1081,7 +1083,7 @@ export function ChatView() {
     return undefined;
   });
 
-  const [allSessions] = createResource(
+  const [allSessions, { refetch: refetchSessions }] = createResource(
     () => explicitSessionId(),
     async (sessionId) => {
       if (!sessionId) return { items: [] };
@@ -1094,6 +1096,13 @@ export function ChatView() {
     if (!sid || !allSessions()) return undefined;
     const session = allSessions()?.items.find(s => s.sessionId === sid);
     return session?.projectId ?? undefined;
+  });
+
+  const isSessionArchived = createMemo(() => {
+    const sid = explicitSessionId();
+    if (!sid || !allSessions()) return false;
+    const session = allSessions()?.items.find(s => s.agentId === params.agentId && s.sessionId === sid);
+    return session?.archived != null;
   });
 
   const projectId = () => currentProjectId() ?? sessionProjectId();
@@ -2209,6 +2218,36 @@ export function ChatView() {
       return;
     }
 
+    // Auto-unarchive if sending a message to an archived session
+    if (isSessionArchived()) {
+      try {
+        await archiveAgentSession(params.agentId, explicitSessionId()!, false);
+        // Refetch sessions to clear archived state
+        void refetchSessions();
+        window.dispatchEvent(new Event("chat-projects-changed"));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to restore session. Try again.";
+        setSimpleMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Error: ${message}`,
+            timestamp: Date.now(),
+          },
+        ]);
+        setFullMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: `Error: ${message}` }],
+            timestamp: Date.now(),
+          },
+        ]);
+        return;
+      }
+    }
+
     const isResetCommand =
       text === "/new" ||
       text.startsWith("/new ") ||
@@ -2953,6 +2992,34 @@ export function ChatView() {
           New chat
         </button>
       </header>
+
+      <ArchivedSessionBanner
+        isArchived={isSessionArchived()}
+        onRestore={async () => {
+          await archiveAgentSession(params.agentId, explicitSessionId()!, false);
+          void refetchSessions();
+          window.dispatchEvent(new Event("chat-projects-changed"));
+        }}
+        onError={(message) => {
+          setSimpleMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `Error: ${message}`,
+              timestamp: Date.now(),
+            },
+          ]);
+          setFullMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: [{ type: "text", text: `Error: ${message}` }],
+              timestamp: Date.now(),
+            },
+          ]);
+        }}
+      />
 
       <div class="chat-body">
         <div class="hero-spacer hero-spacer-top" />
@@ -3865,6 +3932,43 @@ export function ChatView() {
         .think-dropdown:focus {
           border-color: var(--accent);
           box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        /* ── Archived session banner ────────────────────────────── */
+        .archived-banner {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px max(18px, calc((100% - var(--transcript-width)) / 2 + 18px));
+          background: color-mix(in srgb, #f59e0b 10%, var(--bg-surface));
+          border-bottom: 1px solid color-mix(in srgb, #f59e0b 20%, transparent);
+          color: var(--text-primary);
+        }
+
+        .archived-banner i {
+          color: #f59e0b;
+          font-size: 16px;
+        }
+
+        .archived-banner-text {
+          flex: 1;
+          font-size: 13px;
+        }
+
+        .archived-banner-restore {
+          padding: 6px 14px;
+          border: none;
+          border-radius: 6px;
+          background: var(--accent);
+          color: white;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.15s ease;
+        }
+
+        .archived-banner-restore:hover {
+          background: color-mix(in srgb, var(--accent) 85%, black);
         }
 
         /* ── Empty-chat hero ─────────────────────────────────────── */
