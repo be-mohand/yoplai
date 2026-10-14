@@ -7,11 +7,13 @@ const {
   archiveAgentSessionMock,
   deleteAgentSessionMock,
   navigateMock,
+  showToastMock,
 } = vi.hoisted(() => ({
   fetchAgentSessionsMock: vi.fn(),
   archiveAgentSessionMock: vi.fn(),
   deleteAgentSessionMock: vi.fn(),
   navigateMock: vi.fn(),
+  showToastMock: vi.fn(),
 }));
 
 vi.mock("../api", () => ({
@@ -28,6 +30,10 @@ vi.mock("../components/LeftNavShell", () => ({
   LeftNavShell: (props: { children: unknown }) => props.children,
 }));
 
+vi.mock("../lib/toast", () => ({
+  showToast: showToastMock,
+}));
+
 import { SessionArchive } from "./SessionArchive";
 
 let root: HTMLDivElement;
@@ -39,6 +45,7 @@ beforeEach(() => {
   archiveAgentSessionMock.mockReset();
   deleteAgentSessionMock.mockReset();
   navigateMock.mockReset();
+  showToastMock.mockReset();
   root = document.createElement("div");
   document.body.appendChild(root);
 });
@@ -119,6 +126,7 @@ describe("SessionArchive", () => {
     restoreButton!.click();
     await tick();
     expect(archiveAgentSessionMock).toHaveBeenCalledWith("alpha", "s1", false);
+    expect(showToastMock).toHaveBeenCalledWith("Chat restored", "success");
     expect(root.textContent).not.toContain("Restore me");
   });
 
@@ -159,6 +167,7 @@ describe("SessionArchive", () => {
     confirmButton!.click();
     await tick();
     expect(deleteAgentSessionMock).toHaveBeenCalledWith("gamma", "s3");
+    expect(showToastMock).toHaveBeenCalledWith("Chat deleted", "success");
     expect(root.textContent).not.toContain("Delete me");
   });
 

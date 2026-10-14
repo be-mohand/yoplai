@@ -8,6 +8,7 @@ import {
 } from "../api";
 import type { SessionSummary } from "../api/types";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { showToast } from "../lib/toast";
 
 function relativeTime(timestamp: number, now: number): string {
   const diff = now - timestamp;
@@ -71,6 +72,7 @@ export function SessionArchive() {
       setSessions((prev) =>
         prev.filter((s) => s.sessionId !== session.sessionId)
       );
+      showToast("Chat restored", "success");
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Failed to restore session"
@@ -87,6 +89,7 @@ export function SessionArchive() {
       setSessions((prev) =>
         prev.filter((s) => s.sessionId !== session.sessionId)
       );
+      showToast("Chat deleted", "success");
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Failed to delete session"

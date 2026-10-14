@@ -15,6 +15,7 @@ const navigateMock = vi.fn();
 const pinAgentSessionMock = vi.fn(async () => {});
 const archiveAgentSessionMock = vi.fn(async () => {});
 const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
+const showToastMock = vi.fn();
 
 class UnauthenticatedError extends Error {
   constructor() {
@@ -38,6 +39,10 @@ vi.mock("../api/chat-projects", () => ({ fetchChatProjects: fetchChatProjectsMoc
 vi.mock("../api/top-extensions", () => ({
   EMPTY_TOP_EXTENSIONS: { extensions: [], mcp: [] },
   fetchTopExtensions: fetchTopExtensionsMock,
+}));
+
+vi.mock("../lib/toast", () => ({
+  showToast: showToastMock,
 }));
 
 vi.mock("@solidjs/router", () => ({
@@ -73,6 +78,7 @@ describe("AgentSidebar", () => {
     pinAgentSessionMock.mockResolvedValue(undefined);
     archiveAgentSessionMock.mockReset();
     archiveAgentSessionMock.mockResolvedValue(undefined);
+    showToastMock.mockReset();
     fetchAgentSessionsMock.mockResolvedValue({ items: [] });
     vi.useRealTimers();
     fetchProjectsMock.mockReset();
@@ -690,5 +696,123 @@ describe("AgentSidebar", () => {
     expect(container2.querySelector(".archive-link")).toBeNull();
     dispose2();
     container2.remove();
+  });
+
+  it("closes session menu on outside click", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "alpha",
+          sessionId: "s1",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 3,
+          firstUserMessage: "Test chat",
+          isMain: false,
+          pinned: null,
+        },
+      ],
+    });
+    setPathname("/chat/alpha");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    
+    const menu = container.querySelector<HTMLDetailsElement>("details.session-actions");
+    expect(menu).toBeTruthy();
+    expect(menu!.open).toBe(false);
+    
+    // Open menu
+    menu!.setAttribute("open", "");
+    expect(menu!.open).toBe(true);
+    
+    // Click outside (on document.body which doesn't contain the menu)
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    
+    expect(menu!.open).toBe(false);
+    dispose();
+  });
+
+  it("closes session menu on Escape key", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "alpha",
+          sessionId: "s1",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 3,
+          firstUserMessage: "Test chat",
+          isMain: false,
+          pinned: null,
+        },
+      ],
+    });
+    setPathname("/chat/alpha");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    
+    const menu = container.querySelector<HTMLDetailsElement>("details.session-actions");
+    expect(menu).toBeTruthy();
+    
+    // Open menu
+    menu!.setAttribute("open", "");
+    expect(menu!.open).toBe(true);
+    
+    // Press Escape
+    const escapeEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+    document.dispatchEvent(escapeEvent);
+    await vi.advanceTimersByTimeAsync(0);
+    
+    expect(menu!.open).toBe(false);
+    dispose();
+  });
+
+  it("shows toast on successful archive", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "alpha",
+          sessionId: "s1",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 3,
+          firstUserMessage: "Archive me",
+          isMain: false,
+          pinned: null,
+        },
+      ],
+    });
+    setPathname("/chat/alpha");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    
+    const archiveButton = Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action")).find(
+      (btn) => btn.textContent?.includes("Archive")
+    );
+    expect(archiveButton).toBeTruthy();
+    archiveButton!.click();
+    await vi.advanceTimersByTimeAsync(1);
+    
+    expect(showToastMock).toHaveBeenCalledWith("Chat archived", "success");
+    dispose();
   });
 });

@@ -48,6 +48,7 @@ import {
 } from "./lib/web-route-registry";
 import { documentTitle } from "./lib/document-title";
 import { stripBase } from "./lib/path";
+import { ToastHost } from "./lib/toast";
 
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
@@ -243,6 +244,7 @@ function Layout(props: { children?: JSX.Element }) {
           <OnboardingTour />
           <ConnectToolsPrompt />
         </div>
+        <ToastHost />
       </Show>
       <Show
         when={

@@ -7,6 +7,7 @@ import {
   createResource,
   createSignal,
   onCleanup,
+  onMount,
   lazy,
 } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
@@ -31,6 +32,7 @@ import { TextField } from "./ui/Field";
 import { Button } from "./ui/Button";
 import type { SessionSummary } from "../api/types";
 import { hasStaffRole as hasAdminRole } from "../lib/roles";
+import { showToast } from "../lib/toast";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
@@ -177,6 +179,47 @@ export function AgentSidebar(props: AgentSidebarProps) {
     document.removeEventListener("visibilitychange", refreshSessions);
   });
 
+  // Close session/project menus on outside click or Escape
+  onMount(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
+      openMenus.forEach((menu) => {
+        if (!menu.contains(event.target as Node)) {
+          menu.removeAttribute("open");
+        }
+      });
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
+        openMenus.forEach((menu) => menu.removeAttribute("open"));
+      }
+    };
+
+    // Close other menus when opening one
+    const handleToggle = (event: Event) => {
+      const menu = event.target as HTMLDetailsElement;
+      if (menu.open && menu.classList.contains("session-actions")) {
+        document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]").forEach((otherMenu) => {
+          if (otherMenu !== menu) {
+            otherMenu.removeAttribute("open");
+          }
+        });
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    document.addEventListener("toggle", handleToggle, true);
+
+    onCleanup(() => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("toggle", handleToggle, true);
+    });
+  });
+
   const visibleSessions = () => {
     const query = search().trim().toLowerCase();
     return query
@@ -309,6 +352,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                     if (chatRouteSession(location.pathname, location.search).sessionId === session.sessionId) {
                       navigate(`/chat/${session.agentId}`);
                     }
+                    showToast("Chat archived", "success");
                   } catch (err) {
                     setSessionError(err instanceof Error ? err.message : "Failed to archive session. Try again.");
                   }

@@ -72,6 +72,7 @@ import {
   type ActivitySegment,
   streamingActivityItems,
 } from "../lib/chat-activity";
+import { showToast } from "../lib/toast";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -2222,6 +2223,7 @@ export function ChatView() {
     if (isSessionArchived()) {
       try {
         await archiveAgentSession(params.agentId, explicitSessionId()!, false);
+        showToast("Chat restored", "success");
         // Refetch sessions to clear archived state
         void refetchSessions();
         window.dispatchEvent(new Event("chat-projects-changed"));
@@ -2997,6 +2999,7 @@ export function ChatView() {
         isArchived={isSessionArchived()}
         onRestore={async () => {
           await archiveAgentSession(params.agentId, explicitSessionId()!, false);
+          showToast("Chat restored", "success");
           void refetchSessions();
           window.dispatchEvent(new Event("chat-projects-changed"));
         }}
