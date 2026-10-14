@@ -1071,6 +1071,11 @@ export const GlobalSandboxConfigSchema = z.object({
   sharedDir: z.string().optional(),
   network: SandboxNetworkSchema.optional(),
   mountAllowlist: MountAllowlistSchema.optional(),
+  // How sandboxed runs reach the gateway's /internal routes (tool bridge,
+  // OAuth renewal). "http" dials host.docker.internal; "socket" bind-mounts a
+  // Unix socket serving only /internal, for daemons whose containers cannot
+  // reach the host (rootless Docker blocks the host loopback).
+  gatewayTransport: z.enum(["http", "socket"]).optional(),
 });
 export type GlobalSandboxConfig = z.infer<typeof GlobalSandboxConfigSchema>;
 
@@ -2421,6 +2426,9 @@ export const ContainerInputSchema = z.object({
   sessionDir: z.string(),
   ipcDir: z.string(),
   gatewayUrl: z.string(),
+  // When set, gateway calls go through this Unix socket instead of the
+  // network; gatewayUrl then only supplies the path.
+  gatewaySocketPath: z.string().optional(),
   agentToken: z.string(),
   // Gateway-clock deadline, shared by retries and queued follow-ups.
   turnDeadlineAt: z.number().finite().optional(),

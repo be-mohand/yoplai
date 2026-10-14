@@ -23,6 +23,20 @@ Default image is also content-hashed and rebuilt by gateway when relevant build 
 
 Rootless Docker maps the daemon owner's host uid to container uid 0, so the gateway's own uid names an id that owns nothing inside the container and every bind mount fails with `EACCES`. Set `YOPLAI_CONTAINER_USER=0:0` in the gateway environment. A rootful daemon maps uid to uid and needs no change.
 
+Rootless Docker also blocks the host loopback from containers, so a run cannot reach the gateway at `host.docker.internal` and every gateway tool (`dashboard_link`, scheduler tools, `extract_document`, extension and MCP tools) and OAuth renewal fail with `fetch failed`. Use the socket transport below.
+
+### Gateway transport
+
+Sandboxed runs call the gateway's `/internal` routes for every gateway-provided tool and for OAuth token renewal. By default they dial `http://host.docker.internal:<port>`, which needs a network path from the container to the host. Rootless Docker removes that path, and Docker `internal` networks (the default sandbox network) are designed to have no route out either.
+
+Set the root `sandbox.gatewayTransport` to `socket` to use a Unix socket instead:
+
+```json
+{ "sandbox": { "gatewayTransport": "socket" } }
+```
+
+The gateway then also listens on `$YOPLAI_HOME/run/sandbox-gateway/gateway.sock` (directory `0700`, socket `0600`), serving only `/internal`: nothing else of the gateway, notably `/api`, is reachable through it, and every call still requires the run's agent token. The socket starts whenever the socket transport is configured, even before any agent is sandboxed, so an agent whose sandbox is enabled later by a config reload finds it listening; changing `gatewayTransport` itself takes a gateway restart. Each sandboxed run mounts that directory read-only at `/run/yoplai`. No network route to the host is needed. The socket is owned by the gateway user, which matches the container user in both rootful (`--user` = gateway uid) and rootless (`YOPLAI_CONTAINER_USER=0:0`) setups. Docker Desktop on macOS cannot pass Unix sockets through its file sharing; keep the default `http` there.
+
 ## Enable one agent
 
 ```yaml

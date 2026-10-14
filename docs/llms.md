@@ -210,6 +210,7 @@ Use schemas in `packages/shared` and broker code in `apps/gateway/src/server/ws-
 - Each run gets a unique container name, token, and IPC namespace.
 - Agent data mounts writable at `/workspace/data`; uploads mount read-only at `/workspace/uploads`.
 - Workspace `.env` is shadowed; only explicitly forwarded safe env and sandbox env reach container.
+- Container-to-gateway calls (`/internal/tools`, `/internal/oauth-token`) use `host.docker.internal` by default, or a read-only mounted Unix socket serving only `/internal` when root `sandbox.gatewayTransport` is `socket` (`apps/gateway/src/server/internal-socket.ts`, `ContainerInput.gatewaySocketPath`).
 - Custom mounts must pass configured allowlist/blocklist checks.
 - Extension prompt/tool metadata is serialized into `ContainerInput`; tools call back through authenticated `/internal/tools`.
 - Outbound file requests must resolve inside allowed data paths; gateway copies/registers them in managed media storage.

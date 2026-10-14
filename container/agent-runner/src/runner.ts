@@ -775,7 +775,8 @@ function gatewayTool(
         params,
         input.agentId,
         input.sessionId,
-        input.runId
+        input.runId,
+        input.gatewaySocketPath
       );
       const text = await formatGatewayToolResult(
         input,
