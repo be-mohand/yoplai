@@ -1039,6 +1039,112 @@ describe("dashboard kit assets", () => {
     ]);
   });
 
+  it("ignores errors thrown by browser extensions injected into the page", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const dom = new JSDOM("<main></main>", {
+      runScripts: "outside-only",
+      url: "https://yoplai.test",
+    });
+    dom.window.eval(await (await routes.request("/v2/kit.js")).text());
+    // Seen in Chrome with the Jimo extension: its main-world script reads
+    // sessionStorage, which the sandboxed dashboard document forbids.
+    const storageError =
+      "Uncaught SecurityError: Failed to read the 'sessionStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.";
+    for (const filename of [
+      "chrome-extension://fchhipkldmfpfiocdoehmnnkcclmhbpg/jimo-extension.js",
+      "moz-extension://1b2c3d/content.js",
+      "safari-web-extension://ABC/inject.js",
+    ]) {
+      dom.window.dispatchEvent(
+        new dom.window.ErrorEvent("error", {
+          message: storageError,
+          filename,
+          lineno: 1,
+        })
+      );
+    }
+    const extensionRejection = new dom.window.Event(
+      "unhandledrejection"
+    ) as Event & { reason?: unknown };
+    extensionRejection.reason = Object.assign(new Error("ext failed"), {
+      stack: "Error: ext failed\n    at chrome-extension://abc/inject.js:1:10",
+    });
+    dom.window.dispatchEvent(extensionRejection);
+    expect(dom.window.document.querySelector(".dk-error-banner")).toBeNull();
+
+    // The page's own errors still surface.
+    dom.window.dispatchEvent(
+      new dom.window.ErrorEvent("error", {
+        message: "boom",
+        filename: "https://yoplai.test/d/abc",
+        lineno: 3,
+      })
+    );
+    expect(
+      dom.window.document.querySelector(".dk-error-banner div")?.textContent
+    ).toBe("This dashboard hit an error: boom (line 3)");
+  });
+
+  it("keeps dashboard errors that only mention an extension URL", async () => {
+    const routes = createDashboardAssetRoutes(() => config);
+    const load = async () => {
+      const dom = new JSDOM("<main></main>", {
+        runScripts: "outside-only",
+        url: "https://yoplai.test",
+      });
+      dom.window.eval(await (await routes.request("/v2/kit.js")).text());
+      return dom;
+    };
+    const banner = (dom: JSDOM) =>
+      dom.window.document.querySelector(".dk-error-banner div")?.textContent;
+    const rejectWith = (dom: JSDOM, stack: string) => {
+      const event = new dom.window.Event("unhandledrejection") as Event & {
+        reason?: unknown;
+      };
+      event.reason = Object.assign(new Error("ext failed"), { stack });
+      dom.window.dispatchEvent(event);
+    };
+
+    // The page's own error, whose message names an extension URL.
+    let dom = await load();
+    dom.window.dispatchEvent(
+      new dom.window.ErrorEvent("error", {
+        message: "Cannot load chrome-extension://abc/data.json",
+        filename: "https://yoplai.test/d/abc",
+        lineno: 7,
+        error: Object.assign(new Error("x"), {
+          stack:
+            "Error: x\n    at render (https://yoplai.test/d/abc:7:1)\n    at chrome-extension://abc/hook.js:1:1",
+        }),
+      })
+    );
+    expect(banner(dom)).toBe(
+      "This dashboard hit an error: Cannot load chrome-extension://abc/data.json (line 7)"
+    );
+
+    // A rejection raised by the page; an extension frame further down the
+    // stack (e.g. a wrapped fetch) does not make it the extension's.
+    dom = await load();
+    rejectWith(
+      dom,
+      "Error: ext failed\n    at load (https://yoplai.test/d/abc:3:5)\n    at chrome-extension://abc/inject.js:1:10"
+    );
+    expect(banner(dom)).toBe("This dashboard hit an error: ext failed");
+
+    // A V8 message mentioning an extension is not a frame either.
+    dom = await load();
+    rejectWith(dom, "Error: see chrome-extension://abc/x.js");
+    expect(banner(dom)).toBe("This dashboard hit an error: ext failed");
+
+    // A Firefox-style stack whose first frame is the extension is ignored.
+    dom = await load();
+    rejectWith(
+      dom,
+      "inject@moz-extension://1b2c3d/content.js:1:10\nrender@https://yoplai.test/d/abc:3:5"
+    );
+    expect(dom.window.document.querySelector(".dk-error-banner")).toBeNull();
+  });
+
   it("formats values, caps tables, and degrades charts without ECharts", async () => {
     const routes = createDashboardAssetRoutes(() => config);
     const dom = new JSDOM(
