@@ -5,7 +5,8 @@ description: >-
   when an answer is recurring, data-heavy, or something people will revisit;
   when asked for a dashboard, report, OKRs, team/company KPI rollups, PTO,
   recruiting/ATS, clients, customer health, or a QBR; or when updating an
-  existing dashboard.
+  existing dashboard; or when asked to visually check, verify, or screenshot a
+  dashboard (Chromium and playwright-cli are available in the sandbox).
 ---
 
 # Dashboard
