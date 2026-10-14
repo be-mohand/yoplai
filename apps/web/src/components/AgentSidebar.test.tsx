@@ -13,6 +13,7 @@ const fetchChatProjectsMock = vi.fn(async () => ({ items: [] as { id: string; na
 const moveChatToProjectMock = vi.fn(async () => {});
 const navigateMock = vi.fn();
 const pinAgentSessionMock = vi.fn(async () => {});
+const archiveAgentSessionMock = vi.fn(async () => {});
 const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
 
 class UnauthenticatedError extends Error {
@@ -28,6 +29,7 @@ vi.mock("../api", () => ({
   deleteAgentSession: vi.fn(),
   renameAgentSession: vi.fn(),
   pinAgentSession: pinAgentSessionMock,
+  archiveAgentSession: archiveAgentSessionMock,
   UnauthenticatedError,
 }));
 
@@ -69,6 +71,8 @@ describe("AgentSidebar", () => {
     setPathname("/projects");
     pinAgentSessionMock.mockReset();
     pinAgentSessionMock.mockResolvedValue(undefined);
+    archiveAgentSessionMock.mockReset();
+    archiveAgentSessionMock.mockResolvedValue(undefined);
     fetchAgentSessionsMock.mockResolvedValue({ items: [] });
     vi.useRealTimers();
     fetchProjectsMock.mockReset();
@@ -563,6 +567,100 @@ describe("AgentSidebar", () => {
     );
     expect(container.textContent).toContain("Restart tour");
     expect(container.textContent).not.toContain("Connect tools");
+    dispose();
+  });
+
+  it("shows Archive menu item for non-main session and calls archiveAgentSession", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "alpha",
+          sessionId: "s1",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 1,
+          firstUserMessage: "Regular chat",
+          isMain: false,
+          pinned: null,
+        },
+      ],
+    });
+    setPathname("/chat/alpha");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    const actions = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action"));
+    expect(actions().find((btn) => btn.textContent?.includes("Archive"))).toBeTruthy();
+    actions().find((btn) => btn.textContent?.includes("Archive"))!.click();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(archiveAgentSessionMock).toHaveBeenCalledWith("alpha", "s1", true);
+    expect(container.querySelector(".session-title-text")).toBeNull();
+    dispose();
+  });
+
+  it("hides Archive menu item for main session", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "alpha",
+          sessionId: "main",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 5,
+          firstUserMessage: "Main chat",
+          isMain: true,
+          pinned: null,
+        },
+      ],
+    });
+    setPathname("/chat/alpha");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    const actions = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".session-action"));
+    expect(actions().find((btn) => btn.textContent?.includes("Archive"))).toBeFalsy();
+    dispose();
+  });
+
+  it("shows separator before Delete and Archive link in footer", async () => {
+    vi.useFakeTimers();
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [
+        {
+          agentId: "alpha",
+          sessionId: "s1",
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          messageCount: 1,
+          firstUserMessage: "Test chat",
+          isMain: false,
+          pinned: null,
+        },
+      ],
+    });
+    setPathname("/chat/alpha");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      container
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(container.querySelector("hr.session-menu-separator")).toBeTruthy();
+    const archiveLink = container.querySelector<HTMLAnchorElement>(".archive-link");
+    expect(archiveLink).toBeTruthy();
+    expect(archiveLink?.getAttribute("href")).toBe("/archive");
+    expect(archiveLink?.textContent).toContain("Archive");
     dispose();
   });
 });

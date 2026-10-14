@@ -1085,7 +1085,7 @@ export function ChatView() {
     () => explicitSessionId(),
     async (sessionId) => {
       if (!sessionId) return { items: [] };
-      return fetchAgentSessions();
+      return fetchAgentSessions({ includeArchived: true });
     }
   );
 

@@ -20,6 +20,7 @@ import {
   fetchAgentSessions,
   renameAgentSession,
   pinAgentSession,
+  archiveAgentSession,
   UnauthenticatedError,
 } from "../api";
 import { fetchChatProjects, moveChatToProject, deleteChatProject, renameChatProject, type ChatProject } from "../api/chat-projects";
@@ -260,18 +261,25 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 }
               }}
             >
+              <i class="fa-solid fa-thumbtack" aria-hidden="true" />
               {session.pinned == null ? "Pin" : "Unpin"}
             </button>
             <button type="button" class="session-action" onClick={(event) => {
               event.currentTarget.closest("details")?.removeAttribute("open");
               setMoveChatError("");
               setMovingSession(session);
-            }}>Move to project…</button>
+            }}>
+              <i class="fa-solid fa-folder" aria-hidden="true" />
+              Move to project…
+            </button>
             <Show when={session.projectId}>
               <button type="button" class="session-action" onClick={async () => {
                 try { await moveChatToProject(session.agentId, session.sessionId, null); await refreshSessions(); window.dispatchEvent(new Event("chat-projects-changed")); setSessionError(""); }
                 catch { setSessionError("Unable to remove chat from project. Try again."); }
-              }}>Remove from project</button>
+              }}>
+                <i class="fa-solid fa-folder-minus" aria-hidden="true" />
+                Remove from project
+              </button>
             </Show>
             <button
               type="button"
@@ -284,8 +292,33 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 setRenamingSession(session);
               }}
             >
+              <i class="fa-solid fa-pen" aria-hidden="true" />
               Rename
             </button>
+            <Show when={!session.isMain}>
+              <button
+                type="button"
+                class="session-action"
+                aria-label="Archive session"
+                onClick={async (event) => {
+                  event.currentTarget.closest("details")?.removeAttribute("open");
+                  setSessionError("");
+                  try {
+                    await archiveAgentSession(session.agentId, session.sessionId, true);
+                    setSessions((prev) => prev.filter((s) => s.sessionId !== session.sessionId));
+                    if (chatRouteSession(location.pathname, location.search).sessionId === session.sessionId) {
+                      navigate(`/chat/${session.agentId}`);
+                    }
+                  } catch (err) {
+                    setSessionError(err instanceof Error ? err.message : "Failed to archive session. Try again.");
+                  }
+                }}
+              >
+                <i class="fa-solid fa-box-archive" aria-hidden="true" />
+                Archive
+              </button>
+            </Show>
+            <hr class="session-menu-separator" />
             <button
               type="button"
               class="session-action danger"
@@ -295,6 +328,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 setDeletingSession(session);
               }}
             >
+              <i class="fa-solid fa-trash" aria-hidden="true" />
               Delete
             </button>
           </div>
@@ -740,6 +774,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <LazySidebarAccountPanel collapsed={props.collapsed} />
             </Suspense>
           </Show>
+          <A href="/archive" class="archive-link" title="Archive">
+            <i class="fa-solid fa-box-archive" aria-hidden="true" />
+            <span class="archive-label">Archive</span>
+          </A>
           <button
             class="theme-toggle"
             type="button"
@@ -1182,8 +1220,16 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .session-action {
+          display: flex;
+          align-items: center;
+          gap: 8px;
           padding: 6px 10px;
           text-align: left;
+        }
+
+        .session-action i {
+          width: 16px;
+          text-align: center;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -1197,6 +1243,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
           color: #ef4444;
         }
 
+        .session-menu-separator {
+          margin: 4px 0;
+          border: none;
+          border-top: 1px solid var(--border-default);
+        }
+
         .agent-sidebar.collapsed:not(:hover) .sidebar-sessions {
           display: none;
         }
@@ -1204,6 +1256,37 @@ export function AgentSidebar(props: AgentSidebarProps) {
         .sidebar-footer {
           padding: 8px 10px 10px;
           border-top: 1px solid var(--border-default);
+        }
+
+        .archive-link {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding: 8px 10px;
+          border-radius: 8px;
+          background: transparent;
+          color: var(--text-secondary);
+          text-decoration: none;
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 1.2;
+          transition: background 0.2s ease, color 0.2s ease;
+          white-space: nowrap;
+        }
+
+        .archive-link:hover {
+          background: var(--bg-raised);
+          color: var(--text-primary);
+        }
+
+        .archive-link i {
+          width: 16px;
+          text-align: center;
+        }
+
+        .agent-sidebar.collapsed .archive-label {
+          display: none;
         }
 
         .theme-toggle {

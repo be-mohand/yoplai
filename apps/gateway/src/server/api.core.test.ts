@@ -466,6 +466,56 @@ describe("api core session resolution", () => {
     expect(await fs.readFile(file, "utf8")).toBe(raw);
   });
 
+  it("archives sessions, guards MAIN, and filters with includeArchived query param", async () => {
+    const sessionsDir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    const history = JSON.stringify({
+      type: "history", role: "user", timestamp: Date.now(),
+      content: [{ type: "text", text: "Archive test" }],
+    }) + "\n";
+    await fs.writeFile(path.join(sessionsDir, "alpha-archivable.jsonl"), history);
+    await fs.writeFile(path.join(sessionsDir, "alpha-main.jsonl"), history);
+    getSessionEntry.mockImplementation(async (agentId: string, key: string) => {
+      if (key === "main") return { sessionId: "main", updatedAt: Date.now() };
+      return null;
+    });
+    const { api } = await import("./api.core.js");
+    const list = async (includeArchived = false) => {
+      const url = includeArchived ? "http://localhost/agents/sessions?includeArchived=1" : "http://localhost/agents/sessions";
+      const response = await api.request(new Request(url));
+      return (await response.json()).items;
+    };
+    const patch = (sessionId: string, body: unknown) => api.request(new Request(
+      `http://localhost/agents/alpha/sessions/${sessionId}`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ));
+    const initial = await list();
+    expect(initial.length).toBe(2);
+    expect(initial.every((s: { archived: unknown }) => s.archived === null)).toBe(true);
+    const archive = await patch("archivable", { archived: true });
+    expect(archive.status).toBe(200);
+    expect((await archive.json()).archived).toEqual(expect.any(Number));
+    const afterArchive = await list();
+    expect(afterArchive.length).toBe(1);
+    expect(afterArchive[0].sessionId).toBe("main");
+    const withArchived = await list(true);
+    expect(withArchived.length).toBe(2);
+    const archivedSession = withArchived.find((s: { sessionId: string }) => s.sessionId === "archivable");
+    expect(archivedSession?.archived).toEqual(expect.any(Number));
+    const restore = await patch("archivable", { archived: false });
+    expect(restore.status).toBe(200);
+    expect((await restore.json()).archived).toBeNull();
+    expect((await list()).length).toBe(2);
+    const archiveMain = await patch("main", { archived: true });
+    expect(archiveMain.status).toBe(400);
+    expect((await archiveMain.json()).error).toBe("Main session cannot be archived");
+    expect((await patch("archivable", { archived: "yes" })).status).toBe(400);
+  });
+
   it("scopes project CRUD and session membership to the requester, preserving chats on deletion", async () => {
     await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
     const { api } = await import("./api.core.js");

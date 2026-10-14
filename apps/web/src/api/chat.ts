@@ -73,10 +73,17 @@ export class UnauthenticatedError extends Error {
   }
 }
 
-export async function fetchAgentSessions(): Promise<{
+export async function fetchAgentSessions(options?: {
+  includeArchived?: boolean;
+}): Promise<{
   items: SessionSummary[];
 }> {
-  const res = await fetch(`${API_BASE}/agents/sessions`);
+  const params = new URLSearchParams();
+  if (options?.includeArchived) {
+    params.set("includeArchived", "1");
+  }
+  const url = `${API_BASE}/agents/sessions${params.toString() ? `?${params}` : ""}`;
+  const res = await fetch(url);
   if (res.status === 401) throw new UnauthenticatedError();
   if (!res.ok) return { items: [] };
   return res.json();
@@ -125,6 +132,25 @@ export async function pinAgentSession(
     }
   );
   if (!res.ok) throw new Error("Failed to pin session");
+}
+
+export async function archiveAgentSession(
+  agentId: string,
+  sessionId: string,
+  archived: boolean
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agents/${agentId}/sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
+    }
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: "Failed to archive session" }));
+    throw new Error(error.error || "Failed to archive session");
+  }
 }
 
 export async function postCompact(

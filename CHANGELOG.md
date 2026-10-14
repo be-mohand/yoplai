@@ -17,6 +17,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Archive sessions: put chats away with reversible archive from the sidebar row menu (hidden for MAIN session). Archived chats disappear from the sidebar, reachable from the new `/archive` page (link in sidebar footer) with Open, Restore, and Delete actions. Archiving preserves pin and project membership so restoring returns the chat where it was. `PATCH /api/agents/:agentId/sessions/:sessionId` accepts `archived: boolean` (rejects MAIN with 400); `GET /api/agents/sessions` excludes archived by default, pass `?includeArchived=1` to include them. Persisted as append-only `meta` entry (`key: "archived"`, value: timestamp or `null`).
+
+- Sidebar row menu now shows icons (Pin `fa-thumbtack`, Move to project `fa-folder`, Remove from project `fa-folder-minus`, Rename `fa-pen`, Archive `fa-box-archive`, Delete `fa-trash`) and a separator before Delete to visually distinguish the destructive action.
+
 - `session_history` now also reads other agents' sessions in the current chat Project (listed as `agent/session`), and the project prompt tells the agent so. Same-user only; follows `sessionHistory.enabled`.
 
 - Agents now receive saved project reference paths alongside title/description so they can read referenced wiki files directly; the reference API and UI still hide paths.
