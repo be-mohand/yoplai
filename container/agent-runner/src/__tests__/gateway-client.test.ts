@@ -5,6 +5,38 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { callGatewayTool, fetchOAuthToken } from "../gateway-client.js";
 
+describe("callGatewayTool", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    [500, "<html>Error</html>"],
+    [204, null],
+    [200, "not JSON"],
+    [502, ""],
+  ])(
+    "reports status %s cleanly for invalid/empty bodies",
+    async (status, body) => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(body, { status })
+      );
+      await expect(
+        callGatewayTool("http://gateway", "test-token", "test", {})
+      ).rejects.toThrow(`Gateway tool test failed with ${status}`);
+    }
+  );
+
+  it("retains gateway JSON error details", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      Response.json({ error: "tool test timed out after 60s" }, { status: 504 })
+    );
+    await expect(
+      callGatewayTool("http://gateway", "test-token", "test", {})
+    ).rejects.toThrow(
+      "Gateway tool test failed with 504: tool test timed out after 60s"
+    );
+  });
+});
+
 describe("fetchOAuthToken", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -102,7 +134,10 @@ describe("gateway socket transport", () => {
   const dirs: string[] = [];
 
   afterEach(() => {
-    for (const server of servers.splice(0)) server.close();
+    for (const server of servers.splice(0)) {
+      server.closeAllConnections();
+      server.close();
+    }
     for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -139,7 +174,12 @@ describe("gateway socket transport", () => {
       "agent-1",
       "session-1",
       "run-1",
-      socketPath
+      {
+        socketPath,
+        toolCallId: "call-1",
+        timeoutSeconds: 60,
+        modelToolName: "dashboard_link",
+      }
     );
 
     expect(result).toEqual({ result: "done" });
@@ -148,7 +188,51 @@ describe("gateway socket transport", () => {
     expect(JSON.parse(requests[0].body)).toMatchObject({
       tool: "dashboard_link",
       agentToken: "token-1",
+      agentId: "agent-1",
+      sessionId: "session-1",
+      runId: "run-1",
+      toolCallId: "call-1",
+      timeoutSeconds: 60,
+      modelToolName: "dashboard_link",
     });
+  });
+
+  it("aborts an in-flight tool call through the socket", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ygc-"));
+    dirs.push(dir);
+    const socketPath = path.join(dir, "gateway.sock");
+    let requestReceived!: () => void;
+    const received = new Promise<void>((resolve) => {
+      requestReceived = resolve;
+    });
+    let connectionClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      connectionClosed = resolve;
+    });
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", requestReceived);
+      res.on("close", connectionClosed);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const controller = new AbortController();
+    const call = callGatewayTool(
+      "http://host.docker.internal:4000",
+      "token-1",
+      "test",
+      {},
+      "agent-1",
+      "session-1",
+      "run-1",
+      { socketPath, signal: controller.signal }
+    );
+
+    await received;
+    controller.abort(new DOMException("Tool deadline expired", "TimeoutError"));
+
+    await expect(call).rejects.toThrow("Tool deadline expired");
+    await closed;
   });
 
   it("renews OAuth tokens through the socket", async () => {

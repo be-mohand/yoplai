@@ -18,6 +18,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Give gateway tools per-call timeouts and cooperative cancellation so a hung tool returns an error without losing the turn.
+- Preserve gateway tool deadlines and cancellation over Unix-socket transport, including dashboard tools.
 - Honor each sandbox tool call's timeout without false idle kills, clamp Bash to the remaining turn budget, and verify stop-to-kill shutdown enforcement.
 - Keep sessions usable after `/compact` when retained messages include attachments: the reseeded Pi session now references files as text instead of dataless images that made Anthropic reject every later turn (`image.source.base64.data: Field required`).
 - Preserve assistant text replay signatures in persisted Pi sessions so subsequent OpenAI Responses turns do not fail with an invalid message ID, while continuing to redact credentials.

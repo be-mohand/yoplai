@@ -633,6 +633,7 @@ describe("internal dashboard rendering", () => {
               runId: "run",
               containerName: "container",
               createdAt: Date.now(),
+              abortController: new AbortController(),
               roots: {
                 workspace,
                 data: path.join(workspace, "data"),
