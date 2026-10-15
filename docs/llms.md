@@ -181,6 +181,15 @@ using the same flag and job authorization as the runs list. The trusted host
 under the recorded `storageOwnerId`, never the viewer's identity; sharing an old
 Mine run therefore preserves its original history location.
 
+The accessor returns `{ messages, liveTurn? }`. Its detached live snapshot includes
+pending completed tool turns and the current in-memory turn, including buffered
+tool results, only when the active session's storage owner matches. Running traces
+merge these messages with canonical history without duplicating flushed rows;
+pinned sessions attach live data only if its prompt matches the recorded run.
+Finished traces use canonical history alone. The runs list polls every two seconds;
+the trace polls while running and transitions to the finished view without reload.
+Live traces follow the bottom unless the user scrolls up.
+
 Own-session runs return the exact canonical session. Pinned-session runs record
 `pinnedSession` and slice from the first user prompt at or after `startedAt` that
 matches the recorded effective prompt (including gate context), through the next

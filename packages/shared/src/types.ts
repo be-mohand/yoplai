@@ -1427,12 +1427,15 @@ export interface ExtensionContext {
     agentId: string,
     sessionId: string
   ): Promise<HistoryMessage[]>;
-  /** Trusted canonical history lookup; null explicitly selects shared storage. */
+  /** Trusted history and buffered live turn; null explicitly selects shared storage. */
   getFullSessionHistory?(
     agentId: string,
     sessionId: string,
     storageOwnerId: string | null
-  ): Promise<FullHistoryMessage[]>;
+  ): Promise<{
+    messages: FullHistoryMessage[];
+    liveTurn?: { prompt: string | null; messages: FullHistoryMessage[] };
+  }>;
 
   // Media
   saveMediaFile?(

@@ -19,6 +19,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^solid-js\/web$/, replacement: "solid-js/web/dist/web.js" },
+      { find: /^solid-js\/store$/, replacement: "solid-js/store/dist/store.js" },
       { find: /^solid-js$/, replacement: "solid-js/dist/solid.js" },
       {
         find: /^@yoplai\/shared\/(.+)$/,

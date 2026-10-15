@@ -88,7 +88,7 @@ describe("scheduler routes", () => {
       { role: "assistant", content: [{ type: "thinking", thinking: "Reason" }, { type: "toolCall", id: "tc", name: "read", arguments: { path: "notes" } }], timestamp: 2, meta: { stopReason: "toolUse", model: "test" } },
       { role: "toolResult", toolCallId: "tc", toolName: "read", content: [{ type: "text", text: "Result" }], timestamp: 3, isError: true },
     ];
-    ctx.getFullSessionHistory = vi.fn(async () => messages);
+    ctx.getFullSessionHistory = vi.fn(async () => ({ messages }));
     setSchedulerContext(ctx);
     const app = new Hono().basePath("/api");
     let userId = "alice";

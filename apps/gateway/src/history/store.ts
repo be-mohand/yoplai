@@ -367,6 +367,27 @@ export function createTurnBuffer(): TurnBuffer {
   };
 }
 
+/** Detached canonical projection, including results that have not reached disk. */
+export function snapshotTurnBuffer(buffer: TurnBuffer): FullHistoryMessage[] {
+  const messages: FullHistoryMessage[] = [];
+  if (buffer.systemContext) messages.push({
+    role: "system", content: [{ type: "text", text: buffer.systemContext.rendered }],
+    context: buffer.systemContext.context, timestamp: buffer.systemContext.timestamp,
+  });
+  if (buffer.userText) messages.push({
+    role: "user", content: [{ type: "text", text: buffer.userText }], timestamp: buffer.userTimestamp,
+  });
+  if (buffer.assistantContent.length) messages.push({
+    role: "assistant", content: buffer.assistantContent, meta: buffer.meta, timestamp: buffer.startTimestamp,
+  });
+  for (const result of buffer.toolResults) messages.push({
+    role: "toolResult", toolCallId: result.id, toolName: result.name,
+    content: [{ type: "text", text: result.content }], isError: result.isError,
+    details: result.details, timestamp: result.timestamp,
+  });
+  return structuredClone(messages);
+}
+
 /**
  * Flush turn buffer to history store in correct order:
  * 1. User message

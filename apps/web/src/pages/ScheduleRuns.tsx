@@ -1,5 +1,5 @@
 import { A, useParams } from "@solidjs/router";
-import { createMemo, createResource, For, Show } from "solid-js";
+import { createMemo, createResource, For, onCleanup, Show } from "solid-js";
 import type { ScheduleRun } from "@yoplai/shared/types";
 import { fetchScheduleRuns } from "../api/schedules";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
@@ -29,26 +29,28 @@ export function ScheduleRuns() {
 function RunHistory(props: { agentId: string; jobId: string }) {
   const [result, { refetch }] = createResource(
     () => [props.agentId, props.jobId] as const,
-    async ([agentId, jobId]) => {
+    async ([agentId, jobId], { value }): Promise<{ runs: ScheduleRun[]; error?: string }> => {
       try {
         return { runs: await fetchScheduleRuns(agentId, jobId), error: undefined };
       } catch (cause) {
-        return { runs: [], error: cause instanceof Error ? cause.message : "Failed to load run history." };
+        return { runs: value?.runs ?? [], error: cause instanceof Error ? cause.message : "Failed to load run history." };
       }
     }
   );
-  const runs = createMemo(() => [...(result()?.runs ?? [])].sort((a, b) =>
+  const poll = setInterval(() => { if (!result.loading) void refetch(); }, 2_000);
+  onCleanup(() => clearInterval(poll));
+  const runs = createMemo(() => [...(result.latest?.runs ?? [])].sort((a, b) =>
     Number(b.status === "running") - Number(a.status === "running") || Date.parse(b.startedAt) - Date.parse(a.startedAt)
   ));
 
   return (
     <>
       <button class="schedule-runs-refresh" type="button" disabled={result.loading} onClick={() => void refetch()}>
-        {result()?.error ? "Retry" : "Refresh"}
+        {result.latest?.error ? "Retry" : "Refresh"}
       </button>
-      <Show when={result.loading}><p role="status">Loading run history…</p></Show>
-      <Show when={result()?.error}>{(error) => <p class="schedule-runs-error" role="alert">{error()}</p>}</Show>
-      <Show when={!result.loading && !result()?.error && runs().length === 0}><p>No runs yet.</p></Show>
+      <Show when={result.loading && !result.latest}><p role="status">Loading run history…</p></Show>
+      <Show when={result.latest?.error}>{(error) => <p class="schedule-runs-error" role="alert">{error()}</p>}</Show>
+      <Show when={!result.loading && !result.latest?.error && runs().length === 0}><p>No runs yet.</p></Show>
       <ul class="schedule-run-list">
         <For each={runs()}>{(run) => (
           <li class="schedule-run" data-status={run.status}>

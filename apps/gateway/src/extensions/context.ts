@@ -21,14 +21,14 @@ import {
   resolveWorkspaceDir,
 } from "../config/index.js";
 import { runAgent, agentEventBus } from "../agents/index.js";
-import { getAllSessionsForAgent } from "../agents/sessions.js";
+import { getAllSessionsForAgent, getSession } from "../agents/sessions.js";
 import {
   getSessionEntry,
   clearSessionEntry,
   restoreSessionUpdatedAt,
 } from "../sessions/index.js";
 import { deleteSession } from "../agents/sessions.js";
-import { getFullHistory, invalidateResolvedHistoryFile } from "../history/store.js";
+import { getFullHistory, invalidateResolvedHistoryFile, snapshotTurnBuffer } from "../history/store.js";
 import { getSessionHistory } from "../agents/runner.js";
 import { ensureSession, hasSession, resetSession } from "../sessions/persistence.js";
 import { logError, logInfo, logWarn } from "../logging.js";
@@ -137,8 +137,21 @@ export function createExtensionContext(
     },
     getSessionHistory: (agentId: string, sessionId: string) =>
       getSessionHistory(agentId, sessionId),
-    getFullSessionHistory: (agentId, sessionId, storageOwnerId) =>
-      getFullHistory(agentId, sessionId, storageOwnerId ?? undefined),
+    getFullSessionHistory: async (agentId, sessionId, storageOwnerId) => {
+      const session = getSession(agentId, sessionId);
+      const turns = session?.isStreaming && session.storageOwnerId === storageOwnerId
+        ? [...(session.bufferedTurns ?? []), ...(session.currentTurn ? [session.currentTurn] : [])]
+        : [];
+      // Snapshot before I/O: buffers may flush or advance while history is read.
+      const liveTurn = turns.length ? {
+        prompt: turns.find((turn) => turn.userText !== null)?.userText ?? null,
+        messages: turns.flatMap(snapshotTurnBuffer),
+      } : undefined;
+      return {
+        messages: await getFullHistory(agentId, sessionId, storageOwnerId ?? undefined),
+        liveTurn,
+      };
+    },
     saveMediaFile: async (
       data: Uint8Array | ArrayBuffer,
       mimeType: string,

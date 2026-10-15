@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { Suspense } from "solid-js";
 import type { JSX } from "solid-js";
 import type { FullHistoryMessage, ScheduleRunTrace as RunTrace } from "@yoplai/shared/types";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
@@ -51,9 +52,137 @@ afterEach(() => {
   resetCapabilitiesForTests();
   if (originalScroll) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScroll);
   else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  vi.useRealTimers();
 });
 
 describe("ScheduleRunTrace", () => {
+  it("keeps the live trace visible inside Suspense while a background poll is pending", async () => {
+    vi.useFakeTimers();
+    const running = { ...trace().run, status: "running" as const, finishedAt: undefined };
+    let resolve!: (value: RunTrace) => void;
+    fetchTraceMock.mockResolvedValueOnce(trace({ run: running, messages: messages.slice(0, 4) }))
+      .mockReturnValueOnce(new Promise<RunTrace>((done) => { resolve = done; }));
+    dispose = render(() => <Suspense fallback={<p data-poll-fallback>Loading app</p>}><ScheduleRunTrace /></Suspense>, container);
+    await vi.advanceTimersByTimeAsync(0);
+    const history = container.querySelector(".schedule-trace-history")!;
+    expect(history.textContent).toContain("Checking sources");
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(fetchTraceMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("[data-poll-fallback]")).toBeNull();
+    expect(container.querySelector(".schedule-trace-history")).toBe(history);
+    expect(history.textContent).toContain("Checking sources");
+    resolve(trace());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".schedule-trace-status")!.textContent).toContain("ok");
+    expect(container.querySelector("[data-final-output]")!.textContent).toContain("Final digest");
+  });
+
+  it("preserves expanded thinking and tool results through unchanged and extended polls while scrolled up", async () => {
+    vi.useFakeTimers();
+    const running = { ...trace().run, status: "running" as const, finishedAt: undefined };
+    fetchTraceMock.mockResolvedValueOnce(trace({ run: running, messages: structuredClone(messages.slice(0, 4)) }))
+      .mockResolvedValueOnce(trace({ run: running, messages: structuredClone(messages.slice(0, 4)) }))
+      .mockResolvedValueOnce(trace({ run: running, messages: structuredClone(messages) }));
+    dispose = render(() => <ScheduleRunTrace />, container);
+    const main = container.querySelector("main")!;
+    Object.defineProperties(main, {
+      scrollHeight: { value: 1_000 },
+      clientHeight: { value: 200 },
+      scrollTop: { writable: true, value: 0 },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const thinking = container.querySelector<HTMLDetailsElement>(".board-log-thinking")!;
+    thinking.open = true;
+    const tool = container.querySelector<HTMLButtonElement>(".board-tool-header")!;
+    tool.click();
+    expect(container.querySelector(".board-tool-body")!.textContent).toContain("digest result");
+    main.scrollTop = 200;
+    main.dispatchEvent(new Event("scroll"));
+    for (let poll = 0; poll < 2; poll++) {
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(container.querySelector(".board-log-thinking")).toBe(thinking);
+      expect(thinking.open).toBe(true);
+      expect(container.querySelector(".board-tool-header")).toBe(tool);
+      expect(container.querySelector(".board-tool-body")!.textContent).toContain("digest result");
+      expect(main.scrollTop).toBe(200);
+    }
+    expect(container.textContent).toContain("Final digest");
+  });
+
+  it("polls live thinking, tool calls/results and output, then stops after finishing", async () => {
+    vi.useFakeTimers();
+    const running = { ...trace().run, status: "running" as const, finishedAt: undefined };
+    fetchTraceMock.mockResolvedValueOnce(trace({ run: running, messages: messages.slice(0, 3) }))
+      .mockResolvedValueOnce(trace({ run: running, messages: messages.slice(0, 4) }))
+      .mockResolvedValueOnce(trace());
+    dispose = render(() => <ScheduleRunTrace />, container);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".board-log-thinking")!.textContent).toContain("Check the source first");
+    expect(container.querySelector(".board-tool-status")!.textContent).toBe("running");
+    expect(container.querySelector("[data-final-output]")).toBeNull();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(container.querySelector(".board-tool-status")!.textContent).toBe("done");
+    container.querySelector<HTMLButtonElement>(".board-tool-header")!.click();
+    expect(container.querySelector(".board-tool-body")!.textContent).toContain("digest result");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(container.querySelector(".schedule-trace-status")!.textContent).toContain("ok");
+    expect(container.querySelector("[data-final-output]")!.textContent).toContain("Final digest");
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(fetchTraceMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("follows the live bottom, pauses when scrolled up, and resumes when scrolled down", async () => {
+    vi.useFakeTimers();
+    const value = trace();
+    value.run = { ...value.run, status: "running", finishedAt: undefined };
+    fetchTraceMock.mockResolvedValue(value);
+    dispose = render(() => <ScheduleRunTrace />, container);
+    const main = container.querySelector("main")!;
+    let height = 1_000;
+    Object.defineProperties(main, {
+      scrollHeight: { get: () => height },
+      clientHeight: { value: 200 },
+      scrollTop: { writable: true, value: 0 },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(main.scrollTop).toBe(1_000);
+    main.scrollTop = 200;
+    main.dispatchEvent(new Event("scroll"));
+    height = 1_200;
+    fetchTraceMock.mockResolvedValue(trace({ ...value, messages: [...messages] }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(main.scrollTop).toBe(200);
+    main.scrollTop = 1_000;
+    main.dispatchEvent(new Event("scroll"));
+    height = 1_400;
+    fetchTraceMock.mockResolvedValue(trace());
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(main.scrollTop).toBe(1_400);
+    expect(container.querySelector("[data-final-output]")).not.toBeNull();
+  });
+
+  it("retains the live trace during a failed poll and retries without overlapping pending requests", async () => {
+    vi.useFakeTimers();
+    const value = trace();
+    value.run = { ...value.run, status: "running", finishedAt: undefined };
+    let reject!: (cause: Error) => void;
+    fetchTraceMock.mockResolvedValueOnce(value)
+      .mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }))
+      .mockResolvedValueOnce(trace());
+    dispose = render(() => <ScheduleRunTrace />, container);
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(fetchTraceMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Final digest");
+    reject(new Error("Loading run trace timed out. Try again."));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain("timed out");
+    expect(container.textContent).toContain("Final digest");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector(".schedule-trace-status")!.textContent).toContain("ok");
+  });
+
   it("renders canonical history and anchors once at the start of the final assistant output", async () => {
     dispose = render(() => <ScheduleRunTrace />, container);
     await settle();

@@ -109,7 +109,7 @@ describe("SchedulerService run ledger", () => {
       user("Digest", startedAt + 10), assistant("Second answer", startedAt + 11),
       user("Manual", startedAt + 20), assistant("Manual answer", startedAt + 21)];
     const ctx = context(config);
-    ctx.getFullSessionHistory = vi.fn(async () => messages);
+    ctx.getFullSessionHistory = vi.fn(async () => ({ messages }));
     setSchedulerContext(ctx);
     const store = new PerAgentScheduleStore([alpha], (candidate) => candidate.workspace);
     await store.saveRun({ ...recorded!, id: "second", startedAt: new Date(startedAt + 9).toISOString() });
@@ -128,6 +128,45 @@ describe("SchedulerService run ledger", () => {
     await store.saveRun({ ...recorded!, id: "no-session", sessionId: undefined, runKind: "script_only" });
     expect((await scheduler.getRunTrace("alpha", job.id, "no-session"))?.messages).toEqual([]);
     expect(ctx.getFullSessionHistory).not.toHaveBeenCalled();
+  });
+
+  it("merges buffered thinking, calls, results and output only for the running pinned prompt", async () => {
+    const { config, alpha } = await setup();
+    const job = await add(jobPayload({ message: "Digest", sessionId: "pinned" }), "alice");
+    await scheduler.runNow("alpha", job.id);
+    const [recorded] = await scheduler.listRuns("alpha", job.id);
+    const timestamp = Date.parse(recorded!.startedAt) + 1;
+    const user: FullHistoryMessage = { role: "user", content: [{ type: "text", text: "Digest" }], timestamp };
+    const assistant: FullHistoryMessage = { role: "assistant", content: [
+      { type: "thinking", thinking: "Reason" }, { type: "toolCall", id: "tc", name: "read", arguments: { path: "notes" } },
+    ], timestamp: timestamp + 1 };
+    const result: FullHistoryMessage = { role: "toolResult", toolCallId: "tc", toolName: "read", content: [{ type: "text", text: "Result" }], isError: false, timestamp: timestamp + 2 };
+    const output: FullHistoryMessage = { role: "assistant", content: [{ type: "text", text: "Output" }], timestamp: timestamp + 3 };
+    const messages: FullHistoryMessage[] = [user];
+    const snapshot = { messages, liveTurn: { prompt: "Digest", messages: [user, assistant, result, output] } };
+    const ctx = context(config);
+    ctx.getFullSessionHistory = vi.fn(async () => snapshot);
+    setSchedulerContext(ctx);
+    const store = new PerAgentScheduleStore([alpha], (candidate) => candidate.workspace);
+    const running = { ...recorded!, status: "running" as const, finishedAt: undefined };
+    await store.saveRun(running);
+    expect((await scheduler.getRunTrace("alpha", job.id, running.id))?.messages).toEqual([user, assistant, result, output]);
+    expect(ctx.getFullSessionHistory).toHaveBeenCalledWith("alpha", "resolved-session", "alice");
+    snapshot.messages.push(assistant, result);
+    expect((await scheduler.getRunTrace("alpha", job.id, running.id))?.messages).toEqual([user, assistant, result, output]);
+    snapshot.messages.push({ role: "user", content: [{ type: "text", text: "Queued follow-up" }], timestamp: timestamp + 10 });
+    expect((await scheduler.getRunTrace("alpha", job.id, running.id))?.messages).toEqual([user, assistant, result, output]);
+    snapshot.messages.pop();
+    snapshot.liveTurn.prompt = "Other tick";
+    expect((await scheduler.getRunTrace("alpha", job.id, running.id))?.messages).toEqual([user, assistant, result]);
+    snapshot.liveTurn.prompt = "Digest";
+    await store.saveRun(recorded!);
+    expect((await scheduler.getRunTrace("alpha", job.id, running.id))?.messages).toEqual([user, assistant, result]);
+    await store.saveRun({ ...running, pinnedSession: false });
+    snapshot.liveTurn.prompt = "Other tick";
+    expect((await scheduler.getRunTrace("alpha", job.id, running.id))?.messages).toEqual([user, assistant, result, output]);
+    await store.saveRun({ ...running, prompt: "Missing" });
+    expect((await scheduler.getRunTrace("alpha", job.id, running.id))?.messages).toEqual([]);
   });
 
   it("records timeout failure while unrelated work completes", async () => {

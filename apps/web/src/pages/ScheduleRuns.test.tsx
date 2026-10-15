@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { Suspense } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ScheduleRun } from "@yoplai/shared/types";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
@@ -36,9 +37,66 @@ afterEach(() => {
   dispose = undefined;
   container.remove();
   resetCapabilitiesForTests();
+  vi.useRealTimers();
 });
 
 describe("ScheduleRuns", () => {
+  it("keeps the run list visible inside Suspense while a background poll is pending", async () => {
+    vi.useFakeTimers();
+    let resolve!: (value: ScheduleRun[]) => void;
+    fetchRunsMock.mockResolvedValueOnce([run({})])
+      .mockReturnValueOnce(new Promise<ScheduleRun[]>((done) => { resolve = done; }));
+    dispose = render(() => <Suspense fallback={<p data-poll-fallback>Loading app</p>}><ScheduleRuns /></Suspense>, container);
+    await vi.advanceTimersByTimeAsync(0);
+    const row = container.querySelector(".schedule-run")!;
+    expect(row).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(fetchRunsMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("[data-poll-fallback]")).toBeNull();
+    expect(container.querySelector(".schedule-run")).toBe(row);
+    resolve([run({}), run({ id: "new", status: "running", finishedAt: undefined })]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelectorAll(".schedule-run")).toHaveLength(2);
+    expect(container.querySelector(".schedule-run")!.getAttribute("data-status")).toBe("running");
+  });
+
+  it("polls new runs into the list, pins running first, and stops polling on disposal", async () => {
+    vi.useFakeTimers();
+    fetchRunsMock.mockResolvedValueOnce([run({ id: "finished" })])
+      .mockResolvedValue([run({ id: "finished" }), run({ id: "new", status: "running", finishedAt: undefined })]);
+    dispose = render(() => <ScheduleRuns />, container);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelectorAll(".schedule-run")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const rows = container.querySelectorAll(".schedule-run");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.getAttribute("data-status")).toBe("running");
+    expect(rows[0]!.querySelector(".schedule-run-status")!.textContent).toBe("Running");
+    dispose();
+    dispose = undefined;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(fetchRunsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps runs visible through poll failures and does not overlap pending polls", async () => {
+    vi.useFakeTimers();
+    let reject!: (cause: Error) => void;
+    fetchRunsMock.mockResolvedValueOnce([run({})])
+      .mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }))
+      .mockResolvedValueOnce([run({}), run({ id: "new" })]);
+    dispose = render(() => <ScheduleRuns />, container);
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(fetchRunsMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll(".schedule-run")).toHaveLength(1);
+    reject(new Error("Loading run history timed out. Try again."));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelectorAll(".schedule-run")).toHaveLength(1);
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain("timed out");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelectorAll(".schedule-run")).toHaveLength(2);
+  });
+
   it("loads per-job history, orders running first then newest, and displays outcomes", async () => {
     fetchRunsMock.mockResolvedValue([
       run({ id: "old", runKind: "silent_tick", gateOutput: "No updates", exitCode: 0 }),

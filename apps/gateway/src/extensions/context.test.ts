@@ -63,9 +63,43 @@ describe("createExtensionContext media helpers", () => {
     }
     const { createExtensionContext } = await import("./context.js");
     const ctx = createExtensionContext({} as GatewayConfig);
-    expect(await ctx.getFullSessionHistory!("alpha", "session", "alice")).toEqual(messages);
-    expect(await ctx.getFullSessionHistory!("alpha", "session", null)).toEqual([messages[0]]);
-    expect(await ctx.getFullSessionHistory!("alpha", "session", "bob")).toEqual([]);
+    expect((await ctx.getFullSessionHistory!("alpha", "session", "alice")).messages).toEqual(messages);
+    expect((await ctx.getFullSessionHistory!("alpha", "session", null)).messages).toEqual([messages[0]]);
+    expect((await ctx.getFullSessionHistory!("alpha", "session", "bob")).messages).toEqual([]);
+  });
+
+  it("snapshots pending tool turns and current output only for the recorded storage owner", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir);
+    const { SessionRunLifecycle } = await import("../agents/run-lifecycle.js");
+    const { createExtensionContext } = await import("./context.js");
+    const lifecycle = new SessionRunLifecycle({ agentId: "alpha", sessionId: "live", userId: "alice" });
+    lifecycle.beginRun();
+    await lifecycle.beginUserTurn("Prompt", 100);
+    lifecycle.acceptHistoryEvent({ type: "assistant_thinking", text: "Reason", timestamp: 101 });
+    lifecycle.acceptHistoryEvent({ type: "tool_call", id: "call", name: "read", args: { path: "notes" }, timestamp: 102 });
+    lifecycle.acceptHistoryEvent({ type: "tool_result", id: "call", name: "read", content: "Buffered result", isError: true, details: { diff: "diff" }, timestamp: 103 });
+    const ctx = createExtensionContext({} as GatewayConfig);
+    const first = await ctx.getFullSessionHistory!("alpha", "live", "alice");
+    expect(first.messages).toEqual([{ role: "user", content: [{ type: "text", text: "Prompt" }], timestamp: 100 }]);
+    expect(first.liveTurn).toMatchObject({ prompt: "Prompt", messages: [
+      { role: "user" },
+      { role: "assistant", content: [{ type: "thinking", thinking: "Reason" }, { type: "toolCall", id: "call", arguments: { path: "notes" } }] },
+      { role: "toolResult", toolCallId: "call", isError: true, details: { diff: "diff" }, content: [{ type: "text", text: "Buffered result" }] },
+    ] });
+    lifecycle.acceptHistoryEvent({ type: "turn_end", timestamp: 104 });
+    lifecycle.acceptHistoryEvent({ type: "assistant_text", text: "Output", timestamp: 105 });
+    const second = await ctx.getFullSessionHistory!("alpha", "live", "alice");
+    expect(second.liveTurn?.prompt).toBe("Prompt");
+    expect(second.liveTurn?.messages).toHaveLength(4);
+    expect(first.liveTurn?.messages).toHaveLength(3);
+    expect((await ctx.getFullSessionHistory!("alpha", "live", "bob")).liveTurn).toBeUndefined();
+    expect((await ctx.getFullSessionHistory!("alpha", "live", null)).liveTurn).toBeUndefined();
+    await lifecycle.flushTurns();
+    lifecycle.finishRun();
+    const finished = await ctx.getFullSessionHistory!("alpha", "live", "alice");
+    expect(finished.liveTurn).toBeUndefined();
+    expect(finished.messages).toEqual(second.liveTurn?.messages);
   });
 
   it("rejects tampered media metadata paths outside the media directory", async () => {

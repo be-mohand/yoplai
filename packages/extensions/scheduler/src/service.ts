@@ -244,11 +244,21 @@ export class SchedulerService {
     if (!run) return undefined;
     const ctx = getSchedulerContext();
     if (!run.sessionId || !ctx.getFullSessionHistory) return { run, messages: [] };
-    const messages = await ctx.getFullSessionHistory(agentId, run.sessionId, run.storageOwnerId);
+    const snapshot = await ctx.getFullSessionHistory(agentId, run.sessionId, run.storageOwnerId);
     const prefix = `scheduler:${jobId}:`;
     const generatedSession = run.sessionId.startsWith(prefix) &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(run.sessionId.slice(prefix.length));
     const pinned = run.pinnedSession ?? !generatedSession;
+    const messages = [...snapshot.messages];
+    if (run.status === "running" && snapshot.liveTurn && (!pinned || snapshot.liveTurn.prompt === run.prompt)) {
+      for (const message of snapshot.liveTurn.messages) {
+        if (!messages.some((persisted) => persisted.role === message.role && persisted.timestamp === message.timestamp &&
+          (message.role !== "toolResult" || (persisted.role === "toolResult" && persisted.toolCallId === message.toolCallId)))) {
+          messages.push(message);
+        }
+      }
+      messages.sort((a, b) => a.timestamp - b.timestamp);
+    }
     if (!pinned) return { run, messages };
     const startedAt = Date.parse(run.startedAt);
     const start = messages.findIndex((message) => message.role === "user" &&
