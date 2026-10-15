@@ -11,7 +11,7 @@ import { renderMarkdown } from "../lib/markdown";
 export type BoardLogItem =
   | {
       type: "text";
-      role: "user" | "assistant";
+      role: "user" | "assistant" | "system";
       content: string;
       files?: FileBlock[];
     }
@@ -125,20 +125,21 @@ export function buildBoardLogs(messages: FullHistoryMessage[]): BoardLogItem[] {
       if (block.type === "text") {
         const content = getTextBlocks([block]);
         if (!content) continue;
-        items.push({ type: "text", role: "assistant", content });
+        items.push({ type: "text", role: message.role, content });
         continue;
       }
 
       if (block.type !== "toolCall") continue;
 
       const toolName = block.name ?? "";
-      const args =
+      const args = block.arguments ?? {};
+      const argsRecord =
         block.arguments && typeof block.arguments === "object"
           ? (block.arguments as Record<string, unknown>)
           : {};
       const result = toolResults.get(block.id);
       const output = result ? getTextBlocks(result.content) : "";
-      const body = detailBody(toolName, args, output);
+      const body = detailBody(toolName, argsRecord, output);
 
       items.push({
         type: "tool",
@@ -155,10 +156,10 @@ export function buildBoardLogs(messages: FullHistoryMessage[]): BoardLogItem[] {
   return items;
 }
 
-function ToolLog(props: { item: Extract<BoardLogItem, { type: "tool" }> }) {
+function ToolLog(props: { item: Extract<BoardLogItem, { type: "tool" }>; showToolDetails?: boolean }) {
   const argsText = () => formatJson(props.item.args);
   const resultText = () =>
-    getToolResultText(props.item.result) || props.item.body || "";
+    getToolResultText(props.item.result) || (props.showToolDetails ? "" : props.item.body || "");
   const failed = () =>
     props.item.status === "error" || props.item.result?.isError;
   const summary = () =>
@@ -182,6 +183,7 @@ function ToolLog(props: { item: Extract<BoardLogItem, { type: "tool" }> }) {
       >
         <span class="board-collapse-icon">{collapsed() ? "▶" : "▼"}</span>
         <span class="board-tool-kind">{props.item.toolName}</span>
+        <Show when={props.showToolDetails}><span class="board-tool-status">{props.item.status ?? "running"}</span></Show>
         <span class="board-tool-title">{summary()}</span>
         <Show when={collapsed()}>
           <span class="board-tool-preview">{preview()}</span>
@@ -191,14 +193,14 @@ function ToolLog(props: { item: Extract<BoardLogItem, { type: "tool" }> }) {
         <div class="board-tool-body">
           <Show
             when={
-              props.item.toolName === "bash" ||
-              props.item.toolName === "exec_command"
+              !props.showToolDetails && (props.item.toolName === "bash" ||
+              props.item.toolName === "exec_command")
             }
             fallback={
               <>
                 <div class="board-tool-section-label">Input</div>
                 <pre class="board-tool-code">{argsText()}</pre>
-                <Show when={props.item.result || props.item.body}>
+                <Show when={props.item.result || (!props.showToolDetails && props.item.body)}>
                   <div class="board-tool-section-label">Output</div>
                   <pre class="board-tool-code">
                     {resultText() || "(no output)"}
@@ -309,7 +311,7 @@ function TextLog(props: {
             <path d="M2 12l10 5 10-5" />
           </svg>
         </Show>
-        <span>{props.item.role === "user" ? "You" : props.agentName}</span>
+        <span>{props.item.role === "user" ? "You" : props.item.role === "system" ? "System" : props.agentName}</span>
       </div>
       <Show
         when={props.item.role === "assistant"}
@@ -335,6 +337,7 @@ function TextLog(props: {
 export function BoardChatLog(props: {
   items: BoardLogItem[];
   agentName: string;
+  showToolDetails?: boolean;
 }) {
   return (
     <div class="board-chat-log">
@@ -356,6 +359,7 @@ export function BoardChatLog(props: {
                   >
                     <ToolLog
                       item={item as Extract<BoardLogItem, { type: "tool" }>}
+                      showToolDetails={props.showToolDetails}
                     />
                   </Show>
                 }

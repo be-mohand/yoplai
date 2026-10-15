@@ -52,6 +52,7 @@ function RunHistory(props: { agentId: string; jobId: string }) {
       <ul class="schedule-run-list">
         <For each={runs()}>{(run) => (
           <li class="schedule-run" data-status={run.status}>
+            <A class="schedule-run-link" href={`/agents/${encodeURIComponent(props.agentId)}/schedules/${encodeURIComponent(props.jobId)}/runs/${encodeURIComponent(run.id)}`}>
             <header>
               <time dateTime={run.startedAt}>{new Date(run.startedAt).toLocaleString()}</time>
               <span class="schedule-run-status">{STATUS_LABELS[run.status]}</span>
@@ -63,6 +64,7 @@ function RunHistory(props: { agentId: string; jobId: string }) {
             </dl>
             <Show when={run.gateOutput !== undefined}><div class="schedule-run-detail"><strong>Gate output</strong><pre>{run.gateOutput}</pre></div></Show>
             <Show when={run.error}><div class="schedule-run-detail schedule-runs-error"><strong>Error</strong><pre>{run.error}</pre></div></Show>
+            </A>
           </li>
         )}</For>
       </ul>
@@ -79,6 +81,8 @@ const STYLES = `
 .schedule-runs-refresh:disabled { opacity: .55; cursor: progress; }
 .schedule-run-list { display: grid; gap: 12px; margin: 18px 0 0; padding: 0; list-style: none; }
 .schedule-run { padding: 16px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); font-size: 13px; }
+.schedule-run-link { display: block; color: inherit; text-decoration: none; }
+.schedule-run:has(.schedule-run-link:hover), .schedule-run:has(.schedule-run-link:focus-visible) { border-color: var(--accent, #1a73e8); }
 .schedule-run header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .schedule-run-status { border-radius: 999px; padding: 3px 9px; font-size: 12px; font-weight: 600; color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 12%, transparent); }
 .schedule-run[data-status="running"] .schedule-run-status { color: var(--accent, #1a73e8); background: color-mix(in srgb, var(--accent, #1a73e8) 12%, transparent); }

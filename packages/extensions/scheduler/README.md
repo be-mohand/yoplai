@@ -42,7 +42,25 @@ runs remove their record, matching existing output suppression; failures and
 woken-agent runs remain. Recording is latched at run start, so disabling the
 flag mid-run still completes its record. Startup marks leftover running
 records interrupted even when the flag is off. No backfill or pruning.
-Conversation traces are outside this history-only slice.
+
+Click a run to open its trace. Finished agent runs open at the final assistant
+output; scroll up for the prompt (including appended gate context), expandable
+thinking, and tool calls with arguments, status, and results. Script-only and
+silent ticks show their recorded gate output and outcome without a conversation.
+
+`GET /api/schedules/:agentId/:id/runs/:runId/trace` returns
+`{ run, messages }`, where `messages` is canonical full history. It uses the same
+flag and access checks as the runs list. The host's trusted full-history accessor
+reads the run's recorded storage owner, so a Mine run remains readable after
+switching the job to Team, even for another authorized member.
+
+Runs with their own session return that exact session. For pinned sessions, the
+run records `pinnedSession`; the trace starts at the first user message at or
+after run start matching its recorded prompt, and ends before the next user
+(including scheduler) message. No match returns an empty trace. Sequential ticks
+are isolated, but concurrent writers or queued ticks may blur the slice: pinned
+traces are best effort. Editing the job's session later does not change new runs'
+recorded session mode.
 
 ## Storage
 

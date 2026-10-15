@@ -63,6 +63,7 @@ describe("ScheduleRuns", () => {
     expect(rows[3]!.textContent).toContain("No updates");
     expect(rows[3]!.querySelector("time")!.dateTime).toBe("2026-10-05T08:00:00Z");
     expect(container.querySelector("a")!.getAttribute("href")).toBe("/agents/scribe/edit");
+    expect(rows[0]!.querySelector("a")!.getAttribute("href")).toBe("/agents/scribe/schedules/once-job/runs/running");
   });
 
   it.each([undefined, false])("does not fetch history when monitoring is %s", async (enabled) => {

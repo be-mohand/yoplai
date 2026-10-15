@@ -6,6 +6,7 @@ import type {
   AgentConfig,
   DeliverySink,
   ExtensionContext,
+  FullHistoryMessage,
   GatewayConfig,
   SchedulePayload,
 } from "@yoplai/shared";
@@ -92,6 +93,41 @@ describe("SchedulerService run ledger", () => {
         expect.objectContaining({ jobId: job.id, status: "ok", storageOwnerId: null }),
       ]);
     }
+  });
+
+  it("slices sequential pinned runs using recorded prompts and session identity after job edits", async () => {
+    const { config, alpha } = await setup();
+    const job = await add(jobPayload({ message: "Digest", sessionId: "pinned" }));
+    await scheduler.runNow("alpha", job.id);
+    const [recorded] = await scheduler.listRuns("alpha", job.id);
+    expect(recorded).toMatchObject({ pinnedSession: true });
+    const startedAt = Date.parse(recorded!.startedAt);
+    const user = (text: string, timestamp: number): FullHistoryMessage => ({ role: "user", content: [{ type: "text", text }], timestamp });
+    const assistant = (text: string, timestamp: number): FullHistoryMessage => ({ role: "assistant", content: [{ type: "text", text }], timestamp });
+    const messages = [user("Earlier", startedAt - 10), assistant("Earlier answer", startedAt - 9),
+      user("Digest", startedAt + 1), assistant("First answer", startedAt + 2),
+      user("Digest", startedAt + 10), assistant("Second answer", startedAt + 11),
+      user("Manual", startedAt + 20), assistant("Manual answer", startedAt + 21)];
+    const ctx = context(config);
+    ctx.getFullSessionHistory = vi.fn(async () => messages);
+    setSchedulerContext(ctx);
+    const store = new PerAgentScheduleStore([alpha], (candidate) => candidate.workspace);
+    await store.saveRun({ ...recorded!, id: "second", startedAt: new Date(startedAt + 9).toISOString() });
+    await scheduler.update("alpha", job.id, { payload: jobPayload({ message: "Edited", sessionId: "other" }) });
+    expect((await scheduler.getRunTrace("alpha", job.id, recorded!.id))?.messages).toEqual(messages.slice(2, 4));
+    expect((await scheduler.getRunTrace("alpha", job.id, "second"))?.messages).toEqual(messages.slice(4, 6));
+    expect(ctx.getFullSessionHistory).toHaveBeenLastCalledWith("alpha", "resolved-session", null);
+    await store.saveRun({ ...recorded!, id: "missing", prompt: "Not present" });
+    expect((await scheduler.getRunTrace("alpha", job.id, "missing"))?.messages).toEqual([]);
+    await store.saveRun({ ...recorded!, id: "legacy", pinnedSession: undefined });
+    expect((await scheduler.getRunTrace("alpha", job.id, "legacy"))?.messages).toEqual(messages.slice(2, 4));
+    await store.saveRun({ ...recorded!, id: "legacy-own", pinnedSession: undefined,
+      sessionId: `scheduler:${job.id}:0199e6d0-0000-7000-8000-000000000000` });
+    expect((await scheduler.getRunTrace("alpha", job.id, "legacy-own"))?.messages).toEqual(messages);
+    vi.mocked(ctx.getFullSessionHistory).mockClear();
+    await store.saveRun({ ...recorded!, id: "no-session", sessionId: undefined, runKind: "script_only" });
+    expect((await scheduler.getRunTrace("alpha", job.id, "no-session"))?.messages).toEqual([]);
+    expect(ctx.getFullSessionHistory).not.toHaveBeenCalled();
   });
 
   it("records timeout failure while unrelated work completes", async () => {

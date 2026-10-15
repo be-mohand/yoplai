@@ -1,7 +1,25 @@
-import type { ScheduleJob as StoredScheduleJob, ScheduleRun } from "@yoplai/shared/types";
+import type { ScheduleJob as StoredScheduleJob, ScheduleRun, ScheduleRunTrace } from "@yoplai/shared/types";
 import { API_BASE, apiFetch } from "./core";
 
 export type ScheduleJob = StoredScheduleJob & { createdByDisplayName?: string };
+
+export async function fetchScheduleRunTrace(agentId: string, jobId: string, runId: string): Promise<ScheduleRunTrace> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}/runs/${encodeURIComponent(runId)}/trace`,
+      { signal: controller.signal }
+    );
+    if (!res.ok) throw new Error("Failed to load run trace.");
+    return await res.json();
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("Loading run trace timed out. Try again.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export async function fetchScheduleRuns(agentId: string, jobId: string): Promise<ScheduleRun[]> {
   const controller = new AbortController();

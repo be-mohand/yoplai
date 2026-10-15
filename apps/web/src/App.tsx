@@ -22,6 +22,7 @@ import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { EditAgent } from "./pages/EditAgent";
 import { ScheduleRuns } from "./pages/ScheduleRuns";
+import { ScheduleRunTrace } from "./pages/ScheduleRunTrace";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { McpServerDetails } from "./pages/McpServerDetails";
 import { ChatProject } from "./pages/ChatProject";
@@ -451,6 +452,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <LeftNavShell><ScheduleRuns /></LeftNavShell>
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/agents/:agentId/schedules/:jobId/runs/:runId"
+        component={() => (
+          <GuardedRoute>
+            <LeftNavShell><ScheduleRunTrace /></LeftNavShell>
           </GuardedRoute>
         )}
       />

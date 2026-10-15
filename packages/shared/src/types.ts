@@ -466,6 +466,13 @@ export type ScheduleRun = {
   prompt: string;
   /** null selects shared storage; private runs retain their original owner. */
   storageOwnerId: string | null;
+  /** Whether this run reused an explicitly selected session. */
+  pinnedSession?: boolean;
+};
+
+export type ScheduleRunTrace = {
+  run: ScheduleRun;
+  messages: FullHistoryMessage[];
 };
 
 // UI bind mode
@@ -1420,6 +1427,12 @@ export interface ExtensionContext {
     agentId: string,
     sessionId: string
   ): Promise<HistoryMessage[]>;
+  /** Trusted canonical history lookup; null explicitly selects shared storage. */
+  getFullSessionHistory?(
+    agentId: string,
+    sessionId: string,
+    storageOwnerId: string | null
+  ): Promise<FullHistoryMessage[]>;
 
   // Media
   saveMediaFile?(

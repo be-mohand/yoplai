@@ -171,7 +171,21 @@ the job's current Mine/Team mode, so sharing a job also shares its past runs.
 Records include effective prompt and original `storageOwnerId` (user ID for
 Mine, `null` for Team). Recording is latched at start; quiet-uneventful records
 are removed, and startup unconditionally marks leftover running records
-interrupted. No backfill, retention limit, or conversation trace in this slice.
+interrupted. No backfill or retention limit.
+
+Run rows open `/agents/:agentId/schedules/:jobId/runs/:runId` with the finished
+run's final assistant output anchored and its prompt, thinking, and tool activity
+above. `GET /api/schedules/:agentId/:id/runs/:runId/trace` returns `{ run, messages }`
+using the same flag and job authorization as the runs list. The trusted host
+`ExtensionContext.getFullSessionHistory` accessor reads canonical full history
+under the recorded `storageOwnerId`, never the viewer's identity; sharing an old
+Mine run therefore preserves its original history location.
+
+Own-session runs return the exact canonical session. Pinned-session runs record
+`pinnedSession` and slice from the first user prompt at or after `startedAt` that
+matches the recorded effective prompt (including gate context), through the next
+user message or history end. This is best effort: concurrent writers and queued
+ticks can blur turn boundaries. A missing matching prompt yields an empty trace.
 
 Unless noted, paths are under `$YOPLAI_HOME`:
 

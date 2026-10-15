@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import type { GatewayConfig } from "@yoplai/shared";
+import type { FullHistoryMessage, GatewayConfig } from "@yoplai/shared";
 
 describe("createExtensionContext media helpers", () => {
   let tmpDir: string;
@@ -43,6 +43,29 @@ describe("createExtensionContext media helpers", () => {
     credentials.delete(team);
     expect(credentials.resolve({ ...lookup, requesterUserId: "bob" })).toEqual({ connected: false, reason: "not_connected", connectUrl: "/connect" });
     expect(credentials.get(personal)).toEqual({ account: "alice" });
+  });
+
+  it("reads canonical full history from the explicit owner or shared store", async () => {
+    const { writeTestV3Config } = await import("../test-utils/v3-config.js");
+    await writeTestV3Config(tmpDir);
+    const messages: FullHistoryMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Prompt" }], timestamp: 1 },
+      { role: "assistant", content: [{ type: "thinking", thinking: "Reason" }, { type: "toolCall", id: "call", name: "read", arguments: { path: "notes" } }], timestamp: 2, meta: { stopReason: "toolUse" } },
+      { role: "toolResult", toolCallId: "call", toolName: "read", content: [{ type: "text", text: "Result" }], timestamp: 3, isError: true },
+    ];
+    for (const [dir, history] of [
+      [path.join(tmpDir, "sessions/users/alice/history"), messages],
+      [path.join(tmpDir, "history"), [messages[0]!]],
+    ] as const) {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, "alpha-session.jsonl"), history.map((message) =>
+        JSON.stringify({ type: "history", agentId: "alpha", sessionId: "session", ...message })).join("\n"));
+    }
+    const { createExtensionContext } = await import("./context.js");
+    const ctx = createExtensionContext({} as GatewayConfig);
+    expect(await ctx.getFullSessionHistory!("alpha", "session", "alice")).toEqual(messages);
+    expect(await ctx.getFullSessionHistory!("alpha", "session", null)).toEqual([messages[0]]);
+    expect(await ctx.getFullSessionHistory!("alpha", "session", "bob")).toEqual([]);
   });
 
   it("rejects tampered media metadata paths outside the media directory", async () => {

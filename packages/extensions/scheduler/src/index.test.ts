@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Hono, type Context } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, ExtensionContext, FullHistoryMessage, GatewayConfig } from "@yoplai/shared";
 import { schedulerExtension } from "./index.js";
 import { clearSchedulerContext, getScheduler, setSchedulerContext, stopScheduler } from "./service.js";
 
@@ -82,7 +82,14 @@ describe("scheduler routes", () => {
     const runAgent = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
       meta: { sessionId }, payloads: [{ text: "Done" }],
     }));
-    setSchedulerContext(context(config, runAgent));
+    const ctx = context(config, runAgent);
+    const messages: FullHistoryMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Run privately" }], timestamp: 1 },
+      { role: "assistant", content: [{ type: "thinking", thinking: "Reason" }, { type: "toolCall", id: "tc", name: "read", arguments: { path: "notes" } }], timestamp: 2, meta: { stopReason: "toolUse", model: "test" } },
+      { role: "toolResult", toolCallId: "tc", toolName: "read", content: [{ type: "text", text: "Result" }], timestamp: 3, isError: true },
+    ];
+    ctx.getFullSessionHistory = vi.fn(async () => messages);
+    setSchedulerContext(ctx);
     const app = new Hono().basePath("/api");
     let userId = "alice";
     app.use("*", async (c, next) => {
@@ -103,8 +110,12 @@ describe("scheduler routes", () => {
     expect((await scheduler.list("alpha"))[0]?.enabled).toBe(false);
     const history = await (await app.request(url)).json();
     expect(history).toMatchObject({ runs: [{ status: "ok", storageOwnerId: "alice", prompt: "Run privately" }] });
+    const traceUrl = `${url}/${history.runs[0].id}/trace`;
+    expect(await (await app.request(traceUrl)).json()).toEqual({ run: history.runs[0], messages });
+    expect((await app.request(`${url}/unknown/trace`)).status).toBe(404);
     userId = "bob";
     expect((await app.request(url)).status).toBe(403);
+    expect((await app.request(traceUrl)).status).toBe(403);
     userId = "alice";
     expect((await app.request(`/api/schedules/alpha/${job.id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -112,10 +123,17 @@ describe("scheduler routes", () => {
     })).status).toBe(200);
     userId = "bob";
     expect(await (await app.request(url)).json()).toEqual(history);
+    expect(await (await app.request(traceUrl)).json()).toEqual({ run: history.runs[0], messages });
+    expect(ctx.getFullSessionHistory).toHaveBeenLastCalledWith("alpha", history.runs[0].sessionId, "alice");
     agentAccess.mockResolvedValueOnce(false);
     expect((await app.request(url)).status).toBe(403);
+    agentAccess.mockResolvedValueOnce(false);
+    expect((await app.request(traceUrl)).status).toBe(403);
+    delete ctx.getFullSessionHistory;
+    expect((await app.request(traceUrl)).status).toBe(503);
     config.enableCronMonitoring = false;
     expect((await app.request(url)).status).toBe(404);
+    expect((await app.request(traceUrl)).status).toBe(404);
   });
 
   it("shares a private job on Mine → Team and makes it private to the Team → Mine switcher", async () => {

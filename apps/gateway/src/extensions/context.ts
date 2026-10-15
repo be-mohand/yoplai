@@ -28,7 +28,7 @@ import {
   restoreSessionUpdatedAt,
 } from "../sessions/index.js";
 import { deleteSession } from "../agents/sessions.js";
-import { invalidateResolvedHistoryFile } from "../history/store.js";
+import { getFullHistory, invalidateResolvedHistoryFile } from "../history/store.js";
 import { getSessionHistory } from "../agents/runner.js";
 import { ensureSession, hasSession, resetSession } from "../sessions/persistence.js";
 import { logError, logInfo, logWarn } from "../logging.js";
@@ -137,6 +137,8 @@ export function createExtensionContext(
     },
     getSessionHistory: (agentId: string, sessionId: string) =>
       getSessionHistory(agentId, sessionId),
+    getFullSessionHistory: (agentId, sessionId, storageOwnerId) =>
+      getFullHistory(agentId, sessionId, storageOwnerId ?? undefined),
     saveMediaFile: async (
       data: Uint8Array | ArrayBuffer,
       mimeType: string,

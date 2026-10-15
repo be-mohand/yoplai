@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchScheduleRuns } from "./schedules";
+import { fetchScheduleRuns, fetchScheduleRunTrace } from "./schedules";
 
 describe("fetchScheduleRuns", () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -39,6 +39,34 @@ describe("fetchScheduleRuns", () => {
     expect(signal.aborted).toBe(true);
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ runs: [] })));
     expect(await fetchScheduleRuns("scribe", "once-job")).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("loads an authenticated trace using encoded identifiers", async () => {
+    const trace = { run: { id: "run/c" }, messages: [] };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(trace)));
+    expect(await fetchScheduleRunTrace("agent/a", "job/b", "run/c")).toEqual(trace);
+    expect(fetchMock).toHaveBeenCalledWith("/api/schedules/agent%2Fa/job%2Fb/runs/run%2Fc/trace", {
+      credentials: "include", signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("reports inaccessible traces", async () => {
+    fetchMock.mockResolvedValue(new Response("{}", { status: 404 }));
+    await expect(fetchScheduleRunTrace("scribe", "job", "missing")).rejects.toThrow("Failed to load run trace.");
+  });
+
+  it("times out a hung trace and permits retry", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementationOnce((_url, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+    const pending = expect(fetchScheduleRunTrace("scribe", "job", "run")).rejects.toThrow("Loading run trace timed out. Try again.");
+    await vi.advanceTimersByTimeAsync(15_000);
+    await pending;
+    expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ run: { id: "run" }, messages: [] })));
+    await expect(fetchScheduleRunTrace("scribe", "job", "run")).resolves.toHaveProperty("messages", []);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

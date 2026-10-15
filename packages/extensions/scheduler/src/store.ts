@@ -35,6 +35,7 @@ const RunSchema = z.object({
   outputPath: z.string().optional(),
   prompt: z.string(),
   storageOwnerId: z.string().nullable(),
+  pinnedSession: z.boolean().optional(),
 });
 
 export function getAgentJobsPath(workspaceDir: string): string {
