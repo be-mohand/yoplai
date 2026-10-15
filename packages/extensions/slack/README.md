@@ -64,6 +64,8 @@ slack:
   on and `threadUnlock: true`, one mention in a thread lets the bot answer later
   messages in that thread without a mention (in-memory; resets on gateway
   restart). With the default, every message needs a mention, threads included.
+  Set `threadUnlock` at the top level of the Slack config to default it for
+  every channel; a per-channel value overrides it. Does not apply to DMs.
 - **Direct messages** — the component bot routes DMs via `dm.agent`; a per-agent
   bot just needs `dm.enabled`. Restrict senders with `dm.allowFrom`.
 - **Mentions / reactions** — `app_mention`, `reaction_added`, and
@@ -76,8 +78,9 @@ slack:
 
 ### Reply rules (defaults)
 
-`requireMention` and `threadUnlock` exist **per channel only**; there is no
-top-level setting (a top-level key is silently dropped).
+`requireMention` exists **per channel only**; there is no top-level setting (a
+top-level key is silently dropped). `threadUnlock` can also be set at the top
+level as the default for all channels.
 
 | Situation | Bot replies to |
 | --- | --- |

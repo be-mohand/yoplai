@@ -1528,7 +1528,10 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
     if (!data) return;
     const target = resolveMessageTarget(data);
     if (!target) return;
-    const threadUnlock = target.channelConfig?.threadUnlock === true;
+    const threadUnlock =
+      !target.dmConfig &&
+      (target.channelConfig?.threadUnlock ?? target.config.threadUnlock) ===
+        true;
     const mentioned = mentionsSlackBot(data, botUserId);
     const unlockKey = slackThreadUnlockKey(data, mentioned);
     if (threadUnlock && unlockKey && mentioned) {
@@ -1554,7 +1557,10 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
     if (!data) return;
     const target = resolveMessageTarget(data);
     if (!target) return;
-    const threadUnlock = target.channelConfig?.threadUnlock === true;
+    const threadUnlock =
+      !target.dmConfig &&
+      (target.channelConfig?.threadUnlock ?? target.config.threadUnlock) ===
+        true;
     const unlockKey = slackThreadUnlockKey(data, true);
     if (threadUnlock && unlockKey) {
       unlockedThreadKeys.add(unlockKey);

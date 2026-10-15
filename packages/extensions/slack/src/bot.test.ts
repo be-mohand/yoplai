@@ -583,6 +583,68 @@ describe("createSlackBot", () => {
     await bot?.stop();
   });
 
+  it("top-level threadUnlock unlocks thread for channel without per-channel flag", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], {
+      ...config,
+      threadUnlock: true,
+      channels: { C1: { agent: "main" } },
+    });
+    await bot?.start();
+
+    const messageHandler = getMessageHandler(apps[0]);
+    for (const [ts, text] of [
+      ["1.0", "<@Ubot> start"],
+      ["1.1", "follow-up without mention"],
+    ]) {
+      await messageHandler({
+        message: {
+          ts,
+          thread_ts: "1.0",
+          text,
+          channel: "C1",
+          user: "U1",
+          channel_type: "channel",
+        },
+        client: apps[0].client,
+      });
+    }
+
+    expect(mockRunAgent).toHaveBeenCalledTimes(2);
+    await bot?.stop();
+  });
+
+  it("per-channel threadUnlock: false overrides top-level threadUnlock: true", async () => {
+    const { createSlackBot } = await import("./bot.js");
+    const bot = createSlackBot([agent], {
+      ...config,
+      threadUnlock: true,
+      channels: { C1: { agent: "main", threadUnlock: false } },
+    });
+    await bot?.start();
+
+    const messageHandler = getMessageHandler(apps[0]);
+    for (const [ts, text] of [
+      ["1.0", "<@Ubot> start"],
+      ["1.1", "follow-up without mention"],
+    ]) {
+      await messageHandler({
+        message: {
+          ts,
+          thread_ts: "1.0",
+          text,
+          channel: "C1",
+          user: "U1",
+          channel_type: "channel",
+        },
+        client: apps[0].client,
+      });
+    }
+
+    expect(mockRunAgent).toHaveBeenCalledTimes(1);
+    await bot?.stop();
+  });
+
   it("converts direct replies to Slack mrkdwn", async () => {
     const { createSlackBot } = await import("./bot.js");
     const bot = createSlackBot([agent], config);
@@ -2862,5 +2924,42 @@ describe("createSlackAgentBot", () => {
     await send("2.3", "1.0"); // over maxReplies: ignored
     expect(mockRunAgent).toHaveBeenCalledTimes(2);
     await fs.rm(dataDir, { recursive: true, force: true });
+  });
+  it("top-level agent.slack.threadUnlock unlocks threads in a listed channel", async () => {
+    const { createSlackAgentBot } = await import("./bot.js");
+    const localAgent = {
+      id: "a1",
+      name: "Agent",
+      workspace: "~/ws",
+      model: { provider: "anthropic", model: "claude" },
+      thinkLevel: "off" as const,
+      queueMode: "queue" as const,
+      slack: {
+        token: "xoxb-test",
+        appToken: "xapp-test",
+        threadUnlock: true,
+        channels: { C1: { reactionNotifications: "own" as const } },
+      },
+    } as AgentConfig;
+    const bot = createSlackAgentBot(localAgent);
+    await bot?.start();
+    for (const [ts, text] of [
+      ["1.0", "<@Ubot> start"],
+      ["1.1", "follow-up without mention"],
+    ]) {
+      await getMessageHandler(apps[0])({
+        message: {
+          ts,
+          thread_ts: "1.0",
+          text,
+          channel: "C1",
+          user: "U1",
+          channel_type: "channel",
+        },
+        client: apps[0].client,
+      });
+    }
+    expect(mockRunAgent).toHaveBeenCalledTimes(2);
+    await bot?.stop();
   });
 });

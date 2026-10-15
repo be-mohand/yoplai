@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack `threadUnlock` can now be set at the top level of the Slack config (`extensions.slack.threadUnlock` or `agent.slack.threadUnlock`) as a default for all channels; a per-channel `threadUnlock` value still overrides it.
 - Show a safe, localized, persisted assistant notice when a run fails; optionally notify a configured admin channel for provider quota exhaustion, throttled per provider/model to once per hour.
 - Add preinstalled Chromium and `playwright-cli` to sandbox agents, with authenticated dashboard previews and a visual-check recipe for themes, mobile layouts, and drill-downs.
 - `sandbox.gatewayTransport: "socket"` lets sandboxed runs reach the gateway through a read-only mounted Unix socket that serves only `/internal`, instead of `host.docker.internal`. Fixes every gateway tool (`dashboard_link`, scheduler tools, `extract_document`, extension and MCP tools) and OAuth renewal failing with `fetch failed` whenever containers have no route to the host, as under rootless Docker.
