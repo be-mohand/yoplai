@@ -1,6 +1,7 @@
 import cronstrue from "cronstrue";
 import { A } from "@solidjs/router";
 import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { useSession } from "../auth/client";
@@ -45,9 +46,30 @@ function jobSummary(job: ScheduleJob): string | undefined {
   return undefined;
 }
 
+function elapsedTime(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 export function SchedulesPanel(props: { agentId: string; agentName: string }) {
   const session = useSession();
-  const [jobs, { refetch }] = createResource(() => props.agentId, fetchSchedules);
+  const [result, { refetch }] = createResource(
+    () => props.agentId,
+    async (agentId, { value }): Promise<{ jobs: ScheduleJob[]; error?: string }> => {
+      try {
+        return { jobs: await fetchSchedules(agentId) };
+      } catch (cause) {
+        return { jobs: value?.jobs ?? [], error: cause instanceof Error ? cause.message : "Failed to load scheduled jobs." };
+      }
+    }
+  );
+  const [jobs, setJobs] = createStore<ScheduleJob[]>([]);
+  createEffect(() => setJobs(reconcile(result.latest?.jobs ?? [])));
+  createEffect(() => {
+    if (capabilities.enableCronMonitoring !== true) return;
+    const poll = setInterval(() => { if (!result.loading) void refetch(); }, 2_000);
+    onCleanup(() => clearInterval(poll));
+  });
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string>();
   // Optimistic on/off state while a toggle request is in flight.
@@ -133,14 +155,14 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
         <p>Jobs this agent runs on its own. Ask it in chat to change or remove one.</p>
       </header>
       <Show when={error()}>{(text) => <p class="schedules-error" role="alert">{text()}</p>}</Show>
-      <Show when={jobs.loading}><p class="schedules-note">Loading scheduled jobs…</p></Show>
-      <Show when={jobs.error}><p class="schedules-error">Failed to load scheduled jobs.</p></Show>
-      <Show when={!jobs.loading && !jobs.error && jobs()?.length === 0}>
+      <Show when={result.loading && !result.latest}><p class="schedules-note">Loading scheduled jobs…</p></Show>
+      <Show when={result.latest?.error}>{(text) => <p class="schedules-error" role="alert">{text()}</p>}</Show>
+      <Show when={!result.loading && !result.latest?.error && jobs.length === 0}>
         <p class="schedules-note">No scheduled jobs yet.</p>
       </Show>
-      <Show when={(jobs()?.length ?? 0) > 0}>
+      <Show when={jobs.length > 0}>
         <ul class="schedule-list">
-          <For each={jobs() ?? []}>{(job) => {
+          <For each={jobs}>{(job) => {
             const mode = () => job.credentialMode ?? "team";
             const enabled = () => pending()[job.id] ?? job.enabled !== false;
             const canToggle = () => mode() === "owner" || isAdmin();
@@ -159,6 +181,9 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                       <A href={`/agents/${encodeURIComponent(props.agentId)}/schedules/${encodeURIComponent(job.id)}/runs`}><strong>{job.name}</strong></A>
                     </Show>
                     <Show when={!enabled()}><span class="schedule-paused">Paused</span></Show>
+                    <Show when={capabilities.enableCronMonitoring === true && job.state?.runningForMs !== undefined}>
+                      <span class="schedule-running">Running {elapsedTime(job.state?.runningForMs ?? 0)}</span>
+                    </Show>
                   </div>
                   <div class="schedule-when">
                     <span>{describeSchedule(job.schedule)}</span>
@@ -243,7 +268,7 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
           </div>
         </div>
       )}</Show>
-      <Show when={!jobs.loading && !jobs.error}>
+      <Show when={!result.loading && !result.latest?.error}>
         <p class="schedules-hint">If you want to add a new job, just ask {props.agentName}!</p>
       </Show>
     </section>
@@ -280,6 +305,13 @@ const SCHEDULES_STYLES = `
   flex: 0 0 auto; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
   color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
 }
+.schedule-running {
+  flex: 0 0 auto; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--accent, #1a73e8); background: color-mix(in srgb, var(--accent, #1a73e8) 12%, transparent);
+}
+.schedule-running::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; animation: schedule-running-pulse 1.5s ease-in-out infinite; }
+@keyframes schedule-running-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .schedule-running::before { animation: none; } }
 .schedule-when { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-primary); font-size: 13px; }
 .schedule-tz {
   padding: 1px 7px; border-radius: 6px; font-size: 11px; font-variant-numeric: tabular-nums;

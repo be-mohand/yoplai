@@ -165,6 +165,8 @@ Key rules:
 Root `enableCronMonitoring` defaults off. When enabled, scheduler runs have
 atomic per-run records at `<workspace>/cron/runs/<jobId>/<runId>.json` and
 Scheduled jobs titles link to `/agents/:agentId/schedules/:jobId/runs`.
+The Scheduled jobs panel polls every two seconds only with the flag on and shows
+a pulsing Running badge with elapsed time from `runningForMs` until the run ends.
 `GET /api/schedules/:agentId/:id/runs` returns `{ runs }` with running records
 first, then newest first; it returns 404 with the flag off. Authorization uses
 the job's current Mine/Team mode, so sharing a job also shares its past runs.

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { Suspense } from "solid-js";
 import type { JSX } from "solid-js";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 
@@ -51,6 +52,7 @@ afterEach(() => {
   dispose?.();
   container.remove();
   resetCapabilitiesForTests();
+  vi.useRealTimers();
 });
 
 describe("describeSchedule", () => {
@@ -68,6 +70,83 @@ describe("describeSchedule", () => {
 });
 
 describe("SchedulesPanel", () => {
+  it.each([0, 65_000])("shows elapsed time for a running job, including zero: %s", async (runningForMs) => {
+    setCapabilitiesForTests({ enableCronMonitoring: true });
+    fetchSchedulesMock.mockResolvedValue([{ id: "running", name: "Running job", schedule: {}, payload: {}, state: { runningForMs } }]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    expect(container.querySelector(".schedule-running")?.textContent).toBe(`Running ${runningForMs === 0 ? "0s" : "1m 5s"}`);
+  });
+
+  it("polls idle jobs to discover a run, updates elapsed time, and removes the badge on completion", async () => {
+    vi.useFakeTimers();
+    setCapabilitiesForTests({ enableCronMonitoring: true });
+    const job = { id: "job", name: "Digest", schedule: {}, payload: {} };
+    fetchSchedulesMock.mockResolvedValueOnce([{ ...job }])
+      .mockResolvedValueOnce([{ ...job, state: { runningForMs: 0 } }])
+      .mockResolvedValueOnce([{ ...job, state: { runningForMs: 2_000 } }])
+      .mockResolvedValue([job]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".schedule-running")).toBeNull();
+    const title = container.querySelector<HTMLAnchorElement>(".schedule-title a")!;
+    title.focus();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(container.querySelector(".schedule-running")?.textContent).toBe("Running 0s");
+    expect(document.activeElement).toBe(title);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(container.querySelector(".schedule-running")?.textContent).toBe("Running 2s");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(container.querySelector(".schedule-running")).toBeNull();
+    dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([undefined, false])("does not show a running badge or poll with flag %s", async (enabled) => {
+    vi.useFakeTimers();
+    setCapabilitiesForTests({ enableCronMonitoring: enabled });
+    fetchSchedulesMock.mockResolvedValue([{ id: "job", name: "Digest", schedule: {}, payload: {}, state: { runningForMs: 4_000 } }]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(container.querySelector(".schedule-running")).toBeNull();
+    expect(fetchSchedulesMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps cards visible during pending and failed polls, avoids overlap, and recovers", async () => {
+    vi.useFakeTimers();
+    setCapabilitiesForTests({ enableCronMonitoring: true });
+    dispose = render(() => <Suspense fallback={<p>Suspended</p>}><SchedulesPanel agentId="scribe" agentName="Scribe" /></Suspense>, container);
+    await vi.advanceTimersByTimeAsync(0);
+    let rejectPoll!: (error: Error) => void;
+    fetchSchedulesMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPoll = reject; }));
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(fetchSchedulesMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelector(".schedule-title")?.textContent).toContain("Digest");
+    expect(container.textContent).not.toContain("Suspended");
+    rejectPoll(new Error("Connection lost"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Connection lost");
+    expect(container.querySelector(".schedule-title")?.textContent).toContain("Digest");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchSchedulesMock).toHaveBeenCalledTimes(3);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("stops polling and hides the badge when monitoring is disabled while mounted", async () => {
+    vi.useFakeTimers();
+    setCapabilitiesForTests({ enableCronMonitoring: true });
+    fetchSchedulesMock.mockResolvedValue([{ id: "job", name: "Digest", schedule: {}, payload: {}, state: { runningForMs: 4_000 } }]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".schedule-running")).not.toBeNull();
+    setCapabilitiesForTests({ enableCronMonitoring: false });
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(container.querySelector(".schedule-running")).toBeNull();
+    expect(fetchSchedulesMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each([undefined, false, true])("links job titles only when monitoring is enabled: %s", async (enabled) => {
     setCapabilitiesForTests({ enableCronMonitoring: enabled });
     fetchSchedulesMock.mockResolvedValue([{

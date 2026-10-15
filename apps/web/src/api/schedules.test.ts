@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchScheduleRuns, fetchScheduleRunTrace } from "./schedules";
+import { fetchSchedules, fetchScheduleRuns, fetchScheduleRunTrace } from "./schedules";
 
 describe("fetchScheduleRuns", () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -20,6 +20,29 @@ describe("fetchScheduleRuns", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/schedules/agent%2Fa/job%2Fb/runs", {
       credentials: "include", signal: expect.any(AbortSignal),
     });
+  });
+
+  it("loads the authenticated schedules list with encoded agent ID", async () => {
+    const jobs = [{ id: "job", state: { runningForMs: 0 } }];
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(jobs)));
+    expect(await fetchSchedules("agent/a")).toEqual(jobs);
+    expect(fetchMock).toHaveBeenCalledWith("/api/schedules?agent=agent%2Fa", {
+      credentials: "include", signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("times out a hung schedules poll and permits the next request", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementationOnce((_url, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+    const pending = expect(fetchSchedules("scribe")).rejects.toThrow("Loading scheduled jobs timed out. Try again.");
+    await vi.advanceTimersByTimeAsync(15_000);
+    await pending;
+    expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    fetchMock.mockResolvedValue(new Response("[]"));
+    expect(await fetchSchedules("scribe")).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("reports failed or inaccessible history", async () => {

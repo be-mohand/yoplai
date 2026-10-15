@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- With cron monitoring enabled, Scheduled jobs refresh every two seconds and show a pulsing Running badge with elapsed time until execution finishes.
 - Scheduled run history refreshes automatically, and running traces show live thinking, tool results, and output while following the bottom until you scroll up.
 - Scheduled run traces show the prompt, thinking, tool calls and results, and final output, preserving the run's original storage identity after sharing a job.
 - Opt-in cron monitoring (`enableCronMonitoring: true`) records scheduler run history and links scheduled job titles to status, duration, script output, and error details.
