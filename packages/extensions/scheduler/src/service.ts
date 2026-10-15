@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type {
   AgentConfig,
   ScheduleJob,
+  ScheduleRun,
   CreateScheduleRequest,
   UpdateScheduleRequest,
   ExtensionContext,
@@ -69,6 +70,8 @@ type JobWithState = ScheduleJob & {
 };
 
 type CompleteRunInput = {
+  ledgerRun?: ScheduleRun;
+  payload: ScheduleJob["payload"];
   job: JobWithState;
   scheduledRunAt?: string;
   agent: AgentConfig;
@@ -170,6 +173,7 @@ export class SchedulerService {
   async start() {
     this.stopped = false;
     await this.load();
+    await this.jobStore.reconcileRunningRuns();
     const config = getSchedulerContext().getConfig();
     if (config.extensions?.scheduler?.enabled === false) {
       console.log("[scheduler] Disabled");
@@ -224,6 +228,14 @@ export class SchedulerService {
         }
         return job;
       });
+  }
+
+  async listRuns(agentId: string, jobId: string): Promise<ScheduleRun[]> {
+    const runs = await this.jobStore.listRuns(agentId, jobId);
+    return runs.sort((a, b) =>
+      Number(b.status === "running") - Number(a.status === "running") ||
+      b.startedAt.localeCompare(a.startedAt)
+    );
   }
 
   async add(
@@ -409,13 +421,17 @@ export class SchedulerService {
   }
 
   private async saveAgent(agentId: string) {
-    const previous = this.agentSaveChains.get(agentId) ?? Promise.resolve();
-    const operation = previous.then(() =>
+    await this.serializeAgentSave(agentId, () =>
       this.jobStore.saveAgentJobs(
         agentId,
         this.store.jobs.filter((job) => job.agentId === agentId)
       )
     );
+  }
+
+  private async serializeAgentSave(agentId: string, save: () => Promise<void>) {
+    const previous = this.agentSaveChains.get(agentId) ?? Promise.resolve();
+    const operation = previous.then(save);
     const chain = operation.catch(() => {});
     this.agentSaveChains.set(agentId, chain);
     chain.finally(() => {
@@ -424,6 +440,14 @@ export class SchedulerService {
       }
     });
     await operation;
+  }
+
+  private async saveRun(run: ScheduleRun) {
+    try {
+      await this.serializeAgentSave(run.agentId, () => this.jobStore.saveRun(run));
+    } catch (error) {
+      getSchedulerContext().logger.error(`[scheduler] Failed to save run ${run.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   armTimer() {
@@ -472,7 +496,7 @@ export class SchedulerService {
     await Promise.allSettled(
       due.map(async (job) => {
         try {
-          await this.executeJob(job);
+          await this.executeJob(job, undefined, job.state?.nextRunAtMs);
         } catch (error) {
           if (error instanceof ScheduleAlreadyRunningError) {
             getSchedulerContext().logger.warn(error.message);
@@ -499,13 +523,18 @@ export class SchedulerService {
 
   private async executeJob(
     job: JobWithState,
-    detached?: { sessionId: string; previousNextRunAtMs?: number }
+    detached?: { sessionId: string; previousNextRunAtMs?: number },
+    scheduledFiredAtMs?: number
   ): Promise<SchedulerRunResult> {
     const key = this.executionKey(job);
-    const scheduledRunAt = job.schedule.runAt;
     if (this.executingJobs.has(key)) {
       throw new ScheduleAlreadyRunningError(job.agentId, job.id);
     }
+    // Settings can change while persistence or a gate awaits; this fire keeps
+    // the same payload and credentials that its ledger record describes.
+    const payload = { ...job.payload };
+    const { credentialMode, ownerUserId } = job;
+    const scheduledRunAt = job.schedule.runAt;
     this.executingJobs.add(key);
     this.runningJobStartedAtMs.set(key, Date.now());
     if (scheduledRunAt !== undefined) {
@@ -523,8 +552,24 @@ export class SchedulerService {
     const firedAt = new Date();
     const sessionId =
       detached?.sessionId ??
-      job.payload.sessionId ??
+      payload.sessionId ??
       `scheduler:${job.id}:${uuidv7()}`;
+    const ledgerRun: ScheduleRun | undefined = config.enableCronMonitoring &&
+      (!agent || ctx.isAgentActive(job.agentId))
+      ? {
+        id: uuidv7(),
+        jobId: job.id,
+        agentId: job.agentId,
+        firedAt: new Date(scheduledFiredAtMs ?? firedAt.getTime()).toISOString(),
+        startedAt: firedAt.toISOString(),
+        status: "running",
+        runKind: payload.script ? "script_only" : "woke_agent",
+        sessionId: payload.script ? undefined : sessionId,
+        prompt: payload.message ?? "",
+        storageOwnerId: credentialMode === "owner" ? ownerUserId ?? null : null,
+      }
+      : undefined;
+    if (ledgerRun) await this.saveRun(ledgerRun);
 
     if (!agent) {
       console.error(`[scheduler] Agent not found: ${job.agentId}`);
@@ -534,6 +579,7 @@ export class SchedulerService {
       job.state.lastStatus = "error";
       job.state.lastError = "Agent not found";
       job.state.lastRunAtMs = firedAt.getTime();
+      if (ledgerRun) await this.saveRun({ ...ledgerRun, status: "error", error: "Agent not found", finishedAt: new Date().toISOString() });
       if (scheduledRunAt !== undefined) {
         this.disableCompletedOneShot(job, scheduledRunAt);
         await this.saveAgent(job.agentId);
@@ -579,7 +625,7 @@ export class SchedulerService {
       model: agent.model.model,
     };
 
-    let prompt = job.payload.message ?? "";
+    let prompt = payload.message ?? "";
     let gateOutput: string | undefined;
     let runKind: SchedulerRunKind | undefined;
 
@@ -587,18 +633,20 @@ export class SchedulerService {
     // so a deterministic job's success signal is its exit code, not a model's
     // self-report. The script enforces its own timeout, so it stays outside the
     // AbortController race below.
-    if (job.payload.script) {
+    if (payload.script) {
       let script: RunScriptResult;
       try {
         script = await runScript({
           workspaceDir,
-          script: job.payload.script,
+          script: payload.script,
           timeoutMs,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[scheduler] Job script failed: ${job.name}`, err);
         return this.completeAndRelease(key, {
+          ledgerRun,
+          payload,
           job,
           scheduledRunAt,
           agent,
@@ -608,14 +656,24 @@ export class SchedulerService {
           status: "error",
           statusLabel: errorStatusLabel(message),
           exitCode: parseScriptExitCode(message),
-          prompt: job.payload.message,
+          gateOutput: message.match(/\nstdout:\n([\s\S]*)/)?.[1],
+          prompt: payload.message,
           error: err,
           errorMessage: message,
         });
       }
 
-      if (job.payload.noAgent) {
+      gateOutput = script.stdout;
+      if (ledgerRun) {
+        ledgerRun.gateOutput = gateOutput;
+        ledgerRun.exitCode = 0;
+      }
+
+      if (payload.noAgent) {
+        if (ledgerRun) await this.saveRun(ledgerRun);
         return this.completeAndRelease(key, {
+          ledgerRun,
+          payload,
           job,
           scheduledRunAt,
           agent,
@@ -625,13 +683,20 @@ export class SchedulerService {
           status: "ok",
           statusLabel: "ok",
           runKind: "script_only",
+          gateOutput,
           response: script.stdout,
         });
       }
 
       const gate = parseWakeAgent(script.finalStdoutLine);
       if (!gate.wake) {
+        if (ledgerRun) {
+          ledgerRun.runKind = "silent_tick";
+          await this.saveRun(ledgerRun);
+        }
         return this.completeAndRelease(key, {
+          ledgerRun,
+          payload,
           job,
           scheduledRunAt,
           agent,
@@ -641,7 +706,8 @@ export class SchedulerService {
           status: "ok",
           statusLabel: "ok (silent tick)",
           runKind: "silent_tick",
-          prompt: job.payload.message,
+          gateOutput,
+          prompt: payload.message,
           response: "silent tick",
         });
       }
@@ -649,6 +715,14 @@ export class SchedulerService {
       runKind = "woke_agent";
       gateOutput = script.stdout;
       if (gate.context) prompt = `${prompt}\n\nGate context:\n${gate.context}`;
+    }
+
+    if (ledgerRun && payload.script) {
+      ledgerRun.runKind = "woke_agent";
+      ledgerRun.prompt = prompt;
+      ledgerRun.sessionId = sessionId;
+      ledgerRun.gateOutput = gateOutput;
+      await this.saveRun(ledgerRun);
     }
 
     // Each execution gets its own AbortController so timeout can cancel the run.
@@ -659,11 +733,11 @@ export class SchedulerService {
     // actually settles — even if executeJob returns early due to timeout —
     // so the next scheduled fire cannot overlap with a still-aborting run.
     let missingCredentialError: string | undefined;
-    const runPromise = job.credentialMode === "owner" && !job.ownerUserId
+    const runPromise = credentialMode === "owner" && !ownerUserId
       ? Promise.reject(new Error("Scheduled job owner is missing; reconnect the owner's credentials after assigning an owner."))
       : ctx.runAgent({
       agentId: job.agentId,
-      userId: job.credentialMode === "owner" ? job.ownerUserId : undefined,
+      userId: credentialMode === "owner" ? ownerUserId : undefined,
       message: prompt,
       sessionId,
       model: job.model,
@@ -719,6 +793,8 @@ export class SchedulerService {
 
     try {
       const result = await this.completeRun({
+        ledgerRun,
+        payload,
         job,
         scheduledRunAt,
         agent,
@@ -734,7 +810,7 @@ export class SchedulerService {
               ? "woke agent"
               : "ok",
         runKind,
-        prompt: job.payload.message,
+        prompt,
         response,
         gateOutput,
         error: errorValue,
@@ -790,7 +866,7 @@ export class SchedulerService {
   private async completeRun(
     input: CompleteRunInput
   ): Promise<SchedulerRunResult> {
-    const { job, firedAt } = input;
+    const { job, firedAt, payload } = input;
     job.state = job.state ?? {};
     job.state.lastStatus = input.status;
     job.state.lastError = input.errorMessage;
@@ -814,7 +890,7 @@ export class SchedulerService {
     job.state.lastDelivery = delivery.length > 0 ? delivery : undefined;
 
     const uneventful =
-      job.payload.quietOutput === true &&
+      payload.quietOutput === true &&
       input.status === "ok" &&
       (input.runKind === "silent_tick" ||
         (input.runKind === "script_only" &&
@@ -831,7 +907,7 @@ export class SchedulerService {
           model: input.model,
           runType: "cron",
           name: job.name,
-          prompt: input.prompt,
+          prompt: input.runKind === "script_only" ? undefined : payload.message,
           schedule: formatScheduleForOutput(job.schedule),
           firedAt,
           finishedAt: new Date(),
@@ -840,7 +916,7 @@ export class SchedulerService {
           exitCode: input.exitCode,
           durationMs: Date.now() - firedAt.getTime(),
           response: input.response,
-          gateOutput: input.gateOutput,
+          gateOutput: input.runKind === "woke_agent" ? input.gateOutput : undefined,
           error: input.error,
           delivery,
         });
@@ -855,6 +931,31 @@ export class SchedulerService {
     }
 
     const finishedAt = new Date();
+    if (input.ledgerRun) {
+      if (uneventful) {
+        const runId = input.ledgerRun.id;
+        try {
+          await this.serializeAgentSave(job.agentId, () =>
+            this.jobStore.deleteRun(job.agentId, job.id, runId)
+          );
+        } catch (error) {
+          getSchedulerContext().logger.error(`[scheduler] Failed to delete run ${runId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        await this.saveRun({
+          ...input.ledgerRun,
+          status: input.status,
+          finishedAt: finishedAt.toISOString(),
+          runKind: input.runKind ?? input.ledgerRun.runKind,
+          sessionId: input.sessionId ?? input.ledgerRun.sessionId,
+          prompt: input.prompt ?? input.ledgerRun.prompt,
+          exitCode: input.exitCode ?? input.ledgerRun.exitCode,
+          gateOutput: input.gateOutput ?? input.ledgerRun.gateOutput,
+          error: input.errorMessage,
+          outputPath,
+        });
+      }
+    }
     job.state.lastRunAtMs = firedAt.getTime();
     if (input.scheduledRunAt !== undefined) {
       this.disableCompletedOneShot(job, input.scheduledRunAt);

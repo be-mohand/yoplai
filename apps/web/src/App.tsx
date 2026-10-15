@@ -21,6 +21,7 @@ import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { EditAgent } from "./pages/EditAgent";
+import { ScheduleRuns } from "./pages/ScheduleRuns";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { McpServerDetails } from "./pages/McpServerDetails";
 import { ChatProject } from "./pages/ChatProject";
@@ -442,6 +443,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <EditAgentRouteShell />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/agents/:agentId/schedules/:jobId/runs"
+        component={() => (
+          <GuardedRoute>
+            <LeftNavShell><ScheduleRuns /></LeftNavShell>
           </GuardedRoute>
         )}
       />

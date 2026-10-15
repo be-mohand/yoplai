@@ -19,6 +19,31 @@ HTTP API / `yoplai scheduler` commands still read and write per-agent
 `cron/jobs.json` files. Timers do not start and jobs do not fire. Extension
 shutdown prevents an already-pending tick from re-arming the timer.
 
+## Run monitoring (experimental)
+
+Set root `enableCronMonitoring: true` in `yoplai.json` to record run history
+(default: `false`). `/api/capabilities` exposes `enableCronMonitoring`.
+Scheduled job titles then link to `/agents/:agentId/schedules/:jobId/runs`.
+The read-only page shows start time, duration, status (`running`, `ok`, `error`,
+`interrupted`), run kind (`woke_agent`, `silent_tick`, `script_only`), exit code,
+script/gate output, and errors, including for completed one-shot jobs.
+
+`GET /api/schedules/:agentId/:id/runs` returns `{ runs: [...] }`, running first,
+then newest first. It reuses job access checks: Mine history is owner-only;
+Team history is visible to agent members. Access follows the job's current
+mode, so sharing a Mine job exposes its past runs. With the flag off the
+endpoint returns 404 and titles stay plain text.
+
+Each run has one atomically replaced record at
+`cron/runs/<jobId>/<runId>.json`, serialized with other per-agent scheduler
+writes. It retains the effective prompt and original session storage owner
+(`storageOwnerId: null` for shared Team storage). Successful uneventful quiet
+runs remove their record, matching existing output suppression; failures and
+woken-agent runs remain. Recording is latched at run start, so disabling the
+flag mid-run still completes its record. Startup marks leftover running
+records interrupted even when the flag is off. No backfill or pruning.
+Conversation traces are outside this history-only slice.
+
 ## Storage
 
 Each agent owns its jobs:

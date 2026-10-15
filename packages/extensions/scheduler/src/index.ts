@@ -584,6 +584,25 @@ const schedulerExtension: Extension = {
       }
     });
 
+    app.get("/schedules/:agentId/:id/runs", async (c) => {
+      if (!getSchedulerContext().getConfig().enableCronMonitoring) {
+        return c.json({ error: "Not found" }, 404);
+      }
+      const agentId = c.req.param("agentId");
+      const id = c.req.param("id");
+      if (getSchedulerContext().getConfig().extensions?.multiUser?.enabled) {
+        const { getRequestAuthContext, hasAgentAccess } = await import("@yoplai/extension-multi-user");
+        const auth = getRequestAuthContext(c);
+        if (!auth || !(await hasAgentAccess(auth, agentId))) {
+          return c.json({ error: "Agent access required" }, 403);
+        }
+      }
+      if (!(await canAccessJob(agentId, id, requestUserId(c)))) {
+        return c.json({ error: "Schedule owner access required" }, 403);
+      }
+      return c.json({ runs: await getScheduler().listRuns(agentId, id) });
+    });
+
     app.get("/schedules/:agentId/:id/tail", async (c) => {
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");

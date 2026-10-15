@@ -10,6 +10,8 @@ import type {
   SchedulePayload,
 } from "@yoplai/shared";
 import { MAX_DELIVERY_CHARS } from "./deliver.js";
+import { PerAgentScheduleStore } from "./store.js";
+import * as scriptRunner from "./script.js";
 import {
   ScheduleAlreadyRunningError,
   SchedulerService,
@@ -17,6 +19,195 @@ import {
   setSchedulerContext,
   stopScheduler,
 } from "./service.js";
+
+describe("SchedulerService run ledger", () => {
+  let tmpDir: string;
+  let scheduler: SchedulerService;
+
+  afterEach(async () => {
+    await scheduler?.stop();
+    clearSchedulerContext();
+    vi.restoreAllMocks();
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function setup(enabled = true, runAgent: ReturnType<typeof vi.fn> = vi.fn(async () => ({
+    payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "resolved-session" },
+  }))) {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-ledger-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    const config: GatewayConfig = {
+      version: 3, agents: [alpha], enableCronMonitoring: enabled,
+      extensions: { scheduler: { enabled: true } },
+      sessions: { idleMinutes: 360 }, agentFab: false,
+    };
+    setSchedulerContext(context(config, runAgent));
+    scheduler = new SchedulerService();
+    return { config, alpha, runAgent };
+  }
+
+  async function add(payload = jobPayload({ message: "Digest" }), ownerUserId?: string) {
+    return scheduler.add("alpha", {
+      name: "Digest", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload,
+    }, ownerUserId);
+  }
+
+  it("creates no ledger directory while monitoring is disabled", async () => {
+    const { alpha } = await setup(false);
+    const job = await add();
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result.status).toBe("ok");
+    expect(result.outputPath).toBeDefined();
+    expect(await scheduler.listRuns("alpha", job.id)).toEqual([]);
+    await expect(fs.stat(path.join(alpha.workspace, "cron/runs"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("persists running state before invoking the agent and finishes the same record after monitoring turns off", async () => {
+    let finish!: (value: { payloads: { text: string }[]; meta: { durationMs: number; sessionId: string } }) => void;
+    const runAgent = vi.fn(() => new Promise<{ payloads: { text: string }[]; meta: { durationMs: number; sessionId: string } }>((resolve) => { finish = resolve; }));
+    const { config, alpha } = await setup(true, runAgent);
+    const job = await add(undefined, "alice");
+    const execution = scheduler.runNow("alpha", job.id);
+    await vi.waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+    const [running] = await scheduler.listRuns("alpha", job.id);
+    expect(running).toMatchObject({ status: "running", prompt: "Digest", runKind: "woke_agent", storageOwnerId: "alice", sessionId: expect.any(String) });
+    config.enableCronMonitoring = false;
+    finish({ payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "final-session" } });
+    const result = await execution;
+    expect(await scheduler.listRuns("alpha", job.id)).toEqual([
+      expect.objectContaining({ id: running!.id, status: "ok", sessionId: "final-session", finishedAt: expect.any(String), outputPath: result.outputPath }),
+    ]);
+    expect(await fs.readdir(path.join(alpha.workspace, "cron/runs", job.id))).toEqual([`${running!.id}.json`]);
+  });
+
+  it("retains concurrent jobs and records team runs without an owner", async () => {
+    await setup();
+    const first = await add();
+    const second = await add();
+    await Promise.all([scheduler.runNow("alpha", first.id), scheduler.runNow("alpha", second.id)]);
+    for (const job of [first, second]) {
+      expect(await scheduler.listRuns("alpha", job.id)).toEqual([
+        expect.objectContaining({ jobId: job.id, status: "ok", storageOwnerId: null }),
+      ]);
+    }
+  });
+
+  it("records timeout failure while unrelated work completes", async () => {
+    const runAgent = vi.fn(async (input?: { message: string }) => {
+      if (input?.message === "Hang") return new Promise<never>(() => {});
+      return { payloads: [{ text: "Done" }], meta: { durationMs: 1, sessionId: "session" } };
+    });
+    await setup(true, runAgent);
+    const hanging = await add(jobPayload({ message: "Hang" }));
+    await scheduler.update("alpha", hanging.id, { timeoutMs: 25 });
+    const healthy = await add();
+    await Promise.all([scheduler.runNow("alpha", hanging.id), scheduler.runNow("alpha", healthy.id)]);
+    expect(await scheduler.listRuns("alpha", hanging.id)).toEqual([
+      expect.objectContaining({ status: "error", error: expect.stringContaining("timed out"), finishedAt: expect.any(String) }),
+    ]);
+    expect(await scheduler.listRuns("alpha", healthy.id)).toEqual([expect.objectContaining({ status: "ok" })]);
+  });
+
+  it.each([
+    { script: "echo rotated\n", noAgent: true, quietOutput: false, kind: "script_only", absent: false },
+    { script: "exit 0\n", noAgent: true, quietOutput: true, kind: "script_only", absent: true },
+    { script: 'echo \'{"wakeAgent":false}\'\n', noAgent: false, quietOutput: false, kind: "silent_tick", absent: false },
+    { script: 'echo \'{"wakeAgent":false}\'\n', noAgent: false, quietOutput: true, kind: "silent_tick", absent: true },
+    { script: 'echo \'{"wakeAgent":true,"context":{"count":2}}\'\n', noAgent: false, quietOutput: true, kind: "woke_agent", absent: false },
+  ])("records $kind and applies quiet suppression: $absent", async ({ script, noAgent, quietOutput, kind, absent }) => {
+    const { alpha, runAgent } = await setup();
+    await fs.mkdir(alpha.workspace, { recursive: true });
+    await fs.writeFile(path.join(alpha.workspace, "gate.sh"), script);
+    const job = await add(jobPayload({ script: "gate.sh", message: "Digest", noAgent, quietOutput }));
+    const result = await scheduler.runNow("alpha", job.id);
+    const runs = await scheduler.listRuns("alpha", job.id);
+    if (absent) {
+      expect(runs).toEqual([]);
+      expect(result.outputPath).toBeUndefined();
+    } else {
+      expect(runs).toEqual([expect.objectContaining({ status: "ok", runKind: kind, exitCode: 0, gateOutput: expect.any(String) })]);
+      expect(runs[0]!.sessionId).toBe(kind === "woke_agent" ? "resolved-session" : undefined);
+      if (kind === "woke_agent") {
+        expect(runs[0]!.prompt).toBe('Digest\n\nGate context:\n{"count":2}');
+        expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ message: runs[0]!.prompt }));
+      }
+    }
+  });
+
+  it("keeps quiet script failures with mechanical exit status and captured output", async () => {
+    const { alpha } = await setup();
+    await fs.mkdir(alpha.workspace, { recursive: true });
+    await fs.writeFile(path.join(alpha.workspace, "gate.sh"), "echo captured\necho problem >&2\nexit 3\n");
+    const job = await add(jobPayload({ script: "gate.sh", noAgent: true, quietOutput: true }));
+    await scheduler.runNow("alpha", job.id);
+    expect(await scheduler.listRuns("alpha", job.id)).toEqual([
+      expect.objectContaining({ status: "error", runKind: "script_only", exitCode: 3, gateOutput: "captured\n", error: expect.stringContaining("problem"), outputPath: expect.any(String) }),
+    ]);
+  });
+
+  it("finishes and disables a quiet one-shot even when its ledger record cannot be deleted", async () => {
+    const { alpha } = await setup();
+    await fs.mkdir(alpha.workspace, { recursive: true });
+    await fs.writeFile(path.join(alpha.workspace, "gate.sh"), "exit 0\n");
+    vi.spyOn(PerAgentScheduleStore.prototype, "deleteRun").mockRejectedValue(Object.assign(new Error("Permission denied"), { code: "EACCES" }));
+    const job = await scheduler.add("alpha", {
+      name: "Quiet once", schedule: { runAt: new Date().toISOString() },
+      payload: jobPayload({ script: "gate.sh", noAgent: true, quietOutput: true }),
+    });
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    await scheduler.refreshFromDisk();
+    expect((await scheduler.list("alpha"))[0]).toMatchObject({ id: job.id, enabled: false });
+  });
+
+  it("keeps execution identity and prompt while respecting schedule edits during a gate", async () => {
+    const { runAgent } = await setup();
+    let releaseGate!: (value: scriptRunner.RunScriptResult) => void;
+    const gate = vi.spyOn(scriptRunner, "runScript").mockReturnValue(new Promise((resolve) => { releaseGate = resolve; }));
+    const job = await add(jobPayload({ script: "gate.sh", message: "Original" }), "alice");
+    const state = (job as typeof job & { state: { nextRunAtMs: number } }).state;
+    state.nextRunAtMs = Date.now() - 1;
+    const execution = scheduler.runDueJobs();
+    await vi.waitFor(() => expect(gate).toHaveBeenCalledOnce());
+    const schedule = { cron: "30 17 * * *", tz: "UTC" };
+    await scheduler.update("alpha", job.id, { credentialMode: "team", payload: jobPayload({ message: "Changed" }), schedule });
+    const nextRunAtMs = state.nextRunAtMs;
+    releaseGate({ stdout: '{"wakeAgent":true,"context":{"count":2}}\n', stderr: "", finalStdoutLine: '{"wakeAgent":true,"context":{"count":2}}' });
+    await execution;
+    const effectivePrompt = 'Original\n\nGate context:\n{"count":2}';
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ userId: "alice", message: effectivePrompt }));
+    expect(await scheduler.listRuns("alpha", job.id)).toEqual([
+      expect.objectContaining({ storageOwnerId: "alice", prompt: effectivePrompt, status: "ok" }),
+    ]);
+    expect((await scheduler.list("alpha"))[0]).toMatchObject({ credentialMode: "team", payload: { message: "Changed" }, schedule, state: { nextRunAtMs } });
+  });
+
+  it("starts and executes healthy jobs despite startup run reconciliation failing", async () => {
+    const { alpha } = await setup(false);
+    const store = new PerAgentScheduleStore([alpha], (candidate) => candidate.workspace);
+    await store.saveRun({ id: "orphan", jobId: "deleted", agentId: "alpha", firedAt: "2026-10-15T10:00:00.000Z", startedAt: "2026-10-15T10:00:00.000Z", runKind: "woke_agent", status: "running", prompt: "Digest", storageOwnerId: null });
+    vi.spyOn(PerAgentScheduleStore.prototype, "saveRun").mockRejectedValue(Object.assign(new Error("Permission denied"), { code: "EACCES" }));
+    const job = await add();
+    await scheduler.start();
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+  });
+
+  it("reconciles every orphaned run at startup with monitoring and the scheduler disabled, and sorts running first", async () => {
+    const { config, alpha } = await setup(false);
+    config.extensions!.scheduler!.enabled = false;
+    const store = new PerAgentScheduleStore([alpha], (candidate) => candidate.workspace);
+    const base = { jobId: "deleted", agentId: "alpha", firedAt: "2026-10-15T10:00:00.000Z", startedAt: "2026-10-15T10:00:00.000Z", runKind: "woke_agent" as const, prompt: "Digest", storageOwnerId: null };
+    await store.saveRun({ ...base, id: "orphan", status: "running" });
+    await store.saveRun({ ...base, id: "recent", status: "ok", startedAt: "2026-10-15T11:00:00.000Z" });
+    await scheduler.start();
+    const runs = await scheduler.listRuns("alpha", "deleted");
+    expect(runs.map((run) => run.id)).toEqual(["recent", "orphan"]);
+    expect(runs[1]).toMatchObject({ status: "interrupted", finishedAt: expect.any(String) });
+    await store.saveRun({ ...base, id: "active", status: "running" });
+    expect((await scheduler.listRuns("alpha", "deleted")).map((run) => run.id)).toEqual(["active", "recent", "orphan"]);
+  });
+});
 
 type SchedulerWithInternals = {
   runDueJobs(): Promise<void>;

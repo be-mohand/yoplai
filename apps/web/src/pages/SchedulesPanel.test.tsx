@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import type { JSX } from "solid-js";
+import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
+
+vi.mock("@solidjs/router", () => ({
+  A: (props: { href: string; children?: JSX.Element }) => <a href={props.href}>{props.children}</a>,
+}));
 
 const { fetchSchedulesMock, updateScheduleMock, deleteScheduleMock, sessionUser } = vi.hoisted(() => ({
   fetchSchedulesMock: vi.fn(),
@@ -29,6 +35,7 @@ async function settle() {
 }
 
 beforeEach(() => {
+  resetCapabilitiesForTests();
   container = document.createElement("div");
   document.body.appendChild(container);
   fetchSchedulesMock.mockReset().mockResolvedValue([{
@@ -43,6 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   dispose?.();
   container.remove();
+  resetCapabilitiesForTests();
 });
 
 describe("describeSchedule", () => {
@@ -60,6 +68,21 @@ describe("describeSchedule", () => {
 });
 
 describe("SchedulesPanel", () => {
+  it.each([undefined, false, true])("links job titles only when monitoring is enabled: %s", async (enabled) => {
+    setCapabilitiesForTests({ enableCronMonitoring: enabled });
+    fetchSchedulesMock.mockResolvedValue([{
+      id: "once/job", agentId: "scribe", name: "Completed reminder", enabled: false,
+      schedule: { runAt: "2026-10-05T14:00:00Z" }, payload: {},
+    }]);
+    dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);
+    await settle();
+    const title = container.querySelector(".schedule-title")!;
+    expect(title.textContent).toContain("Completed reminder");
+    expect(title.textContent).toContain("Paused");
+    expect(title.querySelector("a")?.getAttribute("href")).toBe(enabled ? "/agents/scribe/schedules/once%2Fjob/runs" : undefined);
+    expect(title.textContent).not.toContain("Running");
+  });
+
   it("recovers from a failed mode change and keeps jobs usable", async () => {
     updateScheduleMock.mockRejectedValueOnce(new Error("Connection lost"));
     dispose = render(() => <SchedulesPanel agentId="scribe" agentName="Scribe" />, container);

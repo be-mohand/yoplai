@@ -1,7 +1,26 @@
-import type { ScheduleJob as StoredScheduleJob } from "@yoplai/shared/types";
+import type { ScheduleJob as StoredScheduleJob, ScheduleRun } from "@yoplai/shared/types";
 import { API_BASE, apiFetch } from "./core";
 
 export type ScheduleJob = StoredScheduleJob & { createdByDisplayName?: string };
+
+export async function fetchScheduleRuns(agentId: string, jobId: string): Promise<ScheduleRun[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/schedules/${encodeURIComponent(agentId)}/${encodeURIComponent(jobId)}/runs`,
+      { signal: controller.signal }
+    );
+    if (!res.ok) throw new Error("Failed to load run history.");
+    const data: { runs: ScheduleRun[] } = await res.json();
+    return data.runs;
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("Loading run history timed out. Try again.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export async function fetchSchedules(agentId: string): Promise<ScheduleJob[]> {
   const res = await apiFetch(`${API_BASE}/schedules?agent=${encodeURIComponent(agentId)}`);

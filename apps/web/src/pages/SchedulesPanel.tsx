@@ -1,8 +1,10 @@
 import cronstrue from "cronstrue";
+import { A } from "@solidjs/router";
 import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { deleteSchedule, fetchSchedules, updateSchedule, type ScheduleJob } from "../api/schedules";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { useSession } from "../auth/client";
+import { capabilities } from "../lib/capabilities";
 
 type CredentialMode = "owner" | "team";
 
@@ -153,7 +155,9 @@ export function SchedulesPanel(props: { agentId: string; agentName: string }) {
                 </span>
                 <div class="schedule-main">
                   <div class="schedule-title">
-                    <strong>{job.name}</strong>
+                    <Show when={capabilities.enableCronMonitoring === true} fallback={<strong>{job.name}</strong>}>
+                      <A href={`/agents/${encodeURIComponent(props.agentId)}/schedules/${encodeURIComponent(job.id)}/runs`}><strong>{job.name}</strong></A>
+                    </Show>
                     <Show when={!enabled()}><span class="schedule-paused">Paused</span></Show>
                   </div>
                   <div class="schedule-when">
@@ -269,6 +273,8 @@ const SCHEDULES_STYLES = `
 .schedule-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .schedule-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .schedule-title strong { color: var(--text-primary); font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-title a { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
+.schedule-title a:hover { text-decoration: underline; }
 .schedule[data-paused] .schedule-title strong { color: var(--text-secondary); }
 .schedule-paused {
   flex: 0 0 auto; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
