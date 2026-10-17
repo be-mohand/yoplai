@@ -42,14 +42,20 @@ import { CredentialStore } from "../credentials/store.js";
 import { resolveCredential } from "../credentials/resolver.js";
 import { credentialConnectHost } from "../credentials/connect.js";
 import { recordSettingsChange } from "../audit/store.js";
+import { updateAgentExtensionConfig } from "./agent-config-writer.js";
+import { reloadAfterExtensionWrite } from "./reload.js";
 
 /** Bind extension-owned connector registration to the extension being started. */
 export function bindExtensionContext(context: ExtensionContext, extensionId: string): ExtensionContext {
   const credentialConnect = context.credentialConnect;
-  if (!credentialConnect) return context;
+  const writeConfig = context.updateAgentExtensionConfig;
   return {
     ...context,
-    credentialConnect: {
+    updateAgentExtensionConfig: writeConfig && (async (agentId, targetId, patch) => {
+      if (targetId !== extensionId) throw new Error("An extension can only write its own config.");
+      return writeConfig(agentId, targetId, patch);
+    }),
+    credentialConnect: credentialConnect && {
       ...credentialConnect,
       registerOAuthConnector(id, start) {
         if (id !== extensionId) throw new Error("An extension can only register its own OAuth connector.");
@@ -70,6 +76,16 @@ export function createExtensionContext(
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    updateAgentExtensionConfig: async (agentId, extensionId, patch) => {
+      const agent = getAgent(agentId);
+      if (!agent) throw new Error(`Unknown agent: ${agentId}`);
+      await updateAgentExtensionConfig(
+        resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace),
+        extensionId,
+        patch
+      );
+      await reloadAfterExtensionWrite();
+    },
     audit: { record: recordSettingsChange },
     credentialConnect: credentialConnectHost,
     credentials: {

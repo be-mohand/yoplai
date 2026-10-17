@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { parseDocument } from "yaml";
 import { AgentYamlConfigSchema } from "@yoplai/shared";
+import type { ExtensionConfigPatch } from "@yoplai/shared";
 
 /**
  * Write path for an agent's `config.extensions`. Runtime agent config is
@@ -16,26 +17,7 @@ import { AgentYamlConfigSchema } from "@yoplai/shared";
  * `resolveEnvRefs` resolver.
  */
 
-export type ExtensionConfigPatch = {
-  /** Flip the extension on/off for this agent. */
-  enabled?: boolean;
-  /**
-   * Non-secret config fields to merge into `extensions.<id>`. Values are
-   * written verbatim into `agent.yaml`.
-   */
-  config?: Record<string, unknown>;
-  /**
-   * Secret fields. Each value is written to the agent's `.env` file and
-   * referenced from `agent.yaml` as `$env:NAME` (never plaintext). The env var
-   * name is derived from the extension id and field name.
-   */
-  secrets?: Record<string, string>;
-  /**
-   * Secret fields to unset: removed from `extensions.<id>`, along with the
-   * `.env` value when it is the one this writer manages for that field.
-   */
-  removeSecrets?: string[];
-};
+export type { ExtensionConfigPatch };
 
 export class ExtensionConfigValidationError extends Error {
   constructor(readonly fields: string[]) {

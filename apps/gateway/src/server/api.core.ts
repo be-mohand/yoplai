@@ -11,18 +11,15 @@ import {
   getAgent,
   isAgentActive,
   loadConfig,
-  reloadConfig,
   resolveAgentEnv,
   resolveWorkspaceDir,
-  setLoadedConfig,
 } from "../config/index.js";
-import { resolveStartupConfig } from "../config/validate.js";
+import { reloadAfterExtensionWrite as reloadAfterConfigWrite } from "../extensions/reload.js";
 import {
   getExtensionRuntime,
   isExtensionLoaded,
   getHomeExtension,
   getLoadedExtensions,
-  reloadExtensions,
 } from "../extensions/registry.js";
 import {
   buildExtensionCatalog,
@@ -1003,22 +1000,7 @@ api.delete("/agents/:id/extensions/:extensionId/credentials", async (c) => {
 
 /** Reload config after an agent.yaml write and return the requester's catalog for the agent. */
 async function reloadAfterExtensionWrite(c: Context, agentId: string) {
-  // Invalidate the config cache so the next run (and the next catalog read)
-  // observes the change rather than the stale in-memory config.
-  const rawReloaded = reloadConfig();
-  const reloaded = await resolveStartupConfig(rawReloaded);
-  setLoadedConfig(reloaded);
-
-  // Bring a newly-enabled extension online without a gateway restart so that
-  // /capabilities and tool resolution reflect it immediately (ALG-349). Only
-  // adds extensions not already loaded; never re-starts running ones.
-  try {
-    await reloadExtensions(reloaded);
-  } catch (error) {
-    console.warn(
-      `[extensions] runtime reconcile after enable failed: ${(error as Error).message}`
-    );
-  }
+  const reloaded = await reloadAfterConfigWrite();
 
   const updatedAgent = findWritableExtensionAgent(reloaded, agentId);
   return updatedAgent

@@ -1306,7 +1306,39 @@ export interface SettingsAuditEntry {
   changes: SettingsAuditChange[];
 }
 
+/** Change to one extension's per-agent config, applied by the host writer. */
+export type ExtensionConfigPatch = {
+  /** Flip the extension on/off for this agent. */
+  enabled?: boolean;
+  /**
+   * Non-secret config fields to merge into `extensions.<id>`. Values are
+   * written verbatim into `agent.yaml`.
+   */
+  config?: Record<string, unknown>;
+  /**
+   * Secret fields. Each value is written to the agent's `.env` file and
+   * referenced from `agent.yaml` as `$env:NAME` (never plaintext). The env var
+   * name is derived from the extension id and field name.
+   */
+  secrets?: Record<string, string>;
+  /**
+   * Secret fields to unset: removed from `extensions.<id>`, along with the
+   * `.env` value when it is the one the writer manages for that field.
+   */
+  removeSecrets?: string[];
+};
+
 export interface ExtensionContext {
+  /**
+   * Write an agent's per-agent extension config (secrets go to the agent
+   * `.env`), then reload the gateway config. An extension can only write its
+   * own config.
+   */
+  updateAgentExtensionConfig?(
+    agentId: string,
+    extensionId: string,
+    patch: ExtensionConfigPatch
+  ): Promise<void>;
   audit?: { record(entry: SettingsAuditEntry): void };
   credentialConnect?: import("./credential-connect.js").CredentialConnectHost;
   // Host-owned encrypted credentials, available to external extensions.

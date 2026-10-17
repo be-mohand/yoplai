@@ -197,3 +197,55 @@ describe("createExtensionContext delivery sink registry", () => {
     warn.mockRestore();
   });
 });
+
+describe("updateAgentExtensionConfig host API", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock("./agent-config-writer.js");
+    vi.doUnmock("./reload.js");
+    vi.doUnmock("../config/index.js");
+  });
+
+  async function load() {
+    const writer = vi.fn(async () => ({}));
+    const reload = vi.fn(async () => ({}));
+    vi.resetModules();
+    vi.doMock("./agent-config-writer.js", () => ({ updateAgentExtensionConfig: writer }));
+    vi.doMock("./reload.js", () => ({ reloadAfterExtensionWrite: reload }));
+    vi.doMock("../config/index.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../config/index.js")>()),
+      getAgent: (id: string) =>
+        id === "bot" ? { id: "bot", workspace: "/ws/bot" } : undefined,
+      resolveWorkspaceDir: (dir: string) => `/resolved${dir}`,
+    }));
+    const mod = await import("./context.js");
+    return { mod, writer, reload };
+  }
+
+  it("writes the agent config, then reloads", async () => {
+    const { mod, writer, reload } = await load();
+    const ctx = mod.createExtensionContext({} as GatewayConfig);
+    const patch = { secrets: { token: "t" } };
+    await ctx.updateAgentExtensionConfig!("bot", "threadit", patch);
+    expect(writer).toHaveBeenCalledWith("/resolved/ws/bot", "threadit", patch);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(writer.mock.invocationCallOrder[0]).toBeLessThan(reload.mock.invocationCallOrder[0]);
+  });
+
+  it("rejects an unknown agent without writing", async () => {
+    const { mod, writer, reload } = await load();
+    const ctx = mod.createExtensionContext({} as GatewayConfig);
+    await expect(ctx.updateAgentExtensionConfig!("ghost", "threadit", {})).rejects.toThrow(/Unknown agent/);
+    expect(writer).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("lets a bound extension write only its own config", async () => {
+    const { mod, writer } = await load();
+    const ctx = mod.bindExtensionContext(mod.createExtensionContext({} as GatewayConfig), "threadit");
+    await expect(ctx.updateAgentExtensionConfig!("bot", "slack", {})).rejects.toThrow(/only write its own/);
+    expect(writer).not.toHaveBeenCalled();
+    await ctx.updateAgentExtensionConfig!("bot", "threadit", { enabled: true });
+    expect(writer).toHaveBeenCalledTimes(1);
+  });
+});
