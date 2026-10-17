@@ -150,6 +150,13 @@ export function bashLabel(command: string): string {
     // A quoted or escaped value may span words. Show nothing then.
     if (/["'`\\$]/.test(words[i]!)) return "";
   }
+  // Skip `cd <dir> &&` / `cd <dir>;` prefixes. The directory is not shown.
+  for (;;) {
+    if (words[i] !== "cd" || words[i + 1] === undefined) break;
+    if (words[i + 1]!.endsWith(";") && words[i + 2] !== undefined) i += 2;
+    else if ((words[i + 2] === "&&" || words[i + 2] === ";") && words[i + 3] !== undefined) i += 3;
+    else break;
+  }
   const shown: string[] = [];
   let cut = false;
   for (; i < words.length; i++) {
@@ -158,7 +165,7 @@ export function bashLabel(command: string): string {
     const harmless =
       PLAIN.test(word) &&
       !looksLikeToken(word) &&
-      !(flag && !/^(?:-[A-Za-z]{1,3}|--[A-Za-z][A-Za-z0-9-]*)$/.test(word)) &&
+      !(flag && !/^(?:-[A-Za-z]{1,3}|-\d+|--[A-Za-z][A-Za-z0-9-]*)$/.test(word)) &&
       !(flag && word.startsWith("--") && sensitiveName(word.slice(2)));
     if (!harmless) {
       cut = true;

@@ -114,4 +114,13 @@ describe("credential forms never reach a label", () => {
     );
     expect(detailedToolLabel("bash", { command: "FOO=bar pnpm test" })).toBe("Running: pnpm test");
   });
+
+  it("skips cd prefixes and keeps numeric flags", () => {
+    const label = (command: string) => detailedToolLabel("bash", { command });
+    expect(label("cd ~/pom && rg -n THREADIT .env")).toBe("Running: rg -n THREADIT .env");
+    expect(label("cd /a; cd b && git log -5")).toBe("Running: git log -5");
+    expect(label("cd src ; tail -n 20 x.log | grep err")).toBe("Running: tail -n 20 x.log …");
+    expect(label("cd app && curl -u bob:pw host")).toBe("Running: curl -u …");
+    expect(label("cd ~/pom")).toBe("Running: cd ~/pom");
+  });
 });
