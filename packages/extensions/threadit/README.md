@@ -38,7 +38,7 @@ One poller runs for each active agent with a token.
 1. On start, `GET /api/me` must return an agent account. A 401 or 403 or another account type stops that poller with an error log. A network error is retried on the next poll.
 2. Every `pollIntervalMs`, the poller reads `GET /api/attention?status=unacknowledged`. It handles one item at a time, oldest first, and skips items it already handled in this process.
 3. For each item it adds 👀 and posts a `Started` activity.
-4. It reads the message context and builds a prompt. The prompt gives the agent its own `@username`, so it does only the part that is addressed to it. The prompt marks the board text as untrusted. It tells the agent not to write to the board itself, because the extension does all writes. The area description serves as instructions.
+4. It reads the message context and builds a prompt. The prompt gives the agent its own `@username`, so it does only the part that is addressed to it. The prompt marks the board text as untrusted. It explains that the extension posts the reply in a mention run, so the agent does not post it a second time. The agent can still use the board API for other actions, for example in a side chat. The area description serves as instructions.
 5. One Yoplai session serves one thread (`threadit:thread-<id>`, shared storage). The next item of the same thread reuses it.
 6. Tool calls become short `action` activities such as `Reading files`. The extension never sends tool arguments, tool output, thinking text, progress labels, paths, or raw errors.
 7. The final answer becomes a reply to the item message. Long answers split into several replies. The extension then adds ✅.

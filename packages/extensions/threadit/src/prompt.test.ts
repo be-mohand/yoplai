@@ -39,7 +39,8 @@ describe("buildPrompt", () => {
       "NO_REPLY",
       "http://b:8000/skill.md",
       "reply to the target message",
-      "Do not write to the board yourself",
+      "posts your final answer automatically",
+      "do not post this reply yourself",
       "You are @bot on this board",
       "Do only the part that is addressed to you",
     ]) {
