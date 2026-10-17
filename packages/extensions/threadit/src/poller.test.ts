@@ -854,12 +854,47 @@ describe("ThreaditPoller", () => {
       );
     });
 
-    it("does not start new work after retire", async () => {
-      const { board, poller } = setup({}, async () => okResult("x"));
+    it("finishes the active turn after disable, idles, and resumes without duplicates", async () => {
+      let latest: ReturnType<typeof config> | undefined = config("tok");
+      let finish: (() => void) | undefined;
+      const { board, runAgent, poller } = setup(
+        { unacknowledged: [message(3)] },
+        () =>
+          new Promise<RunAgentResult>((resolve) => {
+            finish = () => resolve(okResult("Hello"));
+          }),
+        { token: "tok", readConfig: () => latest }
+      );
+      poller.start();
+      await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+      latest = undefined;
+      await settle(40);
+      finish?.();
+      await waitFor(() => expect(replies(board).length).toBe(1));
+      board.unacknowledged.length = 0; // The real board acknowledges the item.
+      await settle(40);
+      board.calls.length = 0;
+      await settle(80);
+      expect(board.calls).toEqual([]);
+      latest = config("tok");
+      await waitFor(() => expect(board.calls.length).toBeGreaterThan(0));
+      await settle(80);
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(replies(board)).toEqual([]);
+    });
+
+    it("stops after disable", async () => {
+      let latest: ReturnType<typeof config> | undefined = config("tok");
+      const { board, poller } = setup({}, async () => okResult("x"), {
+        token: "tok",
+        readConfig: () => latest,
+      });
       poller.start();
       await waitFor(() => expect(board.calls.length).toBeGreaterThan(0));
-      poller.retire();
-      await settle(30);
+      latest = undefined;
+      await settle(40);
+      await poller.stop();
+      latest = config("tok");
       board.calls.length = 0;
       await settle(80);
       expect(board.calls).toEqual([]);

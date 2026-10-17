@@ -91,7 +91,6 @@ export class ThreaditPoller {
   private readonly sleepers = new Set<() => void>();
   private me: BoardAccount | undefined;
   private stopped = false;
-  private retired = false;
   private rejected = false;
   private recovered = false;
   /** New items whose 👀 result was unknown. Recovery retries them as processing items. */
@@ -148,7 +147,8 @@ export class ThreaditPoller {
     }
     if (
       !latest ||
-      (latest.token === this.config.token &&
+      (this.current &&
+        latest.token === this.config.token &&
         latest.baseUrl === this.config.baseUrl)
     ) {
       if (latest) this.config = latest;
@@ -169,12 +169,6 @@ export class ThreaditPoller {
     this.schedule(0);
   }
 
-  /** Stop after the active turn ends. The poller starts no new item. */
-  retire(): void {
-    this.retired = true;
-    clearTimeout(this.timer);
-  }
-
   async stop(): Promise<void> {
     this.stopped = true;
     clearTimeout(this.timer);
@@ -184,7 +178,7 @@ export class ThreaditPoller {
   }
 
   private schedule(ms: number): void {
-    if (this.stopped || this.retired) return;
+    if (this.stopped) return;
     this.timer = setTimeout(() => {
       this.loop = this.iterate();
     }, ms);
@@ -297,7 +291,7 @@ export class ThreaditPoller {
     if (!items) return false;
     let complete = true;
     for (const item of items.sort((a, b) => a.id - b.id)) {
-      if (this.stopped || this.retired) return false;
+      if (this.stopped) return false;
       if (this.handled.has(item.id)) continue;
       const state = sessionOf(item, this.meId)?.state ?? "";
       if (state === "working" || state === "stale") {
@@ -322,7 +316,7 @@ export class ThreaditPoller {
           : 1
     );
     for (const item of items) {
-      if (this.stopped || this.retired) return;
+      if (this.stopped) return;
       if (!this.handled.has(item.id)) await this.handleItem(item, false);
     }
   }

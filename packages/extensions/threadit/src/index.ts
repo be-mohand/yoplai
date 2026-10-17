@@ -20,14 +20,12 @@ function resolveAgent(ctx: ExtensionContext, agentId: string) {
   );
 }
 
-/** Start a poller for each enabled agent that has none. Retire the others. */
+/**
+ * Start a poller for each agent that has none. A poller stays for the life of
+ * the extension. It idles when the agent disables threadit and resumes when
+ * the config returns.
+ */
 function reconcilePollers(ctx: ExtensionContext): void {
-  for (const [agentId, poller] of [...pollers]) {
-    if (resolveAgent(ctx, agentId)?.status !== "ok") {
-      poller.retire();
-      pollers.delete(agentId);
-    }
-  }
   for (const agent of ctx.getAgents()) {
     if (pollers.has(agent.id)) continue;
     const resolved = resolveAgent(ctx, agent.id);

@@ -603,13 +603,13 @@ export async function reloadExtensions(
   return extensionRuntime.getLoadedExtensions();
 }
 
-async function notifyConfigReload(extensions: Extension[]): Promise<void> {
+export async function notifyConfigReload(extensions: Extension[]): Promise<void> {
   for (const extension of extensions) {
     try {
       await extension.onConfigReload?.();
     } catch (error) {
       console.warn(
-        `[extensions] ${extension.id} config reload hook failed: ${(error as Error).message}`
+        `[extensions] ${extension.id} config reload hook failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

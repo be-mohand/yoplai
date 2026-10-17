@@ -9,7 +9,6 @@ vi.mock("./poller.js", () => ({
     }
     start = vi.fn();
     stop = vi.fn(async () => {});
-    retire = vi.fn();
   },
 }));
 
@@ -68,7 +67,7 @@ describe("threadit extension", () => {
     await threaditExtension.stop();
   });
 
-  it("retires the poller when the agent disables threadit", async () => {
+  it("keeps one poller when the agent disables and re-enables threadit", async () => {
     const agents: Array<Record<string, unknown>> = [
       { id: "a", extensions: { threadit: { token: "t" } } },
     ];
@@ -77,7 +76,7 @@ describe("threadit extension", () => {
     await threaditExtension.onConfigReload?.();
     agents[0] = { id: "a", extensions: { threadit: { token: "t" } } };
     await threaditExtension.onConfigReload?.();
-    expect(starts.map((s) => s.agentId)).toEqual(["a", "a"]);
+    expect(starts.map((s) => s.agentId)).toEqual(["a"]);
     await threaditExtension.stop();
   });
 });

@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GatewayConfigSchema, getOAuthProvider, registerOAuthProvider, resetOAuthProviders, type Extension } from "@yoplai/shared";
 import {
   getBuiltInExtensionRegistrations,
@@ -11,6 +11,7 @@ import {
   getKnownExtensionRouteMetadata,
   isExtensionLoaded,
   loadExtensions,
+  notifyConfigReload,
   reloadExtensions,
   setExtensionActivator,
   topoSort,
@@ -20,6 +21,40 @@ import { ExtensionRuntime } from "./runtime.js";
 const require = createRequire(import.meta.url);
 
 describe("extension registry", () => {
+  it("runs later config reload hooks after a hook throws null", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let laterRan = false;
+    const base = {
+      displayName: "X",
+      description: "X",
+      dependencies: [],
+      configSchema: GatewayConfigSchema,
+      routePrefixes: [],
+      validateConfig: () => ({ valid: true, errors: [] }),
+      registerRoutes: () => undefined,
+      start: async () => undefined,
+      stop: async () => undefined,
+      capabilities: () => [],
+    };
+    await notifyConfigReload([
+      {
+        ...base,
+        id: "thrower",
+        onConfigReload: async () => {
+          throw null;
+        },
+      },
+      {
+        ...base,
+        id: "later",
+        onConfigReload: async () => {
+          laterRan = true;
+        },
+      },
+    ]);
+    expect(laterRan).toBe(true);
+  });
+
   it("sorts extensions by dependency order", () => {
     const result = topoSort([
       {
