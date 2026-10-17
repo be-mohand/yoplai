@@ -12,6 +12,7 @@ export type ResolvedThreaditConfig = {
   token: string | undefined;
   pollIntervalMs: number;
   turnTimeoutMinutes: number;
+  activity: "safe" | "detailed";
 };
 
 export type ResolveResult =
@@ -55,6 +56,7 @@ export function resolveThreaditConfig(
         agent.data.turnTimeoutMinutes ??
         rootData.turnTimeoutMinutes ??
         DEFAULT_TURN_TIMEOUT_MINUTES,
+      activity: agent.data.activity ?? rootData.activity ?? "safe",
     },
   };
 }

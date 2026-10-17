@@ -14,6 +14,7 @@ describe("resolveThreaditConfig", () => {
         token: "t",
         pollIntervalMs: 2000,
         turnTimeoutMinutes: 5,
+        activity: "safe",
       },
     });
   });
@@ -30,6 +31,7 @@ describe("resolveThreaditConfig", () => {
         token: "t",
         pollIntervalMs: 5000,
         turnTimeoutMinutes: 60,
+        activity: "safe",
       },
     });
   });
@@ -49,6 +51,7 @@ describe("resolveThreaditConfig", () => {
         token: undefined,
         pollIntervalMs: 5000,
         turnTimeoutMinutes: 60,
+        activity: "safe",
       },
     });
   });
@@ -61,5 +64,19 @@ describe("resolveThreaditConfig", () => {
     expect(
       resolveThreaditConfig({ baseUrl: "http://x" }, { token: "t", pollIntervalMs: 10 })
     ).toEqual({ status: "invalid", reason: "agent config" });
+  });
+
+  it("resolves activity: agent wins over root, default safe", () => {
+    const ok = (root: unknown, agent: unknown) => {
+      const r = resolveThreaditConfig(root, agent);
+      return r.status === "ok" ? r.config.activity : r.status;
+    };
+    expect(ok({ baseUrl: "http://b" }, { token: "t" })).toBe("safe");
+    expect(ok({ baseUrl: "http://b", activity: "detailed" }, { token: "t" })).toBe("detailed");
+    expect(
+      ok({ baseUrl: "http://b", activity: "detailed" }, { token: "t", activity: "safe" })
+    ).toBe("safe");
+    expect(ok({ baseUrl: "http://b" }, { token: "t", activity: "detailed" })).toBe("detailed");
+    expect(ok({ baseUrl: "http://b" }, { token: "t", activity: "loud" })).toBe("invalid");
   });
 });

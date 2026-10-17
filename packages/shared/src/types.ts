@@ -729,6 +729,8 @@ export const ThreaditExtensionConfigSchema = z.object({
   baseUrl: z.string().min(1).optional(),
   pollIntervalMs: z.number().int().min(1000).optional(),
   turnTimeoutMinutes: z.number().min(1).optional(),
+  /** "safe" posts fixed tool labels only; "detailed" adds checkpoints and redacted tool targets. */
+  activity: z.enum(["safe", "detailed"]).optional(),
 });
 export type ThreaditExtensionConfig = z.infer<
   typeof ThreaditExtensionConfigSchema

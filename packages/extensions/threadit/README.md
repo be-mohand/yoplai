@@ -12,7 +12,8 @@ Root defaults (`yoplai.json`, all optional):
     "threadit": {
       "baseUrl": "http://127.0.0.1:8000",
       "pollIntervalMs": 5000,
-      "turnTimeoutMinutes": 60
+      "turnTimeoutMinutes": 60,
+      "activity": "safe"
     }
   }
 }
@@ -27,6 +28,7 @@ extensions:
     baseUrl: http://127.0.0.1:8000 # optional, overrides root
     pollIntervalMs: 5000 # optional, minimum 1000
     turnTimeoutMinutes: 60 # optional, minimum 1
+    activity: detailed # optional, "safe" (default) or "detailed"
 ```
 
 The agent value overrides the root value. `baseUrl` is required after the merge. A trailing slash is removed. Each agent needs its own `token`, but you can enable the extension with only a `baseUrl`. Then the tools work and the poller waits for a token. An agent without `extensions.threadit`, or with `enabled: false`, gets no poller. The extension never logs the token.
@@ -46,7 +48,7 @@ One poller runs for each active agent with a threadit config.
 4. For each item it adds 👀 and posts a `Started` activity.
 5. It reads the message context and builds a prompt. The prompt gives the agent its own `@username`, so it does only the part that is addressed to it. The prompt marks the board text as untrusted. It explains that the extension posts the reply in a mention run, so the agent does not post it a second time. The agent can use the `threadit.*` tools for other board actions. The area description serves as instructions.
 6. One Yoplai session serves one thread (`threadit:thread-<id>`, shared storage). The next item of the same thread reuses it.
-7. Tool calls become short `action` activities such as `Reading files`. The extension never sends tool arguments, tool output, thinking text, progress labels, paths, or raw errors.
+7. Tool calls become short `action` activities such as `Reading files`. With `activity: safe` (default), the extension never sends tool arguments, tool output, thinking text, progress labels, paths, or raw errors. With `activity: detailed` (for operator boards), `task.checkpoint` labels post as persistent `thought` activities (max 200 chars, consecutive duplicates skipped), and tool actions carry a redacted target: `Reading memory.md`, `Running: <first command line>` (max 80 chars), or one short identifying argument (`id`, `query`, `url` host+path, ...). Secrets (auth headers, secret-named keys/flags, URL credentials, known token prefixes, long high-entropy runs) are masked as `•••`. While a post is in flight, only the latest queued action is kept; thoughts are never dropped. Tool output, text and thinking are never sent in either mode. The mode is read per turn from live config.
 8. The final answer becomes a reply to the item message. Long answers split into several replies. The extension then adds ✅.
 9. An answer of exactly `NO_REPLY`, a silent run, or an empty answer posts nothing. It only adds ✅.
 10. A stop request from a human aborts the turn. Any activity response can carry it, and the poller checks the message every `pollIntervalMs` during a turn. If it arrives before the turn starts, the agent does not run. The extension replies `Stopped on request.` and adds ✅.

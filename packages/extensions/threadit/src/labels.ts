@@ -1,4 +1,9 @@
-/** Safe progress labels from tool names. Arguments and outputs never reach the board. */
+import { redact } from "./redact.js";
+
+/**
+ * Progress labels. Safe mode uses tool names only. Detailed mode adds a
+ * redacted target. Tool outputs never reach the board.
+ */
 
 const EXACT_LABELS = new Map<string, string>([
   ["read", "Reading files"],
@@ -41,4 +46,88 @@ function humanize(name: string): string {
     .toLowerCase();
   const limited = Array.from(words).slice(0, 40).join("");
   return limited === "" ? "Using a tool" : `Using ${limited}`;
+}
+
+// ---- detailed mode ----
+
+/** Trim to `max` characters with an ellipsis, without splitting surrogate pairs. */
+export function trimText(text: string, max: number): string {
+  const chars = Array.from(text.replace(/\s+/g, " ").trim());
+  return chars.length <= max ? chars.join("") : `${chars.slice(0, max - 1).join("")}…`;
+}
+
+/** Checkpoint label for the board, or `undefined` when empty. */
+export function progressLabel(label: string): string | undefined {
+  const text = trimText(redact(label), 200);
+  return text === "" ? undefined : text;
+}
+
+const FILE_VERBS = new Map([
+  ["read", "Reading"],
+  ["write", "Writing"],
+  ["edit", "Editing"],
+]);
+const PATH_KEYS = ["path", "file_path", "filePath", "file"];
+const ID_KEYS = [
+  "id",
+  "issue",
+  "issueId",
+  "query",
+  "q",
+  "title",
+  "path",
+  "url",
+  "name",
+  "thread_id",
+  "threadId",
+  "jobId",
+  "job_id",
+];
+
+function stringArg(args: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+    if (typeof value === "number") return String(value);
+  }
+  return undefined;
+}
+
+export function shortPath(p: string): string {
+  const parts = p.split(/[\\/]+/).filter(Boolean);
+  return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : p;
+}
+
+function shortUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    return `${url.host}${url.pathname === "/" ? "" : url.pathname}`;
+  } catch {
+    return raw;
+  }
+}
+
+/** Label with a redacted target. `undefined` for task bookkeeping tools. */
+export function detailedToolLabel(name: string, rawArgs: unknown): string | undefined {
+  const label = toolLabel(name);
+  if (label === undefined) return undefined;
+  const args =
+    rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
+  const lower = name.toLowerCase();
+  const verb = FILE_VERBS.get(lower);
+  if (verb) {
+    const p = stringArg(args, PATH_KEYS);
+    return p ? trimText(`${verb} ${redact(shortPath(p))}`, 120) : label;
+  }
+  if (lower === "bash") {
+    const command = typeof args.command === "string" ? args.command : "";
+    const line = command.split("\n").find((l) => l.trim() !== "") ?? "";
+    return line ? trimText(`Running: ${redact(line)}`, 80) : label;
+  }
+  const key = ID_KEYS.find((k) => stringArg(args, [k]) !== undefined);
+  if (!key) return label;
+  let value = stringArg(args, [key]) ?? "";
+  if (key === "url") value = shortUrl(value);
+  else if (key === "path") value = shortPath(value);
+  return `${label}: ${trimText(redact(value), 60)}`;
 }

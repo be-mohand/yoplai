@@ -152,9 +152,11 @@ function setup(
     stopWaitMs?: number;
     token?: string | undefined;
     readConfig?: PollerOptions["readConfig"];
+    activity?: "safe" | "detailed";
   } = {}
 ): Setup {
-  const { token = "secret-token", ...rest } = "token" in timing ? timing : { ...timing };
+  const { token = "secret-token", activity = "safe", ...rest } =
+    "token" in timing ? timing : { ...timing };
   const board = makeBoard(boardOverrides);
   const runAgent = vi.fn(run);
   const ctx = {
@@ -170,6 +172,7 @@ function setup(
       token,
       pollIntervalMs: 10,
       turnTimeoutMinutes: 60,
+      activity,
     },
     fetchFn: fetchFor(board),
     stopWaitMs: 500,
@@ -807,11 +810,15 @@ describe("ThreaditPoller", () => {
   });
 
   describe("token at run time", () => {
-    const config = (token: string | undefined) => ({
+    const config = (
+      token: string | undefined,
+      activity: "safe" | "detailed" = "safe"
+    ) => ({
       baseUrl: "http://board",
       token,
       pollIntervalMs: 10,
       turnTimeoutMinutes: 60,
+      activity,
     });
     const pending = () =>
       Response.json(
@@ -1057,6 +1064,119 @@ describe("ThreaditPoller", () => {
         expect(board.calls.filter((c) => c.path === "/api/me")).toHaveLength(2)
       );
       expect(board.calls.at(-1)?.auth).toBe("Bearer good");
+    });
+  });
+
+  describe("detailed activity", () => {
+    it("posts checkpoints and redacted tool targets, never results or text", async () => {
+      const { board, poller } = setup(
+        { unacknowledged: [message(3)] },
+        async (params) => {
+          const call = (name: string, args: unknown): StreamEvent => ({
+            type: "tool_call",
+            id: name,
+            name,
+            arguments: args,
+          });
+          params.onEvent?.({ type: "progress", label: "Checked the deploy" });
+          params.onEvent?.({ type: "progress", label: "Checked the deploy" });
+          params.onEvent?.({ type: "progress", label: "  " });
+          params.onEvent?.(call("read", { path: "/home/a/b/c/memory.md" }));
+          params.onEvent?.({ type: "text", data: "private-text" });
+          params.onEvent?.({ type: "thinking", data: "private-think" } as StreamEvent);
+          params.onEvent?.({
+            type: "tool_result",
+            id: "read",
+            name: "read",
+            result: "private-result",
+          } as unknown as StreamEvent);
+          params.onEvent?.(call("task.checkpoint", { label: "x" }));
+          params.onEvent?.({ type: "progress", label: "token=ghp_abcdefghijklmnop done" });
+          return okResult("Hello");
+        },
+        { activity: "detailed" }
+      );
+      poller.start();
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+      const posted = activities(board);
+      expect(posted[0]).toEqual({ kind: "thought", body: "Started" });
+      expect(posted[1]).toEqual({ kind: "thought", body: "Checked the deploy" });
+      expect(posted).toContainEqual({ kind: "thought", body: "token=••• done" });
+      const json = JSON.stringify(board.calls);
+      for (const secret of ["private", "ghp_", "task.checkpoint"]) {
+        expect(json).not.toContain(secret);
+      }
+      // Only the latest queued action survives while a post is in flight.
+      const actions = posted.filter((a) => a.kind === "action");
+      expect(actions.length).toBeLessThanOrEqual(1);
+    });
+
+    it("coalesces queued actions but keeps every thought", async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      const { board, poller } = setup(
+        {
+          unacknowledged: [message(3)],
+          beforeActivity: (body) => (body.body === "Step one" ? gate : Promise.resolve()),
+        },
+        async (params) => {
+          params.onEvent?.({ type: "progress", label: "Step one" });
+          for (const p of ["a.ts", "b.ts", "c.ts"]) {
+            params.onEvent?.({ type: "tool_call", id: p, name: "read", arguments: { path: p } });
+          }
+          params.onEvent?.({ type: "progress", label: "Step two" });
+          params.onEvent?.({ type: "tool_call", id: "d", name: "edit", arguments: { path: "d.ts" } });
+          params.onEvent?.({ type: "tool_call", id: "e", name: "bash", arguments: { command: "ls -la\nrm x" } });
+          release();
+          return okResult("ok");
+        },
+        { activity: "detailed" }
+      );
+      poller.start();
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+      expect(activities(board)).toEqual([
+        { kind: "thought", body: "Started" },
+        { kind: "thought", body: "Step one" },
+        { kind: "thought", body: "Step two" },
+        { kind: "action", body: "Running: ls -la", ephemeral: true },
+      ]);
+    });
+
+    it("safe mode drops checkpoints and arguments", async () => {
+      const { board, poller } = setup({ unacknowledged: [message(3)] }, async (params) => {
+        params.onEvent?.({ type: "progress", label: "Step one" });
+        params.onEvent?.({ type: "tool_call", id: "1", name: "read", arguments: { path: "a.ts" } });
+        return okResult("ok");
+      });
+      poller.start();
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+      expect(activities(board)).toEqual([
+        { kind: "thought", body: "Started" },
+        { kind: "action", body: "Reading files", ephemeral: true },
+      ]);
+    });
+
+    it("picks up the activity mode from live config per turn", async () => {
+      let latest: PollerOptions["config"] = {
+        baseUrl: "http://board",
+        token: "secret-token",
+        pollIntervalMs: 10,
+        turnTimeoutMinutes: 60,
+        activity: "detailed",
+      };
+      const { board, poller } = setup(
+        { unacknowledged: [message(3)] },
+        async (params) => {
+          params.onEvent?.({ type: "progress", label: "Live step" });
+          return okResult("ok");
+        },
+        { readConfig: () => latest }
+      );
+      poller.start();
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+      expect(activities(board)).toContainEqual({ kind: "thought", body: "Live step" });
     });
   });
 });

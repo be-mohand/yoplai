@@ -20,7 +20,7 @@ import {
   type FetchFn,
 } from "./api.js";
 import type { ResolvedThreaditConfig } from "./config.js";
-import { toolLabel } from "./labels.js";
+import { detailedToolLabel, progressLabel, toolLabel } from "./labels.js";
 import { buildPrompt } from "./prompt.js";
 
 const WORKING = "👀";
@@ -545,26 +545,58 @@ export class ThreaditPoller {
     let lastPost = Date.now();
     let pending = 0;
     let lastLabel: string | undefined;
+    let lastProgress: string | undefined;
+    const detailed = this.config.activity === "detailed";
+    type Job = { kind: string; body: string; ephemeral: boolean };
+    const queue: Job[] = [];
+    let running = false;
     let chain: Promise<void> = Promise.resolve();
-    const post = (kind: string, body: string, ephemeral: boolean): void => {
-      pending++;
-      chain = chain.then(async () => {
+    const pump = async (): Promise<void> => {
+      for (let job = queue.shift(); job; job = queue.shift()) {
         if (state.reason) {
           pending--;
-          return;
+          continue;
         }
-        const posted = await this.postActivity(item, kind, body, ephemeral);
+        const posted = await this.postActivity(item, job.kind, job.body, job.ephemeral);
         pending--;
         lastPost = Date.now();
-        if (state.reason) return;
+        if (state.reason) continue;
         if (posted.status === "closed") abort("closed");
         else if (posted.status === "ok" && posted.stop) abort("stop");
-      });
+      }
+      running = false;
+    };
+    const post = (kind: string, body: string, ephemeral: boolean): void => {
+      if (detailed && ephemeral) {
+        // Coalesce: only the latest queued ephemeral action is worth posting.
+        for (let i = queue.length - 1; i >= 0; i--) {
+          if (queue[i]!.ephemeral) {
+            queue.splice(i, 1);
+            pending--;
+          }
+        }
+      }
+      queue.push({ kind, body, ephemeral });
+      pending++;
+      if (!running) {
+        running = true;
+        chain = pump();
+      }
     };
 
     const onEvent = (event: StreamEvent): void => {
-      if (event.type !== "tool_call" || state.reason) return;
-      const label = toolLabel(event.name);
+      if (state.reason) return;
+      if (detailed && event.type === "progress") {
+        const label = progressLabel(event.label);
+        if (label === undefined || label === lastProgress) return;
+        lastProgress = label;
+        post("thought", label, false);
+        return;
+      }
+      if (event.type !== "tool_call") return;
+      const label = detailed
+        ? detailedToolLabel(event.name, event.arguments)
+        : toolLabel(event.name);
       if (label === undefined || label === lastLabel) return;
       lastLabel = label;
       post("action", label, true);
