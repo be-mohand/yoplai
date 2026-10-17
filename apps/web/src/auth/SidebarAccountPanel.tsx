@@ -1,5 +1,5 @@
 import type { Accessor } from "solid-js";
-import { Show, createMemo, createSignal, onCleanup, createEffect } from "solid-js";
+import { Show, createMemo, createSignal, onCleanup, createEffect, on } from "solid-js";
 import { useNavigate, useLocation } from "@solidjs/router";
 import { signOut, useSession } from "./client";
 
@@ -20,7 +20,7 @@ function initialsFor(name: string | null | undefined): string {
   return parts.map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
 }
 
-export default function SidebarAccountPanel(props: SidebarAccountPanelProps) {
+export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
   const session = useSession();
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,10 +72,7 @@ export default function SidebarAccountPanel(props: SidebarAccountPanelProps) {
   });
 
   // Close menu on route change
-  createEffect(() => {
-    location.pathname;
-    setMenuOpen(false);
-  });
+  createEffect(on(() => location.pathname, () => setMenuOpen(false)));
 
   return (
     <Show when={user()}>

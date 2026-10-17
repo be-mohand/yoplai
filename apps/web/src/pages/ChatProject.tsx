@@ -92,9 +92,7 @@ export function ChatProject() {
   const [deletingFile, setDeletingFile] = createSignal<string | null>(null);
   const [deletingReference, setDeletingReference] = createSignal<string | null>(null);
   const [deletingProj, setDeletingProj] = createSignal(false);
-  const [renamingProj, setRenamingProj] = createSignal(false);
   const [menuOpen, setMenuOpen] = createSignal(false);
-  let titleInputRef: HTMLInputElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let menuTriggerRef: HTMLButtonElement | undefined;
 
@@ -145,7 +143,6 @@ export function ChatProject() {
   };
 
   const focusTitleInput = (el: HTMLInputElement) => {
-    titleInputRef = el;
     queueMicrotask(() => {
       el.focus();
       el.select();

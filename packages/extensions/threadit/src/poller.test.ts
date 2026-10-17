@@ -1148,13 +1148,11 @@ describe("ThreaditPoller", () => {
     });
 
     it("safe mode posts nothing when a tool event is followed by an immediate stop", async () => {
-      let target: ThreaditPoller | undefined;
       const { board, poller } = setup({ unacknowledged: [message(3)] }, async (params) => {
         params.onEvent?.({ type: "tool_call", id: "1", name: "read", arguments: {} });
-        void target?.stop();
+        void poller.stop();
         return { payloads: [], meta: { durationMs: 1, sessionId: "s", aborted: true } };
       });
-      target = poller;
       poller.start();
       await waitFor(() => expect(activities(board)).toHaveLength(1));
       await settle();
@@ -1176,7 +1174,7 @@ describe("ThreaditPoller", () => {
     });
 
     it("picks up the activity mode from live config per turn", async () => {
-      let latest: PollerOptions["config"] = {
+      const latest: PollerOptions["config"] = {
         baseUrl: "http://board",
         token: "secret-token",
         pollIntervalMs: 10,
