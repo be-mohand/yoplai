@@ -1360,6 +1360,7 @@ describe("multi-user api core", () => {
       multiUser: true,
       authMethods: { google: false, emailAndPassword: true },
       agentFab: false,
+      enableCronMonitoring: false,
       forkedAgents: true,
       user: {
         id: "user-1",

@@ -57,6 +57,7 @@ describe("/capabilities API", () => {
       multiUser: false,
       forkedAgents: false,
       agentFab: false,
+      enableCronMonitoring: false,
     });
   });
 });

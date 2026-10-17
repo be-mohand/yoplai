@@ -449,6 +449,32 @@ export const ScheduleJobSchema = ScheduleJobFileSchema.extend({
 });
 export type ScheduleJob = z.infer<typeof ScheduleJobSchema>;
 
+export type ScheduleRun = {
+  id: string;
+  jobId: string;
+  agentId: string;
+  sessionId?: string;
+  firedAt: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: "running" | "ok" | "error" | "interrupted";
+  runKind: "woke_agent" | "silent_tick" | "script_only";
+  exitCode?: number;
+  gateOutput?: string;
+  error?: string;
+  outputPath?: string;
+  prompt: string;
+  /** null selects shared storage; private runs retain their original owner. */
+  storageOwnerId: string | null;
+  /** Whether this run reused an explicitly selected session. */
+  pinnedSession?: boolean;
+};
+
+export type ScheduleRunTrace = {
+  run: ScheduleRun;
+  messages: FullHistoryMessage[];
+};
+
 // UI bind mode
 export const UiBindModeSchema = z.enum(["loopback", "lan", "tailnet"]);
 export type UiBindMode = z.infer<typeof UiBindModeSchema>;
@@ -1134,6 +1160,7 @@ const GatewayCommonFields = {
     })
     .optional(),
   agentFab: z.boolean().optional().default(false),
+  enableCronMonitoring: z.boolean().optional(),
   canvas: z
     .object({
       enabled: z.boolean().optional().default(true),
@@ -1400,6 +1427,15 @@ export interface ExtensionContext {
     agentId: string,
     sessionId: string
   ): Promise<HistoryMessage[]>;
+  /** Trusted history and buffered live turn; null explicitly selects shared storage. */
+  getFullSessionHistory?(
+    agentId: string,
+    sessionId: string,
+    storageOwnerId: string | null
+  ): Promise<{
+    messages: FullHistoryMessage[];
+    liveTurn?: { prompt: string | null; messages: FullHistoryMessage[] };
+  }>;
 
   // Media
   saveMediaFile?(
@@ -1676,6 +1712,7 @@ export const CapabilitiesResponseSchema = z.object({
     .optional(),
   forkedAgents: z.boolean().optional().default(false),
   agentFab: z.boolean(),
+  enableCronMonitoring: z.boolean().optional(),
   home: z.string().optional(),
   user: CapabilitiesUserSchema.optional(),
   branding: z

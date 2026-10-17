@@ -193,6 +193,9 @@ Docker is needed only for agents with `sandbox.enabled: true`. Remove that setti
 
 Start with the [documentation index](docs/README.md).
 
+Enable `enableCronMonitoring` to see running jobs and elapsed time in the automatically refreshing Scheduled jobs tab, browse run history, follow live traces,
+and open finished traces at the final output; see [scheduler run monitoring](packages/extensions/scheduler/README.md#run-monitoring-experimental).
+
 - [Configuration](docs/configuration.md) — root config, agents, environment, network, UI
 - [Self-hosting](docs/self-hosting.md) — services, remote access, upgrades, backups
 - [Extensions](docs/extensions.md) — optional feature catalog and enablement

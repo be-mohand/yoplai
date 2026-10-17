@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, ScheduleJob } from "@yoplai/shared";
+import type { AgentConfig, ScheduleJob, ScheduleRun } from "@yoplai/shared";
 import { PerAgentScheduleStore } from "./store.js";
 
 function agent(id: string, workspace: string): AgentConfig {
@@ -20,7 +20,65 @@ describe("PerAgentScheduleStore", () => {
   let tmpDir: string | undefined;
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function run(id: string, jobId = "job-1"): ScheduleRun {
+    return {
+      id, jobId, agentId: "alpha", firedAt: "2026-10-15T10:00:00.000Z",
+      startedAt: "2026-10-15T10:00:00.000Z", status: "running",
+      runKind: "woke_agent", prompt: "Digest", storageOwnerId: null,
+    };
+  }
+
+  it("atomically replaces each run without losing concurrent sibling runs", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-runs-"));
+    const a = agent("alpha", path.join(tmpDir, "alpha"));
+    const store = new PerAgentScheduleStore([a], (candidate) => candidate.workspace);
+    const first = run("first");
+    const second = run("second");
+    await Promise.all([store.saveRun(first), store.saveRun(second)]);
+    await store.saveRun({ ...first, status: "ok", finishedAt: "2026-10-15T10:01:00.000Z", outputPath: "cron/output/result.md" });
+    expect(await store.listRuns("alpha", "job-1")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "first", status: "ok", outputPath: "cron/output/result.md" }), second,
+    ]));
+    expect(await fs.readdir(path.join(a.workspace, "cron/runs/job-1"))).toEqual(["first.json", "second.json"]);
+    await store.deleteRun("alpha", "job-1", "first");
+    expect(await store.listRuns("alpha", "job-1")).toEqual([second]);
+    expect(await store.listRuns("alpha", "missing")).toEqual([]);
+  });
+
+  it("reconciles running records even for deleted jobs and preserves terminal records", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-runs-"));
+    const a = agent("alpha", path.join(tmpDir, "alpha"));
+    const store = new PerAgentScheduleStore([a], (candidate) => candidate.workspace);
+    const finished = { ...run("finished"), status: "ok" as const, finishedAt: "2026-10-15T10:01:00.000Z" };
+    await store.saveRun(run("orphan", "deleted-job"));
+    await store.saveRun(finished);
+    await store.reconcileRunningRuns();
+    expect(await store.listRuns("alpha", "deleted-job")).toEqual([
+      expect.objectContaining({ id: "orphan", status: "interrupted", finishedAt: expect.any(String) }),
+    ]);
+    expect(await store.listRuns("alpha", "job-1")).toEqual([finished]);
+  });
+
+  it.each(["agent", "job", "run"])("continues reconciliation after an unreadable or unwritable %s", async (failure) => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-runs-"));
+    const a = agent("alpha", path.join(tmpDir, "alpha"));
+    const b = agent("beta", path.join(tmpDir, "beta"));
+    const warn = vi.fn();
+    const store = new PerAgentScheduleStore([a, b], (candidate) => candidate.workspace, tmpDir, warn);
+    await store.saveRun(run("blocked"));
+    await store.saveRun({ ...run("healthy"), agentId: "beta" });
+    const error = Object.assign(new Error("Permission denied"), { code: "EACCES" });
+    if (failure === "agent") vi.spyOn(fs, "readdir").mockRejectedValueOnce(error);
+    if (failure === "job") vi.spyOn(store, "listRuns").mockRejectedValueOnce(error);
+    if (failure === "run") vi.spyOn(store, "saveRun").mockRejectedValueOnce(error);
+    await store.reconcileRunningRuns();
+    expect(warn).toHaveBeenCalled();
+    expect(await store.listRuns("alpha", "job-1")).toEqual([expect.objectContaining({ id: "blocked", status: "running" })]);
+    expect(await store.listRuns("beta", "job-1")).toEqual([expect.objectContaining({ id: "healthy", status: "interrupted" })]);
   });
 
   it("loads union and synthesizes agentId", async () => {

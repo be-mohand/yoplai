@@ -19,6 +19,8 @@ export type AgentSession = {
   pendingMessages: PendingMessage[];
   pendingUserMessages: Array<{ text: string; timestamp: number }>;
   currentTurn?: TurnBuffer | null;
+  bufferedTurns?: TurnBuffer[];
+  storageOwnerId?: string | null;
   requesterId?: string;
   settled?: Promise<void>;
   resolveSettled?: () => void;

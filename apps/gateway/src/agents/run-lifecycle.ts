@@ -245,6 +245,8 @@ export class SessionRunLifecycle {
     const session = getSession(this.context.agentId, this.context.sessionId);
     if (session) {
       session.requesterId = this.context.requesterId;
+      session.storageOwnerId = this.context.userId ?? null;
+      session.bufferedTurns = this.completedTurns;
       session.settled = new Promise<void>((resolve) => { session.resolveSettled = resolve; });
     }
     return abortController;
@@ -314,7 +316,7 @@ export class SessionRunLifecycle {
         this.context.userId
       );
     }
-    this.completedTurns = [];
+    this.completedTurns.length = 0;
 
     if (this.currentTurn) {
       await flushTurnBuffer(
@@ -364,6 +366,7 @@ export class SessionRunLifecycle {
     setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
     setSessionStreaming(this.context.agentId, this.context.sessionId, false);
     const session = getSession(this.context.agentId, this.context.sessionId);
+    if (session) session.bufferedTurns = undefined;
     session?.resolveSettled?.();
     if (session) session.resolveSettled = undefined;
   }

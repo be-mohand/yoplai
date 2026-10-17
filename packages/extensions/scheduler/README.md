@@ -19,6 +19,62 @@ HTTP API / `yoplai scheduler` commands still read and write per-agent
 `cron/jobs.json` files. Timers do not start and jobs do not fire. Extension
 shutdown prevents an already-pending tick from re-arming the timer.
 
+## Run monitoring (experimental)
+
+Set root `enableCronMonitoring: true` in `yoplai.json` to record run history
+(default: `false`). `/api/capabilities` exposes `enableCronMonitoring`.
+Scheduled job titles then link to `/agents/:agentId/schedules/:jobId/runs`.
+The read-only page shows start time, duration, status (`running`, `ok`, `error`,
+`interrupted`), run kind (`woke_agent`, `silent_tick`, `script_only`), exit code,
+script/gate output, and errors, including for completed one-shot jobs.
+The list refreshes every two seconds, keeping running runs pinned at the top
+with a running indicator, so new runs appear without reloading.
+
+`GET /api/schedules/:agentId/:id/runs` returns `{ runs: [...] }`, running first,
+then newest first. It reuses job access checks: Mine history is owner-only;
+Team history is visible to agent members. Access follows the job's current
+mode, so sharing a Mine job exposes its past runs. With the flag off the
+endpoint returns 404 and titles stay plain text.
+
+Each run has one atomically replaced record at
+`cron/runs/<jobId>/<runId>.json`, serialized with other per-agent scheduler
+writes. It retains the effective prompt and original session storage owner
+(`storageOwnerId: null` for shared Team storage). Successful uneventful quiet
+runs remove their record, matching existing output suppression; failures and
+woken-agent runs remain. Recording is latched at run start, so disabling the
+flag mid-run still completes its record. Startup marks leftover running
+records interrupted even when the flag is off. No backfill or pruning.
+
+Click a run to open its trace. Finished agent runs open at the final assistant
+output; scroll up for the prompt (including appended gate context), expandable
+thinking, and tool calls with arguments, status, and results. Script-only and
+silent ticks show their recorded gate output and outcome without a conversation.
+Running traces refresh every two seconds (target visibility within five seconds),
+showing thinking, text, tool calls, and buffered tool results before they are saved.
+The view follows the bottom until you scroll up; scroll back down to resume.
+Completion switches to the finished view automatically without a reload.
+
+`GET /api/schedules/:agentId/:id/runs/:runId/trace` returns
+`{ run, messages }`, where `messages` merges canonical full history with the live
+turn while the run is running. It uses the same
+flag and access checks as the runs list. The host's trusted full-history accessor
+reads the run's recorded storage owner, so a Mine run remains readable after
+switching the job to Team, even for another authorized member.
+The live snapshot includes completed tool turns awaiting persistence and their
+results, and must match the recorded storage owner. Already flushed messages
+are not duplicated. Finished runs use persisted history only.
+
+Runs with their own session return that exact session. For pinned sessions, the
+run records `pinnedSession`; the trace starts at the first user message at or
+after run start matching its recorded prompt, and ends before the next user
+(including scheduler) message. No match returns an empty trace. Sequential ticks
+are isolated, but concurrent writers or queued ticks may blur the slice: pinned
+traces are best effort. Editing the job's session later does not change new runs'
+recorded session mode.
+For a running pinned session, live data is attached only when its initial prompt
+matches the run's recorded prompt, preventing unrelated active turns from leaking
+into the trace.
+
 ## Storage
 
 Each agent owns its jobs:

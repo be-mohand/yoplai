@@ -17,6 +17,7 @@ const commonSettings = {
   extensionsPath: "./extensions",
   branding: { name: "Yoplai", logo: "/logo.png" },
   agentFab: true,
+  enableCronMonitoring: true,
   canvas: { baseUrl: "https://canvas.example.com" },
   server: { host: "0.0.0.0", port: 3000, baseUrl: "http://x" },
   gateway: { port: 4000, bind: "lan" },
@@ -61,8 +62,10 @@ describe("gateway root and resolved config schemas", () => {
     const resolved = GatewayConfigSchema.parse({ agents: [] });
 
     expect(root.agentFab).toBe(false);
+    expect(root.enableCronMonitoring ?? false).toBe(false);
     expect(root.sessions).toEqual({ idleMinutes: 360 });
     expect(resolved.agentFab).toBe(false);
+    expect(resolved.enableCronMonitoring ?? false).toBe(false);
     expect(resolved.sessions).toEqual({ idleMinutes: 360 });
     expect(Object.keys(resolved)).toEqual(["agents", ...Object.keys(root)]);
   });

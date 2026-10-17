@@ -162,6 +162,42 @@ Key rules:
 
 ## Runtime data
 
+Root `enableCronMonitoring` defaults off. When enabled, scheduler runs have
+atomic per-run records at `<workspace>/cron/runs/<jobId>/<runId>.json` and
+Scheduled jobs titles link to `/agents/:agentId/schedules/:jobId/runs`.
+The Scheduled jobs panel polls every two seconds only with the flag on and shows
+a pulsing Running badge with elapsed time from `runningForMs` until the run ends.
+`GET /api/schedules/:agentId/:id/runs` returns `{ runs }` with running records
+first, then newest first; it returns 404 with the flag off. Authorization uses
+the job's current Mine/Team mode, so sharing a job also shares its past runs.
+Records include effective prompt and original `storageOwnerId` (user ID for
+Mine, `null` for Team). Recording is latched at start; quiet-uneventful records
+are removed, and startup unconditionally marks leftover running records
+interrupted. No backfill or retention limit.
+
+Run rows open `/agents/:agentId/schedules/:jobId/runs/:runId` with the finished
+run's final assistant output anchored and its prompt, thinking, and tool activity
+above. `GET /api/schedules/:agentId/:id/runs/:runId/trace` returns `{ run, messages }`
+using the same flag and job authorization as the runs list. The trusted host
+`ExtensionContext.getFullSessionHistory` accessor reads canonical full history
+under the recorded `storageOwnerId`, never the viewer's identity; sharing an old
+Mine run therefore preserves its original history location.
+
+The accessor returns `{ messages, liveTurn? }`. Its detached live snapshot includes
+pending completed tool turns and the current in-memory turn, including buffered
+tool results, only when the active session's storage owner matches. Running traces
+merge these messages with canonical history without duplicating flushed rows;
+pinned sessions attach live data only if its prompt matches the recorded run.
+Finished traces use canonical history alone. The runs list polls every two seconds;
+the trace polls while running and transitions to the finished view without reload.
+Live traces follow the bottom unless the user scrolls up.
+
+Own-session runs return the exact canonical session. Pinned-session runs record
+`pinnedSession` and slice from the first user prompt at or after `startedAt` that
+matches the recorded effective prompt (including gate context), through the next
+user message or history end. This is best effort: concurrent writers and queued
+ticks can blur turn boundaries. A missing matching prompt yields an empty trace.
+
 Unless noted, paths are under `$YOPLAI_HOME`:
 
 | Path                               | Owner / meaning                                            |

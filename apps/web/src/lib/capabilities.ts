@@ -10,10 +10,11 @@ const defaultCapabilities: CapabilitiesResponse = {
   multiUser: false,
   forkedAgents: false,
   agentFab: false,
+  enableCronMonitoring: false,
 };
 
 const [capabilities, setCapabilities] =
-  createStore<CapabilitiesResponse>(defaultCapabilities);
+  createStore<CapabilitiesResponse>({ ...defaultCapabilities });
 const [capabilitiesReady, setCapabilitiesReady] = createSignal(false);
 
 let loadPromise: Promise<CapabilitiesResponse> | null = null;
@@ -22,7 +23,7 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
   if (loadPromise) return loadPromise;
   loadPromise = fetchCapabilities()
     .then((data) => {
-      setCapabilities(data);
+      setCapabilities({ ...data, enableCronMonitoring: data.enableCronMonitoring ?? false });
       setCapabilitiesReady(true);
       return data;
     })
@@ -67,6 +68,7 @@ export function setCapabilitiesForTests(
     authMethods: value.authMethods,
     forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
     agentFab: value.agentFab ?? defaultCapabilities.agentFab,
+    enableCronMonitoring: value.enableCronMonitoring ?? defaultCapabilities.enableCronMonitoring,
     user: value.user,
   });
   setCapabilitiesReady(true);
