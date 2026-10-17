@@ -568,6 +568,7 @@ export async function reloadExtensions(
     (extension) => !currentIds.has(extension.id)
   );
   if (newlyNeeded.length === 0) {
+    await notifyConfigReload(current);
     return current;
   }
   if (!activateExtension) {
@@ -598,7 +599,20 @@ export async function reloadExtensions(
     merged,
     homeExtensionId ?? extensionRuntime.getHomeExtension()
   );
+  await notifyConfigReload(merged);
   return extensionRuntime.getLoadedExtensions();
+}
+
+async function notifyConfigReload(extensions: Extension[]): Promise<void> {
+  for (const extension of extensions) {
+    try {
+      await extension.onConfigReload?.();
+    } catch (error) {
+      console.warn(
+        `[extensions] ${extension.id} config reload hook failed: ${(error as Error).message}`
+      );
+    }
+  }
 }
 
 export function getLoadedExtensions(): Extension[] {

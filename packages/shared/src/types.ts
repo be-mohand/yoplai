@@ -1548,6 +1548,8 @@ export interface Extension {
   registerRoutes(app: Hono): void;
   start(ctx: ExtensionContext): Promise<void>;
   stop(): Promise<void>;
+  /** Called after each config reload, for every loaded extension. */
+  onConfigReload?(): void | Promise<void>;
   capabilities(): string[];
   getSystemPromptContributions?(
     agent: AgentConfig,

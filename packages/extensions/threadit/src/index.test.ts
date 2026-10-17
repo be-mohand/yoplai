@@ -9,6 +9,7 @@ vi.mock("./poller.js", () => ({
     }
     start = vi.fn();
     stop = vi.fn(async () => {});
+    retire = vi.fn();
   },
 }));
 
@@ -50,6 +51,33 @@ describe("threadit extension", () => {
       { agentId: "b", baseUrl: "http://own" },
       { agentId: "e", baseUrl: "http://root" },
     ]);
+    await threaditExtension.stop();
+  });
+
+  it("creates the missing poller after a config reload and keeps the old one", async () => {
+    const agents: Array<Record<string, unknown>> = [
+      { id: "a", extensions: { threadit: { token: "t" } } },
+      { id: "b" },
+    ];
+    await threaditExtension.start(context({ baseUrl: "http://root" }, agents));
+    expect(starts.map((s) => s.agentId)).toEqual(["a"]);
+    agents[1] = { id: "b", extensions: { threadit: { token: "t" } } };
+    await threaditExtension.onConfigReload?.();
+    await threaditExtension.onConfigReload?.();
+    expect(starts.map((s) => s.agentId)).toEqual(["a", "b"]);
+    await threaditExtension.stop();
+  });
+
+  it("retires the poller when the agent disables threadit", async () => {
+    const agents: Array<Record<string, unknown>> = [
+      { id: "a", extensions: { threadit: { token: "t" } } },
+    ];
+    await threaditExtension.start(context({ baseUrl: "http://root" }, agents));
+    agents[0] = { id: "a", extensions: { threadit: { token: "t", enabled: false } } };
+    await threaditExtension.onConfigReload?.();
+    agents[0] = { id: "a", extensions: { threadit: { token: "t" } } };
+    await threaditExtension.onConfigReload?.();
+    expect(starts.map((s) => s.agentId)).toEqual(["a", "a"]);
     await threaditExtension.stop();
   });
 });

@@ -7,9 +7,49 @@ import { resolveThreaditConfig } from "./config.js";
 import { ThreaditPoller } from "./poller.js";
 import { resolveToolTarget, threaditAgentTools } from "./tools.js";
 
-const pollers: ThreaditPoller[] = [];
+const pollers = new Map<string, ThreaditPoller>();
 let hostContext: ExtensionContext | undefined;
 const tools = threaditAgentTools({ getHost: () => hostContext });
+
+function resolveAgent(ctx: ExtensionContext, agentId: string) {
+  const live = ctx.getAgent(agentId);
+  if (!live || !ctx.isAgentActive(agentId)) return undefined;
+  return resolveThreaditConfig(
+    ctx.getConfig().extensions?.threadit,
+    live.extensions?.threadit
+  );
+}
+
+/** Start a poller for each enabled agent that has none. Retire the others. */
+function reconcilePollers(ctx: ExtensionContext): void {
+  for (const [agentId, poller] of [...pollers]) {
+    if (resolveAgent(ctx, agentId)?.status !== "ok") {
+      poller.retire();
+      pollers.delete(agentId);
+    }
+  }
+  for (const agent of ctx.getAgents()) {
+    if (pollers.has(agent.id)) continue;
+    const resolved = resolveAgent(ctx, agent.id);
+    if (!resolved || resolved.status === "skipped") continue;
+    if (resolved.status === "invalid") {
+      console.error(`[threadit] ${agent.id}: invalid ${resolved.reason}`);
+      continue;
+    }
+    const poller = new ThreaditPoller({
+      ctx,
+      agentId: agent.id,
+      config: resolved.config,
+      // Read the live config so a token saved at run time applies at once.
+      readConfig: () => {
+        const next = resolveAgent(ctx, agent.id);
+        return next?.status === "ok" ? next.config : undefined;
+      },
+    });
+    pollers.set(agent.id, poller);
+    poller.start();
+  }
+}
 
 const threaditExtension: Extension = {
   id: "threadit",
@@ -41,40 +81,16 @@ const threaditExtension: Extension = {
   },
   async start(ctx) {
     hostContext = ctx;
-    const root = ctx.getConfig().extensions?.threadit;
-    for (const agent of ctx.getAgents()) {
-      if (!ctx.isAgentActive(agent.id)) continue;
-      const resolved = resolveThreaditConfig(
-        root,
-        agent.extensions?.threadit
-      );
-      if (resolved.status === "skipped") continue;
-      if (resolved.status === "invalid") {
-        console.error(`[threadit] ${agent.id}: invalid ${resolved.reason}`);
-        continue;
-      }
-      const poller = new ThreaditPoller({
-        ctx,
-        agentId: agent.id,
-        config: resolved.config,
-        // Read the live config so a token saved at run time applies at once.
-        readConfig: () => {
-          const live = ctx.getAgent(agent.id);
-          if (!live) return undefined;
-          const next = resolveThreaditConfig(
-            ctx.getConfig().extensions?.threadit,
-            live.extensions?.threadit
-          );
-          return next.status === "ok" ? next.config : undefined;
-        },
-      });
-      pollers.push(poller);
-      poller.start();
-    }
+    reconcilePollers(ctx);
+  },
+  async onConfigReload() {
+    if (hostContext) reconcilePollers(hostContext);
   },
   async stop() {
     hostContext = undefined;
-    await Promise.all(pollers.splice(0).map((poller) => poller.stop()));
+    const all = [...pollers.values()];
+    pollers.clear();
+    await Promise.all(all.map((poller) => poller.stop()));
   },
   capabilities() {
     return ["threadit"];

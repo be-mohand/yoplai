@@ -22,6 +22,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Threadit: a download cannot write outside the workspace through a symlink. Sandbox uploads read `/workspace/data` and `/workspace/uploads`. A disabled agent drops its token. An agent that enables Threadit later gets a poller without a restart.
 - Slack's default `threadPolicy: always` keeps each opener and all thread replies in one persisted session owned by the opener, retaining attachments while each sender uses their own credentials; different senders wait for separate turns.
 - Container `send_file` now waits for gateway media registration and file-card emission before reporting success, returns registration failures to the agent, and logs failed outbound file requests.
 - Preserve the complete chat transcript after Pi compaction, show expandable summaries and the compaction status in both history views, and load older messages on demand without counting archived usage toward active context.

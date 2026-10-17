@@ -1,4 +1,5 @@
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdir, open, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type {
   AgentConfig,
@@ -38,6 +39,7 @@ type Target = {
   agent: AgentConfig;
   host: ExtensionContext | undefined;
   signal: AbortSignal | undefined;
+  sessionId: string | undefined;
 };
 
 type RawReply = { status: number; headers: Headers; bytes: Uint8Array };
@@ -236,7 +238,7 @@ export function threaditAgentTools(
           if (!found) {
             throw new ToolFailure("Threadit is not configured for this agent.");
           }
-          const target: Target = { ...found, host, signal: context.signal };
+          const target: Target = { ...found, host, signal: context.signal, sessionId: context.sessionId };
           board = new Board(target, fetchFn);
           return { ok: true as const, ...(await run(input, board, target)) };
         } catch (error) {
@@ -689,7 +691,7 @@ export function threaditAgentTools(
       z.object({ path: z.string().min(1) }).strict(),
       async (input, board, target) => {
         const root = workspaceRoot(target);
-        const file = await resolveWorkspaceFile(root, input.path);
+        const file = await resolveWorkspaceFile(root, input.path, sandboxRoots(target));
         const bytes = await readFile(file);
         const reply = await board.raw(
           "POST",
@@ -721,7 +723,7 @@ export function threaditAgentTools(
         const relative = path.join(DOWNLOAD_DIR, `${input.id}-${name}`);
         const absolute = path.join(root, relative);
         await mkdir(path.dirname(absolute), { recursive: true });
-        await writeFile(absolute, reply.bytes);
+        await writeInside(root, absolute, reply.bytes);
         const seen = target.agent.sandbox?.enabled
           ? path.posix.join(SANDBOX_WORKSPACE, relative.split(path.sep).join("/"))
           : absolute;
@@ -755,17 +757,89 @@ function workspaceRoot(target: Target): string {
   return target.host.resolveWorkspaceDir(target.agent);
 }
 
+function safeSegment(segment: string): string {
+  return segment.replace(/[^a-zA-Z0-9._-]/g, "_") || "default";
+}
+
+type SandboxRoots = { uploads?: string; data?: string };
+
+/** Host dirs behind /workspace/uploads and /workspace/data, as the gateway mounts them. */
+function sandboxRoots(target: Target): SandboxRoots {
+  if (!target.host) return {};
+  const home = target.host.getDataDir();
+  const agent = safeSegment(target.agent.id);
+  return {
+    data: path.join(home, "agents", agent, "data"),
+    ...(target.sessionId
+      ? {
+          uploads: path.join(
+            home,
+            "agents",
+            agent,
+            "uploads",
+            safeSegment(target.sessionId)
+          ),
+        }
+      : {}),
+  };
+}
+
+/** Write a new file. The real parent stays in the workspace and the file is no symlink. */
+async function writeInside(
+  workspaceDir: string,
+  file: string,
+  bytes: Uint8Array
+): Promise<void> {
+  const root = await realpath(workspaceDir);
+  const parent = await realpath(path.dirname(file));
+  if (parent !== root && !parent.startsWith(root + path.sep)) {
+    throw new ToolFailure("The download folder is outside your workspace.");
+  }
+  let handle;
+  try {
+    handle = await open(
+      path.join(parent, path.basename(file)),
+      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+      0o644
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new ToolFailure("The download path is a symlink.");
+    }
+    throw error;
+  }
+  try {
+    await handle.writeFile(bytes);
+  } finally {
+    await handle.close();
+  }
+}
+
 /**
- * Map a path from the agent to a real file inside the workspace.
- * `/workspace` is the sandbox mount of the workspace. A real path (after
- * symlinks) must stay inside the workspace root.
+ * Map a path from the agent to a real file inside an allowed root.
+ * `/workspace` is the sandbox mount of the workspace. `/workspace/uploads` and
+ * `/workspace/data` are separate mounts. The longest prefix wins. A real path
+ * (after symlinks) must stay inside the mapped root.
  */
 export async function resolveWorkspaceFile(
   workspaceDir: string,
-  requested: string
+  requested: string,
+  sandbox: SandboxRoots = {}
 ): Promise<string> {
+  const mappings: [string, string | undefined][] = [
+    [`${SANDBOX_WORKSPACE}/uploads`, sandbox.uploads],
+    [`${SANDBOX_WORKSPACE}/data`, sandbox.data],
+  ];
+  let rootDir = workspaceDir;
   let candidate: string;
-  if (
+  const hit = mappings.find(
+    ([prefix]) => requested === prefix || requested.startsWith(`${prefix}/`)
+  );
+  if (hit) {
+    if (!hit[1]) throw new ToolFailure("File not found in your workspace.");
+    rootDir = hit[1];
+    candidate = path.join(rootDir, requested.slice(hit[0].length));
+  } else if (
     requested === SANDBOX_WORKSPACE ||
     requested.startsWith(`${SANDBOX_WORKSPACE}/`)
   ) {
@@ -776,7 +850,7 @@ export async function resolveWorkspaceFile(
   let root: string;
   let real: string;
   try {
-    root = await realpath(workspaceDir);
+    root = await realpath(rootDir);
     real = await realpath(candidate);
   } catch {
     throw new ToolFailure("File not found in your workspace.");

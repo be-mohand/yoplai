@@ -91,6 +91,7 @@ export class ThreaditPoller {
   private readonly sleepers = new Set<() => void>();
   private me: BoardAccount | undefined;
   private stopped = false;
+  private retired = false;
   private rejected = false;
   private recovered = false;
   /** New items whose 👀 result was unknown. Recovery retries them as processing items. */
@@ -135,6 +136,16 @@ export class ThreaditPoller {
    */
   private applyLatestConfig(): void {
     const latest = this.readConfig?.();
+    if (!latest && this.readConfig) {
+      // The agent disabled or removed the extension. Drop the old token.
+      if (this.current) this.log("info", "disabled, token dropped");
+      this.current = undefined;
+      this.me = undefined;
+      this.recovered = false;
+      this.handled.clear();
+      this.retrying.clear();
+      return;
+    }
     if (
       !latest ||
       (latest.token === this.config.token &&
@@ -158,6 +169,12 @@ export class ThreaditPoller {
     this.schedule(0);
   }
 
+  /** Stop after the active turn ends. The poller starts no new item. */
+  retire(): void {
+    this.retired = true;
+    clearTimeout(this.timer);
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     clearTimeout(this.timer);
@@ -167,7 +184,7 @@ export class ThreaditPoller {
   }
 
   private schedule(ms: number): void {
-    if (this.stopped) return;
+    if (this.stopped || this.retired) return;
     this.timer = setTimeout(() => {
       this.loop = this.iterate();
     }, ms);
@@ -280,7 +297,7 @@ export class ThreaditPoller {
     if (!items) return false;
     let complete = true;
     for (const item of items.sort((a, b) => a.id - b.id)) {
-      if (this.stopped) return false;
+      if (this.stopped || this.retired) return false;
       if (this.handled.has(item.id)) continue;
       const state = sessionOf(item, this.meId)?.state ?? "";
       if (state === "working" || state === "stale") {
@@ -305,7 +322,7 @@ export class ThreaditPoller {
           : 1
     );
     for (const item of items) {
-      if (this.stopped) return;
+      if (this.stopped || this.retired) return;
       if (!this.handled.has(item.id)) await this.handleItem(item, false);
     }
   }

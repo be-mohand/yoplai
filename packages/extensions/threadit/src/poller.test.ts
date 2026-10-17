@@ -835,6 +835,36 @@ describe("ThreaditPoller", () => {
       expect(new Set(board.calls.map((c) => c.auth))).toEqual(new Set(["Bearer new-token"]));
     });
 
+    it("drops the old token when the live config disappears", async () => {
+      let latest: ReturnType<typeof config> | undefined = config("old-token");
+      const { board, poller } = setup({}, async () => okResult("x"), {
+        token: "old-token",
+        readConfig: () => latest,
+      });
+      poller.start();
+      await waitFor(() => expect(board.calls.length).toBeGreaterThan(0));
+      latest = undefined;
+      await settle(60);
+      board.calls.length = 0;
+      await settle(80);
+      expect(board.calls).toEqual([]);
+      latest = config("new-token");
+      await waitFor(() =>
+        expect(new Set(board.calls.map((c) => c.auth))).toEqual(new Set(["Bearer new-token"]))
+      );
+    });
+
+    it("does not start new work after retire", async () => {
+      const { board, poller } = setup({}, async () => okResult("x"));
+      poller.start();
+      await waitFor(() => expect(board.calls.length).toBeGreaterThan(0));
+      poller.retire();
+      await settle(30);
+      board.calls.length = 0;
+      await settle(80);
+      expect(board.calls).toEqual([]);
+    });
+
     it("waits while the account is pending, then works after approval", async () => {
       const info = vi.spyOn(console, "info").mockImplementation(() => {});
       let approved = false;

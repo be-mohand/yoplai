@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   symlink,
@@ -30,6 +31,8 @@ type Seen = {
 };
 
 let workspace: string;
+let home: string;
+let outside: string;
 let seen: Seen[];
 let respond: (seen: Seen) => Response;
 let saveToken: ReturnType<typeof vi.fn>;
@@ -70,6 +73,7 @@ const fetchFn = async (url: string, init?: RequestInit) => {
 function host(): ExtensionContext {
   return {
     getAgent: () => live,
+    getDataDir: () => home,
     resolveWorkspaceDir: () => workspace,
     updateAgentExtensionConfig: saveToken,
   } as unknown as ExtensionContext;
@@ -89,6 +93,8 @@ const run = (name: string, args: unknown, ctx = context()) =>
 
 beforeEach(async () => {
   workspace = await mkdtemp(path.join(os.tmpdir(), "threadit-tools-"));
+  home = await mkdtemp(path.join(os.tmpdir(), "threadit-home-"));
+  outside = await mkdtemp(path.join(os.tmpdir(), "threadit-out-"));
   seen = [];
   respond = () => Response.json({ marker: true });
   saveToken = vi.fn(async () => {});
@@ -96,6 +102,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await rm(workspace, { recursive: true, force: true });
+  await rm(home, { recursive: true, force: true });
+  await rm(outside, { recursive: true, force: true });
 });
 
 describe("threadit tools: requests", () => {
@@ -506,6 +514,19 @@ describe("threadit attachments", () => {
     expect(seen[0]).toMatchObject({ search: "?filename=b.txt", contentType: "text/plain" });
   });
 
+  it("maps /workspace/data and /workspace/uploads to the mounted host dirs", async () => {
+    await mkdir(path.join(home, "agents", "bot", "data"), { recursive: true });
+    await mkdir(path.join(home, "agents", "bot", "uploads", "s1"), { recursive: true });
+    await writeFile(path.join(home, "agents", "bot", "data", "report.pdf"), "d");
+    await writeFile(path.join(home, "agents", "bot", "uploads", "s1", "input.pdf"), "u");
+    const ctx = context({ sessionId: "s1" });
+    expect((await run("upload_attachment", { path: "/workspace/data/report.pdf" }, ctx)).ok).toBe(true);
+    expect((await run("upload_attachment", { path: "/workspace/uploads/input.pdf" }, ctx)).ok).toBe(true);
+    expect(seen.map((s) => s.search)).toEqual(["?filename=report.pdf", "?filename=input.pdf"]);
+    const escape = await run("upload_attachment", { path: "/workspace/data/../../x" }, ctx);
+    expect(escape.ok).toBe(false);
+  });
+
   it("allows an absolute host path inside the workspace", async () => {
     const result = await run("upload_attachment", { path: path.join(workspace, "a.png") });
     expect(result.ok).toBe(true);
@@ -569,6 +590,24 @@ describe("threadit attachments", () => {
     const result = await run("download_attachment", { id: 3 }, context({ agent: sandboxed }));
     expect(result.path).toBe("/workspace/threadit-attachments/3-pic.png");
     expect((await stat(path.join(workspace, "threadit-attachments", "3-pic.png"))).size).toBe(4);
+  });
+
+  it("refuses a download through a symlinked folder or file", async () => {
+    respond = () => new Response(png, { status: 200 });
+    await symlink(outside, path.join(workspace, "threadit-attachments"));
+    const viaDir = await run("download_attachment", { id: 5, filename: "a.png" });
+    expect(viaDir.ok).toBe(false);
+    expect(await readdir(outside)).toEqual([]);
+    await rm(path.join(workspace, "threadit-attachments"));
+    await mkdir(path.join(workspace, "threadit-attachments"));
+    await writeFile(path.join(outside, "target"), "keep");
+    await symlink(
+      path.join(outside, "target"),
+      path.join(workspace, "threadit-attachments", "6-a.png")
+    );
+    const viaFile = await run("download_attachment", { id: 6, filename: "a.png" });
+    expect(viaFile.ok).toBe(false);
+    expect(await readFile(path.join(outside, "target"), "utf8")).toBe("keep");
   });
 
   it("refuses a download above 10 MB", async () => {
