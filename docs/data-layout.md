@@ -23,6 +23,7 @@
 | `auth.db`                    | Multi-user Better Auth SQLite database          |
 | `audit.db`                   | Gateway settings audit, created on first change; secret values redacted |
 | `projects.json`              | Project numeric ID counter                      |
+| `threadit/<agentId>/delivering/` | Threadit reply-in-flight markers, one file per board message |
 
 ## Canonical history vs runtime sessions
 

@@ -107,6 +107,7 @@ const EXTENSION_LOAD_PRIORITY: Record<string, number> = {
   irc: 10,
   slack: 10,
   telegram: 10,
+  threadit: 10,
 };
 
 const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
@@ -121,6 +122,23 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
         return { ...rootConfig, _perAgentFallback: hasPerAgent };
       }
       return hasPerAgent ? { _perAgent: true } : rootConfig;
+    },
+    routePrefixes: [],
+  },
+  threadit: {
+    packageName: "@yoplai/extension-threadit",
+    load: () =>
+      import("@yoplai/extension-threadit").then(
+        (module) => module.threaditExtension
+      ),
+    getConfig: (config) => {
+      const rootConfig = config.extensions?.threadit;
+      if (rootConfig) return rootConfig;
+      const hasPerAgent = config.agents?.some((agent) => {
+        const threadit = agent.extensions?.threadit;
+        return threadit !== undefined && threadit.enabled !== false;
+      });
+      return hasPerAgent ? { _perAgent: true } : undefined;
     },
     routePrefixes: [],
   },

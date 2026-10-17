@@ -32,6 +32,7 @@ Some messaging transports retain supported per-agent compatibility config. Webho
 | `multiUser`    | Better Auth, teams, agent forks, isolation | [package README](../packages/extensions/multi-user/README.md)                               |
 | `orchestrator` | Tracker-backed autonomous workers          | [package README](../packages/extensions/orchestrator/README.md)                             |
 | `projects`     | Projects, slices, subagents, Space         | [Projects guide](projects.md) / [package README](../packages/extensions/projects/README.md) |
+| `threadit`     | Threadit board agent (polling channel)     | [package README](../packages/extensions/threadit/README.md)                                 |
 | `scheduler`    | Cron, scripts, delivery                    | [Scheduling](scheduling.md) / [package README](../packages/extensions/scheduler/README.md)  |
 | `slack`        | Slack Socket Mode transport                | [package README](../packages/extensions/slack/README.md)                                    |
 | `subagents`    | Project-agnostic CLI runs                  | [package README](../packages/extensions/subagents/README.md)                                |

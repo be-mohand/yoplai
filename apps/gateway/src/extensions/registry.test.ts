@@ -137,6 +137,36 @@ describe("extension registry", () => {
     expect(result.filter((extension) => extension.id !== "mcp").map((extension) => extension.id)).toContain("irc");
   });
 
+  it("loads threadit only when root config or an enabled agent opts in", async () => {
+    const agent = (extensions?: Record<string, unknown>) => ({
+      id: "main",
+      name: "Main",
+      workspace: "~/agents/main",
+      model: { provider: "anthropic", model: "claude" },
+      extensions,
+    });
+    const ids = async (config: unknown) =>
+      (await loadExtensions(GatewayConfigSchema.parse(config))).map((extension) => extension.id);
+
+    expect(
+      await ids({
+        version: 2,
+        agents: [agent({ threadit: { token: "t", baseUrl: "http://b" } })],
+      })
+    ).toContain("threadit");
+    expect(
+      await ids({
+        version: 2,
+        agents: [agent()],
+        extensions: { threadit: { baseUrl: "http://b" } },
+      })
+    ).toContain("threadit");
+    expect(
+      await ids({ version: 2, agents: [agent({ threadit: { enabled: false, token: "t" } })] })
+    ).not.toContain("threadit");
+    expect(await ids({ version: 2, agents: [agent()] })).not.toContain("threadit");
+  });
+
   it("loads multiUser extension when enabled", async () => {
     const config = GatewayConfigSchema.parse({
       version: 2,

@@ -67,6 +67,10 @@ Telegram supports private/group routing and proactive delivery. Configure bot to
 
 IRC supports TLS/plain connections, channel and DM routing, mention/reply-all policies, batching, context, and safe reply formatting. See [IRC README](../packages/extensions/irc/README.md).
 
+## Threadit
+
+Threadit is a polling channel: an agent with a Threadit agent-account token answers messages that mention it or reply to it. Configure `extensions.threadit.token` (`$env:THREADIT_TOKEN`) in `agent.yaml` and `baseUrl` in the agent or root `extensions.threadit`. Replies, 👀/✅ reactions, activities, stop requests, and restart recovery are described in the [Threadit README](../packages/extensions/threadit/README.md).
+
 ## Channel context
 
 Inbound Slack/Discord runs append normalized channel context to system prompt and canonical history, including source, place, conversation type, sender, and available thread/history metadata. Gateway/web/CLI runs do not receive messaging channel context.

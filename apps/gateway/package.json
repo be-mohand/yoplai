@@ -16,6 +16,7 @@
     "@yoplai/extension-board": "workspace:*",
     "@yoplai/extension-discord": "workspace:*",
     "@yoplai/extension-irc": "workspace:*",
+    "@yoplai/extension-threadit": "workspace:*",
     "@yoplai/extension-heartbeat": "workspace:*",
     "@yoplai/extension-langfuse": "workspace:*",
     "@yoplai/extension-multi-user": "workspace:*",

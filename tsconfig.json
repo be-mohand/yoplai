@@ -18,6 +18,7 @@
     { "path": "packages/extensions/discord" },
     { "path": "packages/extensions/heartbeat" },
     { "path": "packages/extensions/irc" },
+    { "path": "packages/extensions/threadit" },
     { "path": "packages/extensions/langfuse" },
     { "path": "packages/extensions/multi-user" },
     { "path": "packages/extensions/scheduler" },

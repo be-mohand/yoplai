@@ -724,6 +724,21 @@ export const IrcAgentConfigSchema = z.object({
 });
 export type IrcAgentConfig = z.infer<typeof IrcAgentConfigSchema>;
 
+export const ThreaditExtensionConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  baseUrl: z.string().min(1).optional(),
+  pollIntervalMs: z.number().int().min(1000).optional(),
+  turnTimeoutMinutes: z.number().min(1).optional(),
+});
+export type ThreaditExtensionConfig = z.infer<
+  typeof ThreaditExtensionConfigSchema
+>;
+
+export const ThreaditAgentConfigSchema = ThreaditExtensionConfigSchema.extend({
+  token: SecretRefSchema.pipe(z.string().min(1)),
+});
+export type ThreaditAgentConfig = z.infer<typeof ThreaditAgentConfigSchema>;
+
 export const SlackExtensionChannelConfigSchema = z.object({
   agent: z.string(),
   requireMention: z.boolean().optional(),
@@ -1022,6 +1037,7 @@ export const ExtensionsConfigSchema = z
   .object({
     discord: DiscordExtensionConfigSchema.optional(),
     irc: IrcExtensionConfigSchema.optional(),
+    threadit: ThreaditExtensionConfigSchema.optional(),
     slack: SlackExtensionConfigSchema.optional(),
     telegram: TelegramExtensionConfigSchema.optional(),
     scheduler: z

@@ -206,6 +206,9 @@ importers:
       '@yoplai/extension-telegram':
         specifier: workspace:*
         version: link:../../packages/extensions/telegram
+      '@yoplai/extension-threadit':
+        specifier: workspace:*
+        version: link:../../packages/extensions/threadit
       '@yoplai/extension-webhooks':
         specifier: workspace:*
         version: link:../../packages/extensions/webhooks
@@ -610,6 +613,12 @@ importers:
       zod:
         specifier: ^3.23.8
         version: 3.25.76
+
+  packages/extensions/threadit:
+    dependencies:
+      '@yoplai/shared':
+        specifier: workspace:*
+        version: link:../../shared
 
   packages/extensions/webhooks:
     dependencies:

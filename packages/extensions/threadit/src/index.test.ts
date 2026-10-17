@@ -1,0 +1,53 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionContext } from "@yoplai/shared";
+
+const starts = vi.hoisted(() => [] as Array<{ agentId: string; baseUrl: string }>);
+vi.mock("./poller.js", () => ({
+  ThreaditPoller: class {
+    constructor(options: { agentId: string; config: { baseUrl: string } }) {
+      starts.push({ agentId: options.agentId, baseUrl: options.config.baseUrl });
+    }
+    start = vi.fn();
+    stop = vi.fn(async () => {});
+  },
+}));
+
+import { threaditExtension } from "./index.js";
+
+function context(root: unknown, agents: Array<Record<string, unknown>>, active = true) {
+  return {
+    getConfig: () => ({ extensions: { threadit: root } }),
+    getAgents: () => agents,
+    isAgentActive: (id: string) => active && id !== "idle",
+  } as unknown as ExtensionContext;
+}
+
+describe("threadit extension", () => {
+  beforeEach(() => starts.splice(0));
+
+  it("validates config and accepts the per-agent marker", () => {
+    expect(threaditExtension.validateConfig({})).toEqual({ valid: true, errors: [] });
+    expect(threaditExtension.validateConfig({ _perAgent: true })).toEqual({ valid: true, errors: [] });
+    expect(threaditExtension.validateConfig({ pollIntervalMs: 10 }).valid).toBe(false);
+    expect(threaditExtension.validateConfig({ baseUrl: "http://x" }).valid).toBe(true);
+  });
+
+  it("starts one poller per active agent with a threadit config", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await threaditExtension.start(
+      context({ baseUrl: "http://root/" }, [
+        { id: "a", extensions: { threadit: { token: "t" } } },
+        { id: "b", extensions: { threadit: { token: "t", baseUrl: "http://own" } } },
+        { id: "c", extensions: { threadit: { token: "t", enabled: false } } },
+        { id: "d" },
+        { id: "e", extensions: { threadit: {} } },
+        { id: "idle", extensions: { threadit: { token: "t" } } },
+      ])
+    );
+    expect(starts).toEqual([
+      { agentId: "a", baseUrl: "http://root" },
+      { agentId: "b", baseUrl: "http://own" },
+    ]);
+    await threaditExtension.stop();
+  });
+});
