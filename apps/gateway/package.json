@@ -18,6 +18,7 @@
     "@yoplai/extension-irc": "workspace:*",
     "@yoplai/extension-heartbeat": "workspace:*",
     "@yoplai/extension-langfuse": "workspace:*",
+    "@yoplai/extension-mattermost": "workspace:*",
     "@yoplai/extension-multi-user": "workspace:*",
     "@yoplai/extension-orchestrator": "workspace:*",
     "@yoplai/extension-projects": "workspace:*",
