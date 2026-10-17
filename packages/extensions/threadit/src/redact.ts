@@ -7,7 +7,7 @@ const NAME = `[\\w-]*(?:token|secret|password|passwd|api_key|apikey|api-key)[\\w
 const RULES: Array<[RegExp, string]> = [
   [/\b(authorization\s*:\s*)(?:(bearer|basic|token)\s+)?[^\s"'`]+/gi, `$1$2 ${MASK}`],
   [/\b(bearer)\s+[A-Za-z0-9._~+/=-]+/gi, `$1 ${MASK}`],
-  [new RegExp(`(["'])(${NAME})\\1(\\s*:\\s*)"[^"]*"`, "gi"), `$1$2$1$3"${MASK}"`],
+  [new RegExp(`(["'])(${NAME})\\1(\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, "gi"), `$1$2$1$3"${MASK}"`],
   [new RegExp(`(--${NAME})(\\s+|=)[^\\s"']+`, "gi"), `$1$2${MASK}`],
   [new RegExp(`\\b(${NAME})=(?:'[^']*'|"[^"]*"|[^\\s]+)`, "gi"), `$1=${MASK}`],
   [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, `$1${MASK}@`],

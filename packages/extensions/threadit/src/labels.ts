@@ -26,6 +26,7 @@ const PREFIX_LABELS: Array<[string, string]> = [
 export function toolLabel(name: string): string | undefined {
   const lower = name.toLowerCase();
   if (lower.startsWith("task.") || lower.startsWith("task_")) return undefined;
+  if (/\s/.test(name.trim())) return "Running commands";
   const normalized = lower.replace(/[.-]/g, "_");
   const exact = EXACT_LABELS.get(normalized);
   if (exact !== undefined) return exact;
@@ -121,7 +122,8 @@ export function detailedToolLabel(name: string, rawArgs: unknown): string | unde
     const p = stringArg(args, PATH_KEYS);
     return p ? trimText(`${verb} ${redact(shortPath(p))}`, 120) : label;
   }
-  const command = stringArg(args, ["command", "cmd"]);
+  // Codex-style: the tool name is the raw command itself.
+  const command = /\s/.test(name.trim()) ? name : stringArg(args, ["command", "cmd"]);
   if (SHELL_TOOLS.has(lower) || command !== undefined) {
     const line = (command ?? "").split("\n").find((l) => l.trim() !== "");
     return line ? trimText(`Running: ${redact(line)}`, 120) : label;

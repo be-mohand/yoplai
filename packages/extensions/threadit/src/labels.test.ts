@@ -62,6 +62,26 @@ describe("detailedToolLabel", () => {
     for (const secret of ["ghp_abc", "abc123", "u:pw", "k9"]) expect(label).not.toContain(secret);
     expect(label).toContain("curl");
   });
+
+  it("masks after non-ASCII letters", () => {
+    expect(detailedToolLabel("web_search", { query: "éghp_abcdefghij" })).not.toContain("ghp_");
+    expect(detailedToolLabel("web_search", { query: "épassword=hunter2" })).not.toContain("hunter2");
+  });
+
+  it("masks JSON values with escaped quotes whole", () => {
+    const label = detailedToolLabel("bash", { command: '{"password":"hello \\"hunter2 world\\""}' })!;
+    expect(label).not.toContain("hunter2");
+  });
+
+  it("masks values that only contain the mask", () => {
+    expect(detailedToolLabel("bash", { command: "password=•••hunter2" })).not.toContain("hunter2");
+  });
+
+  it("labels a raw command used as tool name", () => {
+    expect(detailedToolLabel("git status --short", {})).toBe("Running: git status --short");
+    expect(detailedToolLabel("curl -H 'Authorization: Bearer abc123' x", {})).not.toContain("abc123");
+    expect(toolLabel("git status --short")).toBe("Running commands");
+  });
 });
 
 describe("progressLabel", () => {
