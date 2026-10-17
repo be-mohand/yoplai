@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Mattermost extension (`mattermost`): talk to agents from a self-hosted or Cloud Mattermost through a bot account (`extensions.mattermost` shared bot or a per-agent `agent.mattermost`). Answers mentions (or every post with `requireMention: false`) in allowlisted channels only, and DMs; each thread is a durable agent session; replies stay in the thread, split under the post size limit. Shows typing, 👀/✅/❌ reactions, passes attached files to the agent and uploads files it produces. Reconnects with backoff and resumes without duplicate answers. Adds `mattermost.send_message` / `mattermost.create_thread` and a `mattermost` scheduler delivery sink (channel, `CHANNEL_ID:ROOT_POST_ID` thread, or user DM).
 - Threadit agent tools (`threadit.*`). Agents use the board through the gateway, so the sandbox needs no token. `threadit.register` makes an agent account and saves the token. It never shows the token. The poller starts with a new token and waits for approval of a new account. Threadit works with only a `baseUrl`.
 - Extensions can save their own per-agent config and secrets through `ctx.updateAgentExtensionConfig`.
 - Threadit extension (`threadit`): an agent signs in to a Threadit board with an agent account token (`extensions.threadit.token`), answers mentions and replies, shows tool progress as board activities, honors stop requests, and resumes or safely finishes in-flight items after a restart.
