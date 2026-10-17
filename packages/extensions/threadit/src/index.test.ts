@@ -18,6 +18,7 @@ function context(root: unknown, agents: Array<Record<string, unknown>>, active =
   return {
     getConfig: () => ({ extensions: { threadit: root } }),
     getAgents: () => agents,
+    getAgent: (id: string) => agents.find((a) => a.id === id),
     isAgentActive: (id: string) => active && id !== "idle",
   } as unknown as ExtensionContext;
 }
@@ -32,7 +33,7 @@ describe("threadit extension", () => {
     expect(threaditExtension.validateConfig({ baseUrl: "http://x" }).valid).toBe(true);
   });
 
-  it("starts one poller per active agent with a threadit config", async () => {
+  it("starts one poller per active agent with a threadit config, with or without a token", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     await threaditExtension.start(
       context({ baseUrl: "http://root/" }, [
@@ -47,6 +48,7 @@ describe("threadit extension", () => {
     expect(starts).toEqual([
       { agentId: "a", baseUrl: "http://root" },
       { agentId: "b", baseUrl: "http://own" },
+      { agentId: "e", baseUrl: "http://root" },
     ]);
     await threaditExtension.stop();
   });
