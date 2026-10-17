@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
+
 ### Added
 
 - Threadit `activity: "safe" | "detailed"` setting (root or per agent). `detailed` posts `task.checkpoint` labels and redacted tool targets (file paths, first bash line, one identifying argument) to the board's activity pane; `safe` stays the default and is unchanged.

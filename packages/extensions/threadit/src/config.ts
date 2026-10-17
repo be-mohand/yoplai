@@ -56,7 +56,7 @@ export function resolveThreaditConfig(
         agent.data.turnTimeoutMinutes ??
         rootData.turnTimeoutMinutes ??
         DEFAULT_TURN_TIMEOUT_MINUTES,
-      activity: agent.data.activity ?? rootData.activity ?? "safe",
+      activity: agent.data.activity ?? rootData.activity ?? "detailed",
     },
   };
 }

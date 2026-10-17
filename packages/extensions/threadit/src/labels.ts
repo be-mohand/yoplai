@@ -1,4 +1,4 @@
-import { looksLikeToken, redact } from "./redact.js";
+import { redact } from "./redact.js";
 
 /**
  * Progress labels. Safe mode uses tool names only. Detailed mode adds a
@@ -107,7 +107,9 @@ function shortUrl(raw: string): string {
   }
 }
 
-/** Label with a redacted target. `undefined` for task bookkeeping tools. */
+const SHELL_TOOLS = new Set(["bash", "shell", "sh", "exec", "run_command", "command"]);
+
+/** Label with a lightly masked target. `undefined` for task bookkeeping tools. */
 export function detailedToolLabel(name: string, rawArgs: unknown): string | undefined {
   const label = toolLabel(name);
   if (label === undefined) return undefined;
@@ -119,50 +121,15 @@ export function detailedToolLabel(name: string, rawArgs: unknown): string | unde
     const p = stringArg(args, PATH_KEYS);
     return p ? trimText(`${verb} ${redact(shortPath(p))}`, 120) : label;
   }
-  if (lower === "bash") {
-    const command = typeof args.command === "string" ? args.command : "";
-    const shown = bashLabel(command);
-    return shown ? trimText(`Running: ${redact(shown)}`, 80) : label;
+  const command = stringArg(args, ["command", "cmd"]);
+  if (SHELL_TOOLS.has(lower) || command !== undefined) {
+    const line = (command ?? "").split("\n").find((l) => l.trim() !== "");
+    return line ? trimText(`Running: ${redact(line)}`, 120) : label;
   }
   const key = ID_KEYS.find((k) => stringArg(args, [k]) !== undefined);
   if (!key) return label;
   let value = stringArg(args, [key]) ?? "";
   if (key === "url") value = shortUrl(value);
   else if (key === "path") value = shortPath(value);
-  return `${label}: ${trimText(redact(value), 60)}`;
-}
-
-const WORD = /^[A-Za-z0-9._\/~-]+$/;
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const MAX_WORDS = 6;
-
-/**
- * The visible part of a shell command: the program and its leading plain
- * words (no options), from the first non-empty line, without leading env
- * assignments or a plain `cd <dir> &&` prefix. Cut with " …" at the first
- * option, risky or token-like word. Empty when nothing is safe to show.
- */
-export function bashLabel(command: string): string {
-  const line = command.split("\n").find((l) => l.trim() !== "") ?? "";
-  const words = line.trim().split(/\s+/);
-  let i = 0;
-  for (; i < words.length && ASSIGNMENT.test(words[i]!); i++) {
-    // A quoted or escaped value may span words. Show nothing then.
-    if (/["'`\\$]/.test(words[i]!)) return "";
-  }
-  // Skip `cd <plain-dir> &&` / `cd <plain-dir>;` prefixes. Anything else stays.
-  while (words[i] === "cd") {
-    const target = words[i + 1] ?? "";
-    if (target.endsWith(";") && WORD.test(target.slice(0, -1)) && words[i + 2]) i += 2;
-    else if (WORD.test(target) && (words[i + 2] === "&&" || words[i + 2] === ";") && words[i + 3]) i += 3;
-    else break;
-  }
-  const shown: string[] = [];
-  for (; i < words.length && shown.length < MAX_WORDS; i++) {
-    const word = words[i]!;
-    if (word.startsWith("-") || !WORD.test(word) || looksLikeToken(word)) break;
-    shown.push(word);
-  }
-  if (shown.length === 0) return "";
-  return i < words.length ? `${shown.join(" ")} …` : shown.join(" ");
+  return trimText(`${label}: ${redact(value)}`, 80);
 }

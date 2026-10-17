@@ -1143,7 +1143,7 @@ describe("ThreaditPoller", () => {
         { kind: "thought", body: "Started" },
         { kind: "thought", body: "Step one" },
         { kind: "thought", body: "Step two" },
-        { kind: "action", body: "Running: ls …", ephemeral: true },
+        { kind: "action", body: "Running: ls -la", ephemeral: true },
       ]);
     });
 
