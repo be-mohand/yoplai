@@ -8,7 +8,8 @@ export const DEFAULT_TURN_TIMEOUT_MINUTES = 60;
 
 export type ResolvedThreaditConfig = {
   baseUrl: string;
-  token: string;
+  /** Absent until the agent has an account. The poller idles without it. */
+  token: string | undefined;
   pollIntervalMs: number;
   turnTimeoutMinutes: number;
 };

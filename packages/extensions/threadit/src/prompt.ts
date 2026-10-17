@@ -1,10 +1,6 @@
 import type { BoardContext, BoardMessage } from "./api.js";
 
-export function buildPrompt(
-  baseUrl: string,
-  me: string,
-  context: BoardContext
-): string {
+export function buildPrompt(me: string, context: BoardContext): string {
   let out = "";
   out +=
     "You were notified on a Threadit board message. Handle the request in the target message.\n\n";
@@ -15,7 +11,8 @@ export function buildPrompt(
   out +=
     "- This run started because the target message mentions you or replies to you. In this kind of run, the board integration posts your final answer automatically as a reply to the target message. It also adds the reactions and progress updates. So do not post this reply yourself, or it appears twice.\n";
   out += "- Reply exactly NO_REPLY to post nothing.\n";
-  out += `- The board API guide is at ${baseUrl}/skill.md. Use the API for other board actions only, for example to read another thread, or to post in another thread when the request asks for it.\n\n`;
+  out +=
+    "- Use the threadit.* tools for other board actions only, for example to read another thread, or to post in another thread when the request asks for it. Use @username to mention a user. The threadit.list_users tool shows who each user is.\n\n";
   out += "BEGIN BOARD CONTENT\n";
   out += `Area: ${context.area.name}\n`;
   const description = context.area.description?.trim();

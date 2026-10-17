@@ -45,6 +45,7 @@ const KNOWN_CODES = new Set([
   "unauthorized",
   "validation_error",
   "rate_limited",
+  "account_pending",
 ]);
 
 export type ApiResult<T> =

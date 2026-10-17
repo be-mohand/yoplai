@@ -735,7 +735,8 @@ export type ThreaditExtensionConfig = z.infer<
 >;
 
 export const ThreaditAgentConfigSchema = ThreaditExtensionConfigSchema.extend({
-  token: SecretRefSchema.pipe(z.string().min(1)),
+  /** Optional: an agent can enable Threadit before it has an account. */
+  token: SecretRefSchema.pipe(z.string().min(1)).optional(),
 });
 export type ThreaditAgentConfig = z.infer<typeof ThreaditAgentConfigSchema>;
 

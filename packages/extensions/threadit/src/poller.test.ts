@@ -8,11 +8,11 @@ import type {
   RunAgentResult,
   StreamEvent,
 } from "@yoplai/shared";
-import { ThreaditPoller } from "./poller.js";
+import { ThreaditPoller, type PollerOptions } from "./poller.js";
 
 const ME = { id: 7, username: "bot", account_type: "agent" };
 
-type Call = { method: string; path: string; body: Record<string, unknown> };
+type Call = { method: string; path: string; body: Record<string, unknown>; auth: string };
 
 function message(id: number, extra: Partial<Record<string, unknown>> = {}) {
   return {
@@ -71,7 +71,12 @@ function fetchFor(board: Board) {
     const parsed = new URL(url);
     const method = init?.method ?? "GET";
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
-    board.calls.push({ method, path: parsed.pathname, body });
+    board.calls.push({
+      method,
+      path: parsed.pathname,
+      body,
+      auth: new Headers(init?.headers).get("authorization") ?? "",
+    });
     const p = parsed.pathname;
     if (p === "/api/me") return typeof board.me === "function" ? board.me() : board.me;
     if (p === "/api/attention") {
@@ -141,8 +146,15 @@ type Setup = {
 function setup(
   boardOverrides: Partial<Board>,
   run: (params: RunAgentParams) => Promise<RunAgentResult>,
-  timing: { heartbeatMs?: number; turnTimeoutMs?: number; stopWaitMs?: number } = {}
+  timing: {
+    heartbeatMs?: number;
+    turnTimeoutMs?: number;
+    stopWaitMs?: number;
+    token?: string | undefined;
+    readConfig?: PollerOptions["readConfig"];
+  } = {}
 ): Setup {
+  const { token = "secret-token", ...rest } = "token" in timing ? timing : { ...timing };
   const board = makeBoard(boardOverrides);
   const runAgent = vi.fn(run);
   const ctx = {
@@ -155,13 +167,13 @@ function setup(
     agentId: "main",
     config: {
       baseUrl: "http://board",
-      token: "secret-token",
+      token,
       pollIntervalMs: 10,
       turnTimeoutMinutes: 60,
     },
     fetchFn: fetchFor(board),
     stopWaitMs: 500,
-    ...timing,
+    ...rest,
   });
   pollers.push(poller);
   return { board, runAgent, poller };
@@ -792,5 +804,107 @@ describe("ThreaditPoller", () => {
     await settle();
     expect(activities(board).map((a) => a.body)).toEqual(["Started"]);
     expect(replies(board)).toEqual([]);
+  });
+
+  describe("token at run time", () => {
+    const config = (token: string | undefined) => ({
+      baseUrl: "http://board",
+      token,
+      pollIntervalMs: 10,
+      turnTimeoutMinutes: 60,
+    });
+    const pending = () =>
+      Response.json(
+        { error: { code: "account_pending", message: "wait" } },
+        { status: 403 }
+      );
+
+    it("idles without a token and starts once a token appears", async () => {
+      let latest = config(undefined);
+      const { board, runAgent, poller } = setup(
+        { unacknowledged: [message(3)] },
+        async () => okResult("Hello"),
+        { token: undefined, readConfig: () => latest }
+      );
+      poller.start();
+      await settle(80);
+      expect(board.calls).toEqual([]);
+      latest = config("new-token");
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(new Set(board.calls.map((c) => c.auth))).toEqual(new Set(["Bearer new-token"]));
+    });
+
+    it("waits while the account is pending, then works after approval", async () => {
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
+      let approved = false;
+      const { board, runAgent, poller } = setup(
+        {
+          me: () => (approved ? Response.json(ME) : pending()),
+          unacknowledged: [message(3)],
+        },
+        async () => okResult("Hello")
+      );
+      poller.start();
+      await waitFor(() =>
+        expect(board.calls.filter((c) => c.path === "/api/me").length).toBeGreaterThan(2)
+      );
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(info.mock.calls.filter((c) => String(c[0]).includes("waits for approval"))).toHaveLength(1);
+      approved = true;
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+      expect(runAgent).toHaveBeenCalledTimes(1);
+    });
+
+    it("applies a new token between turns without aborting the running turn", async () => {
+      let latest = config("old-token");
+      let signal: AbortSignal | undefined;
+      let finish: (() => void) | undefined;
+      const { board, runAgent, poller } = setup(
+        { unacknowledged: [message(3)] },
+        (params) => {
+          signal = params.signal;
+          return new Promise<RunAgentResult>((resolve) => {
+            finish = () => resolve(okResult("Hello"));
+          });
+        },
+        { token: "old-token", readConfig: () => latest }
+      );
+      poller.start();
+      await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+      latest = config("new-token");
+      await settle(80);
+      expect(signal?.aborted).toBe(false);
+      finish?.();
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+      const turnAuth = board.calls
+        .filter((c) => c.path !== "/api/me" && c.path !== "/api/attention")
+        .map((c) => c.auth);
+      expect(new Set(turnAuth)).toEqual(new Set(["Bearer old-token"]));
+      await waitFor(() =>
+        expect(board.calls.some((c) => c.auth === "Bearer new-token" && c.path === "/api/me")).toBe(true)
+      );
+    });
+
+    it("retries after a rejected token once a new token arrives", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      let latest = config("bad");
+      const { board, poller } = setup(
+        {
+          me: () => Response.json({}, { status: 401 }),
+          unacknowledged: [],
+        },
+        async () => okResult("x"),
+        { token: "bad", readConfig: () => latest }
+      );
+      poller.start();
+      await settle(80);
+      expect(board.calls.filter((c) => c.path === "/api/me")).toHaveLength(1);
+      latest = config("good");
+      await waitFor(() =>
+        expect(board.calls.filter((c) => c.path === "/api/me")).toHaveLength(2)
+      );
+      expect(board.calls.at(-1)?.auth).toBe("Bearer good");
+    });
   });
 });

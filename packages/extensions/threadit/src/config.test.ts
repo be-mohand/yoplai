@@ -41,11 +41,19 @@ describe("resolveThreaditConfig", () => {
     });
   });
 
-  it("rejects missing token, missing baseUrl, and a too-short poll interval", () => {
+  it("accepts a baseUrl without a token", () => {
     expect(resolveThreaditConfig({ baseUrl: "http://x" }, {})).toEqual({
-      status: "invalid",
-      reason: "agent config",
+      status: "ok",
+      config: {
+        baseUrl: "http://x",
+        token: undefined,
+        pollIntervalMs: 5000,
+        turnTimeoutMinutes: 60,
+      },
     });
+  });
+
+  it("rejects missing baseUrl and a too-short poll interval", () => {
     expect(resolveThreaditConfig({}, { token: "t" })).toEqual({
       status: "invalid",
       reason: "baseUrl",

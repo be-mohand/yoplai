@@ -34,6 +34,11 @@ export type PollerOptions = {
   ctx: ExtensionContext;
   agentId: string;
   config: ResolvedThreaditConfig;
+  /**
+   * Read the latest config. The poller calls it between poll cycles, so a token
+   * saved at run time applies without a restart. It never aborts a running turn.
+   */
+  readConfig?: () => ResolvedThreaditConfig | undefined;
   fetchFn?: FetchFn;
   /** Test overrides. */
   heartbeatMs?: number;
@@ -70,10 +75,13 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<void> {
 }
 
 export class ThreaditPoller {
-  private readonly api: ThreaditApi;
+  private current: ThreaditApi | undefined;
   private readonly ctx: ExtensionContext;
   private readonly agentId: string;
-  private readonly config: ResolvedThreaditConfig;
+  private config: ResolvedThreaditConfig;
+  private readonly readConfig: (() => ResolvedThreaditConfig | undefined) | undefined;
+  private readonly fetchFn: FetchFn | undefined;
+  private pendingLogged = false;
   private readonly heartbeatMs: number;
   private readonly stopWaitMs: number;
   private readonly turnTimeoutMs: number;
@@ -94,11 +102,9 @@ export class ThreaditPoller {
     this.ctx = options.ctx;
     this.agentId = options.agentId;
     this.config = options.config;
-    this.api = new ThreaditApi(
-      options.config.baseUrl,
-      options.config.token,
-      options.fetchFn
-    );
+    this.readConfig = options.readConfig;
+    this.fetchFn = options.fetchFn;
+    this.current = this.buildApi(options.config);
     this.heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
     this.stopWaitMs = options.stopWaitMs ?? STOP_WAIT_MS;
     this.turnTimeoutMs =
@@ -109,6 +115,43 @@ export class ThreaditPoller {
       options.agentId,
       "delivering"
     );
+  }
+
+  /** The client of the current account. Only used after `init` succeeds. */
+  private get api(): ThreaditApi {
+    if (!this.current) throw new Error("no token");
+    return this.current;
+  }
+
+  private buildApi(config: ResolvedThreaditConfig): ThreaditApi | undefined {
+    return config.token
+      ? new ThreaditApi(config.baseUrl, config.token, this.fetchFn)
+      : undefined;
+  }
+
+  /**
+   * Switch to a new token or base URL. This runs only at the start of a poll
+   * cycle, so no turn is in flight. The new account starts with a clean state.
+   */
+  private applyLatestConfig(): void {
+    const latest = this.readConfig?.();
+    if (
+      !latest ||
+      (latest.token === this.config.token &&
+        latest.baseUrl === this.config.baseUrl)
+    ) {
+      if (latest) this.config = latest;
+      return;
+    }
+    this.config = latest;
+    this.current = this.buildApi(latest);
+    this.me = undefined;
+    this.rejected = false;
+    this.recovered = false;
+    this.pendingLogged = false;
+    this.handled.clear();
+    this.retrying.clear();
+    this.log("info", "token changed");
   }
 
   start(): void {
@@ -132,8 +175,13 @@ export class ThreaditPoller {
 
   private async iterate(): Promise<void> {
     try {
+      this.applyLatestConfig();
+      if (!this.current || this.rejected) {
+        this.schedule(this.config.pollIntervalMs);
+        return;
+      }
       if (!this.me && !(await this.init())) {
-        if (!this.stopped && !this.rejected) this.schedule(this.config.pollIntervalMs);
+        this.schedule(this.config.pollIntervalMs);
         return;
       }
       if (!this.recovered) this.recovered = await this.resumeProcessing();
@@ -148,6 +196,17 @@ export class ThreaditPoller {
   private async init(): Promise<boolean> {
     const result = await this.api.me();
     if (!result.ok) {
+      if (
+        result.kind === "http" &&
+        result.status === 403 &&
+        result.code === "account_pending"
+      ) {
+        if (!this.pendingLogged) {
+          this.log("info", "account waits for approval");
+          this.pendingLogged = true;
+        }
+        return false;
+      }
       if (
         result.kind === "http" &&
         (result.status === 401 || result.status === 403)
@@ -165,6 +224,7 @@ export class ThreaditPoller {
       return false;
     }
     this.me = result.data;
+    this.pendingLogged = false;
     this.recovered = await this.resumeProcessing();
     return true;
   }
@@ -421,11 +481,7 @@ export class ThreaditPoller {
       return;
     }
     if (this.stopped) return;
-    const prompt = buildPrompt(
-      this.api.baseUrl,
-      this.me?.username ?? "",
-      context.data
-    );
+    const prompt = buildPrompt(this.me?.username ?? "", context.data);
 
     const end = await this.runTurn(item, prompt);
     if (this.stopped) return;

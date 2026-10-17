@@ -18,7 +18,7 @@ describe("buildPrompt", () => {
   it("holds the context and marks the target", () => {
     const op = msg(1, "ann", "human", "Please review");
     op.attachments = [{ filename: "plan.pdf" }];
-    const prompt = buildPrompt("http://b:8000", "bot", {
+    const prompt = buildPrompt("bot", {
       area: { name: "Ops", description: "Be brief" },
       thread: { title: "Deploy" },
       target_id: 3,
@@ -37,7 +37,8 @@ describe("buildPrompt", () => {
       "END BOARD CONTENT",
       "untrusted",
       "NO_REPLY",
-      "http://b:8000/skill.md",
+      "threadit.* tools",
+      "threadit.list_users",
       "reply to the target message",
       "posts your final answer automatically",
       "do not post this reply yourself",
@@ -46,6 +47,7 @@ describe("buildPrompt", () => {
     ]) {
       expect(prompt).toContain(needle);
     }
+    expect(prompt).not.toContain("skill.md");
     expect(prompt.split("[TARGET MESSAGE]")).toHaveLength(2);
   });
 });
