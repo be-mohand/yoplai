@@ -207,3 +207,5 @@ Start with the [documentation index](docs/README.md).
 - [Development](docs/development.md) and [data layout](docs/data-layout.md)
 
 For coding-agent architecture and ownership, see [`docs/llms.md`](docs/llms.md).
+
+Personal chat projects support reusable instructions and files on the project page. Upload documents or images, view the file list, and delete files there; agents receive small extracted documents directly and can read larger originals from the project files directory (read-only `/project-files` in sandboxes). Uploads have a 25MB limit; extraction failures retain the original file.

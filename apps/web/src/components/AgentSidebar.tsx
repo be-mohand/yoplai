@@ -7,6 +7,7 @@ import {
   createResource,
   createSignal,
   onCleanup,
+  onMount,
   lazy,
 } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
@@ -19,10 +20,19 @@ import {
   deleteAgentSession,
   fetchAgentSessions,
   renameAgentSession,
+  pinAgentSession,
+  archiveAgentSession,
   UnauthenticatedError,
 } from "../api";
+import { fetchChatProjects, moveChatToProject, deleteChatProject, renameChatProject, type ChatProject } from "../api/chat-projects";
+import { CreateProjectModal } from "./project/CreateProjectModal";
+import { Modal } from "./ui/Modal";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
+import { TextField } from "./ui/Field";
+import { Button } from "./ui/Button";
 import type { SessionSummary } from "../api/types";
 import { hasStaffRole as hasAdminRole } from "../lib/roles";
+import { showToast } from "../lib/toast";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
@@ -33,8 +43,15 @@ const LazySidebarAccountPanel = lazy(
   () => import("../auth/SidebarAccountPanel")
 );
 
-function relativeTime(timestamp: number): string {
-  const diff = Math.max(0, Date.now() - timestamp);
+function readCollapsedProjects(): string[] {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem("yoplai:collapsed-chat-projects") ?? "[]");
+    return Array.isArray(stored) ? stored.filter((id): id is string => typeof id === "string") : [];
+  } catch { return []; }
+}
+
+function relativeTime(timestamp: number, now: number): string {
+  const diff = Math.max(0, now - timestamp);
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "now";
   if (mins < 60) return `${mins}m`;
@@ -44,9 +61,9 @@ function relativeTime(timestamp: number): string {
   return `${days}d`;
 }
 
-function groupLabel(timestamp: number): string {
+function groupLabel(timestamp: number, currentTime: number): string {
   const date = new Date(timestamp);
-  const now = new Date();
+  const now = new Date(currentTime);
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startYesterday = startToday - 86400000;
   if (timestamp >= startToday) return "Today";
@@ -96,7 +113,27 @@ export function AgentSidebar(props: AgentSidebarProps) {
     const top = topExtensions();
     return !!top && top.extensions.length + top.mcp.length > 0;
   };
-  const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
+  const [sessions, setSessions] = createSignal<SessionSummary[]>([], {
+    equals: (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
+  });
+  const [projects, setProjects] = createSignal<ChatProject[]>([], { equals: (previous, next) => JSON.stringify(previous) === JSON.stringify(next) });
+  const [collapsedProjects, setCollapsedProjects] = createSignal<string[]>(readCollapsedProjects());
+  const [movingSession, setMovingSession] = createSignal<SessionSummary | null>(null);
+  const [sessionError, setSessionError] = createSignal("");
+  const [showCreateProject, setShowCreateProject] = createSignal(false);
+  const [renamingProject, setRenamingProject] = createSignal<ChatProject | null>(null);
+  const [deletingProject, setDeletingProject] = createSignal<ChatProject | null>(null);
+  const [renamingSession, setRenamingSession] = createSignal<SessionSummary | null>(null);
+  const [deletingSession, setDeletingSession] = createSignal<SessionSummary | null>(null);
+  const [projectNameInput, setProjectNameInput] = createSignal("");
+  const [sessionTitleInput, setSessionTitleInput] = createSignal("");
+  const [renaming, setRenaming] = createSignal(false);
+  const [deleting, setDeleting] = createSignal(false);
+  const [renameChatError, setRenameChatError] = createSignal("");
+  const [renameProjectError, setRenameProjectError] = createSignal("");
+  const [deleteProjectError, setDeleteProjectError] = createSignal("");
+  const [moveChatError, setMoveChatError] = createSignal("");
+  const [currentTime, setCurrentTime] = createSignal(Date.now());
   const [search, setSearch] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [listScrolling, setListScrolling] = createSignal(false);
@@ -122,15 +159,65 @@ export function AgentSidebar(props: AgentSidebarProps) {
     }
   };
 
-  createEffect(refreshSessions);
-  const poll = window.setInterval(refreshSessions, 3000);
+  const refreshProjects = async () => {
+    try { setProjects((await fetchChatProjects()).items); }
+    catch { setSessionError("Unable to load projects. Try again."); }
+  };
+  const refresh = () => { void refreshSessions(); void refreshProjects(); };
+  createEffect(refresh);
+  window.addEventListener("chat-projects-changed", refresh);
+  onCleanup(() => window.removeEventListener("chat-projects-changed", refresh));
+  const poll = window.setInterval(refresh, 3000);
+  const clock = window.setInterval(() => setCurrentTime(Date.now()), 60000);
   window.addEventListener("focus", refreshSessions);
   document.addEventListener("visibilitychange", refreshSessions);
   onCleanup(() => {
     clearTimeout(scrollIdleTimer);
     window.clearInterval(poll);
+    window.clearInterval(clock);
     window.removeEventListener("focus", refreshSessions);
     document.removeEventListener("visibilitychange", refreshSessions);
+  });
+
+  // Close session/project menus on outside click or Escape
+  onMount(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
+      openMenus.forEach((menu) => {
+        if (!menu.contains(event.target as Node)) {
+          menu.removeAttribute("open");
+        }
+      });
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        const openMenus = document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]");
+        openMenus.forEach((menu) => menu.removeAttribute("open"));
+      }
+    };
+
+    // Close other menus when opening one
+    const handleToggle = (event: Event) => {
+      const menu = event.target as HTMLDetailsElement;
+      if (menu.open && menu.classList.contains("session-actions")) {
+        document.querySelectorAll<HTMLDetailsElement>("details.session-actions[open]").forEach((otherMenu) => {
+          if (otherMenu !== menu) {
+            otherMenu.removeAttribute("open");
+          }
+        });
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    document.addEventListener("toggle", handleToggle, true);
+
+    onCleanup(() => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("toggle", handleToggle, true);
+    });
   });
 
   const visibleSessions = () => {
@@ -142,25 +229,158 @@ export function AgentSidebar(props: AgentSidebarProps) {
       : sessions();
   };
 
-  const groupedSessions = () => {
-    const groups: Array<{ label: string; items: SessionSummary[] }> = [];
-    for (const session of visibleSessions()) {
-      const label = groupLabel(session.lastActivity);
-      let group = groups.find((item) => item.label === label);
-      if (!group) {
-        group = { label, items: [] };
-        groups.push(group);
-      }
-      group.items.push(session);
-    }
-    return groups;
-  };
+  const sessionsInSection = (pinned: boolean) =>
+    visibleSessions().filter((item) => !projects().some((project) => project.id === item.projectId) && (item.pinned != null) === pinned);
+  const groupLabels = (pinned: boolean) =>
+    [...new Set(sessionsInSection(pinned).map((session) => groupLabel(session.lastActivity, currentTime())))];
+  const sessionsInGroup = (pinned: boolean, label: string) =>
+    sessionsInSection(pinned).filter((session) => groupLabel(session.lastActivity, currentTime()) === label);
 
   const currentChat = () => chatRouteSession(location.pathname, location.search);
   const selectSession = (session: SessionSummary) => {
     navigate(`/chat/${encodeURIComponent(session.agentId)}?session=${encodeURIComponent(session.sessionId)}`);
   };
 
+  const renderSession = (session: SessionSummary) => {
+    const selected = () =>
+      currentChat().agentId === session.agentId &&
+      currentChat().sessionId === session.sessionId;
+    const label = () => session.title || session.firstUserMessage || session.sessionId;
+    return (
+      <div
+        class="session-row-wrap"
+        onMouseEnter={(e) => revealTitle(e.currentTarget)}
+        onMouseLeave={(e) => resetTitle(e.currentTarget)}
+        onFocusIn={(e) => revealTitle(e.currentTarget)}
+        onFocusOut={(e) => resetTitle(e.currentTarget)}
+      >
+        <button
+          type="button"
+          class="session-row"
+          classList={{ active: selected() }}
+          onClick={() => selectSession(session)}
+        >
+          <span class="session-avatar">
+            <Show
+              when={session.avatar}
+              fallback={session.agentId[0]?.toUpperCase()}
+            >
+              {(avatar) => (
+                <Show
+                  when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())}
+                  fallback={avatar()}
+                >
+                  <img src={avatar()} alt="" />
+                </Show>
+              )}
+            </Show>
+          </span>
+          <span class="session-main">
+            <span class="session-title">
+              <span class="session-title-text">{label()}</span>
+            </span>
+            <span class="session-meta">
+              {relativeTime(session.lastActivity, currentTime())} · {session.agentId}
+              <Show when={session.isMain}> <b>MAIN</b></Show>
+              <Show when={session.pinned != null}> <i class="fa-solid fa-thumbtack session-pin" aria-label="Pinned" /></Show>
+            </span>
+          </span>
+        </button>
+        <details class="session-actions">
+          <summary aria-label="Session menu">⋯</summary>
+          <div class="session-menu">
+            <button
+              type="button"
+              class="session-action"
+              onClick={async (event) => {
+                event.currentTarget.closest("details")?.removeAttribute("open");
+                setSessionError("");
+                try {
+                  await pinAgentSession(session.agentId, session.sessionId, session.pinned == null);
+                  await refreshSessions();
+                  window.dispatchEvent(new Event("chat-projects-changed"));
+                } catch {
+                  setSessionError("Failed to update session pin. Try again.");
+                }
+              }}
+            >
+              <i class="fa-solid fa-thumbtack" aria-hidden="true" />
+              {session.pinned == null ? "Pin" : "Unpin"}
+            </button>
+            <button type="button" class="session-action" onClick={(event) => {
+              event.currentTarget.closest("details")?.removeAttribute("open");
+              setMoveChatError("");
+              setMovingSession(session);
+            }}>
+              <i class="fa-solid fa-folder" aria-hidden="true" />
+              Move to project…
+            </button>
+            <Show when={session.projectId}>
+              <button type="button" class="session-action" onClick={async () => {
+                try { await moveChatToProject(session.agentId, session.sessionId, null); await refreshSessions(); window.dispatchEvent(new Event("chat-projects-changed")); setSessionError(""); }
+                catch { setSessionError("Unable to remove chat from project. Try again."); }
+              }}>
+                <i class="fa-solid fa-folder-minus" aria-hidden="true" />
+                Remove from project
+              </button>
+            </Show>
+            <button
+              type="button"
+              class="session-action"
+              aria-label="Rename session"
+              onClick={(event) => {
+                event.currentTarget.closest("details")?.removeAttribute("open");
+                setRenameChatError("");
+                setSessionTitleInput(session.title ?? session.firstUserMessage ?? "");
+                setRenamingSession(session);
+              }}
+            >
+              <i class="fa-solid fa-pen" aria-hidden="true" />
+              Rename
+            </button>
+            <Show when={!session.isMain}>
+              <button
+                type="button"
+                class="session-action"
+                aria-label="Archive session"
+                onClick={async (event) => {
+                  event.currentTarget.closest("details")?.removeAttribute("open");
+                  setSessionError("");
+                  try {
+                    await archiveAgentSession(session.agentId, session.sessionId, true);
+                    setSessions((prev) => prev.filter((s) => s.sessionId !== session.sessionId));
+                    if (chatRouteSession(location.pathname, location.search).sessionId === session.sessionId) {
+                      navigate(`/chat/${session.agentId}`);
+                    }
+                    showToast("Chat archived", "success");
+                    window.dispatchEvent(new Event("chat-projects-changed"));
+                  } catch (err) {
+                    setSessionError(err instanceof Error ? err.message : "Failed to archive session. Try again.");
+                  }
+                }}
+              >
+                <i class="fa-solid fa-box-archive" aria-hidden="true" />
+                Archive
+              </button>
+            </Show>
+            <hr class="session-menu-separator" />
+            <button
+              type="button"
+              class="session-action danger"
+              aria-label="Delete session"
+              onClick={(event) => {
+                event.currentTarget.closest("details")?.removeAttribute("open");
+                setDeletingSession(session);
+              }}
+            >
+              <i class="fa-solid fa-trash" aria-hidden="true" />
+              Delete
+            </button>
+          </div>
+        </details>
+      </div>
+    );
+  };
   return (
     <aside class="agent-sidebar" classList={{ collapsed: props.collapsed() }}>
       <div class="agent-sidebar-shell">
@@ -204,10 +424,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 classList={{
                   active: stripBase(location.pathname).startsWith("/projects"),
                 }}
-                title="Projects"
+                title="Board"
               >
                 <i class="fa-solid fa-folder-tree nav-icon" aria-hidden="true" />
-                <span class="nav-full">Projects</span>
+                <span class="nav-full">Board</span>
               </A>
             </Show>
             <Show when={isExtensionEnabled("orchestrator")}>
@@ -283,6 +503,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 ⌕
               </button>
             </div>
+            <Show when={sessionError()}>
+              <div role="alert">{sessionError()}</div>
+            </Show>
             <Show when={searchOpen()}>
               <input
                 class="sessions-search"
@@ -292,98 +515,315 @@ export function AgentSidebar(props: AgentSidebarProps) {
               />
             </Show>
             <div class="sessions-list" classList={{ scrolling: listScrolling() }} onScroll={onListScroll}>
-              <For each={groupedSessions()}>
-                {(group) => (
-                  <div class="sessions-group">
-                    <div class="sessions-group-label">{group.label}</div>
-                    <For each={group.items}>
-                      {(session) => {
-                        const selected = () =>
-                          currentChat().agentId === session.agentId &&
-                          currentChat().sessionId === session.sessionId;
-                        const label = () => session.title || session.firstUserMessage || session.sessionId;
-                        return (
-                          <div
-                            class="session-row-wrap"
-                            onMouseEnter={(e) => revealTitle(e.currentTarget)}
-                            onMouseLeave={(e) => resetTitle(e.currentTarget)}
-                            onFocusIn={(e) => revealTitle(e.currentTarget)}
-                            onFocusOut={(e) => resetTitle(e.currentTarget)}
+              <section class="sessions-section" aria-label="Projects">
+                <div class="sessions-header">
+                  <span>Projects</span>
+                  <button
+                    type="button"
+                    aria-label="New project"
+                    onClick={() => setShowCreateProject(true)}
+                  >
+                    <i class="fa-solid fa-plus" aria-hidden="true" />
+                  </button>
+                </div>
+                <For each={projects()}>{(project) => {
+                  const isActive = () => location.pathname === `/p/${project.id}`;
+                  return (
+                    <div class="chat-project">
+                    <div class="session-row-wrap">
+                      <div class="chat-project-header">
+                        <button type="button" class="project-chevron" aria-label={`Toggle ${project.name}`} aria-expanded={!collapsedProjects().includes(project.id)} onClick={() => {
+                          const next = collapsedProjects().includes(project.id) ? collapsedProjects().filter((id) => id !== project.id) : [...collapsedProjects(), project.id];
+                          setCollapsedProjects(next);
+                          localStorage.setItem("yoplai:collapsed-chat-projects", JSON.stringify(next));
+                        }}>{collapsedProjects().includes(project.id) ? "▸" : "▾"}</button>
+                        <i class="fa-solid fa-folder project-icon" aria-hidden="true" />
+                        <A href={`/p/${project.id}`} class="project-link" classList={{ active: isActive() }}>{project.name}</A>
+                      </div>
+                      <details class="session-actions">
+                        <summary aria-label="Project menu">⋯</summary>
+                        <div class="session-menu">
+                          <button
+                            type="button"
+                            class="session-action"
+                            onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              setRenameProjectError("");
+                              setProjectNameInput(project.name);
+                              setRenamingProject(project);
+                            }}
                           >
-                            <button
-                              type="button"
-                              class="session-row"
-                              classList={{ active: selected() }}
-                              onClick={() => selectSession(session)}
-                            >
-                              <span class="session-avatar">
-                                <Show
-                                  when={session.avatar}
-                                  fallback={session.agentId[0]?.toUpperCase()}
-                                >
-                                  {(avatar) => (
-                                    <Show
-                                      when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())}
-                                      fallback={avatar()}
-                                    >
-                                      <img src={avatar()} alt="" />
-                                    </Show>
-                                  )}
-                                </Show>
-                              </span>
-                              <span class="session-main">
-                                <span class="session-title">
-                                  <span class="session-title-text">{label()}</span>
-                                </span>
-                                <span class="session-meta">
-                                  {relativeTime(session.lastActivity)} · {session.agentId}
-                                  <Show when={session.isMain}> <b>MAIN</b></Show>
-                                </span>
-                              </span>
-                            </button>
-                            <span class="session-actions">
-                              <button
-                                type="button"
-                                class="session-action"
-                                aria-label="Rename session"
-                                onClick={async () => {
-                                  const title = prompt("Session title", session.title ?? session.firstUserMessage);
-                                  if (title === null) return;
-                                  await renameAgentSession(session.agentId, session.sessionId, title);
-                                  refreshSessions();
-                                }}
-                              >
-                                ✎
-                              </button>
-                              <button
-                                type="button"
-                                class="session-action danger"
-                                aria-label="Delete session"
-                                onClick={async () => {
-                                  if (!confirm("Delete session?")) return;
-                                  await deleteAgentSession(session.agentId, session.sessionId);
-                                  setSessions((items) => items.filter((item) => item.sessionId !== session.sessionId || item.agentId !== session.agentId));
-                                  if (selected()) navigate(`/chat/${encodeURIComponent(session.agentId)}`);
-                                }}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          </div>
-                        );
-                      }}
+                            Rename…
+                          </button>
+                          <button
+                            type="button"
+                            class="session-action danger"
+                            onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              setDeleteProjectError("");
+                              setDeletingProject(project);
+                            }}
+                          >
+                            Delete…
+                          </button>
+                        </div>
+                      </details>
+                    </div>
+                      <Show when={!collapsedProjects().includes(project.id)}>
+                        <div class="chat-project-sessions">
+                          <For each={visibleSessions().filter((session) => session.projectId === project.id).sort((a, b) => Number(b.pinned != null) - Number(a.pinned != null) || b.lastActivity - a.lastActivity)}>{renderSession}</For>
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                }}</For>
+              </section>
+              <For each={sessionsInSection(true).length > 0 ? [true, false] : [false]}>
+                {(pinned) => (
+                  <section class="sessions-section" aria-label={pinned ? "Pinned" : "Recent"}>
+                    <div class="sessions-header">{pinned ? "Pinned" : "Recent"}</div>
+                    <For each={groupLabels(pinned)}>
+                      {(group) => (
+                        <div class="sessions-group">
+                          <div class="sessions-group-label">{group}</div>
+                          <For each={sessionsInGroup(pinned, group)}>
+                            {renderSession}
+                          </For>
+                        </div>
+                      )}
                     </For>
-                  </div>
+                  </section>
                 )}
               </For>
             </div>
           </section>
         </div>
+        <Show when={showCreateProject()}>
+          <CreateProjectModal
+            onClose={() => setShowCreateProject(false)}
+            onSuccess={() => void refreshProjects()}
+          />
+        </Show>
+        <Show when={renamingProject()}>{(proj) => (
+          <Modal
+            title="Rename project"
+            onClose={() => setRenamingProject(null)}
+            size="sm"
+            dismissible={!renaming()}
+            error={renameProjectError()}
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setRenamingProject(null)} disabled={renaming()}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={async () => {
+                    const trimmed = projectNameInput().trim();
+                    if (!trimmed) return;
+                    setRenaming(true);
+                    setRenameProjectError("");
+                    try {
+                      await renameChatProject(proj().id, trimmed);
+                      await refreshProjects();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                      setRenamingProject(null);
+                    } catch {
+                      setRenameProjectError("Unable to rename project. Try again.");
+                    } finally {
+                      setRenaming(false);
+                    }
+                  }}
+                  disabled={!projectNameInput().trim() || renaming()}
+                  loading={renaming()}
+                >
+                  Rename
+                </Button>
+              </>
+            }
+          >
+            <TextField
+              label="Name"
+              value={projectNameInput()}
+              onInput={(e) => setProjectNameInput(e.currentTarget.value)}
+              disabled={renaming()}
+              autofocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && projectNameInput().trim()) {
+                  e.preventDefault();
+                  document.querySelector<HTMLButtonElement>(".ui-modal__footer .ui-button--primary")?.click();
+                }
+              }}
+            />
+          </Modal>
+        )}</Show>
+        <Show when={deletingProject()}>{(proj) => (
+          <ConfirmDialog
+            title={`Delete "${proj().name}"?`}
+            description="Its chats are kept and go back to Recent."
+            confirmLabel="Delete project"
+            danger
+            dismissible={!deleting()}
+            onConfirm={async () => {
+              setDeleting(true);
+              setDeleteProjectError("");
+              try {
+                await deleteChatProject(proj().id);
+                await refreshProjects();
+                window.dispatchEvent(new Event("chat-projects-changed"));
+                if (location.pathname === `/p/${proj().id}`) {
+                  navigate("/agents");
+                }
+                setDeletingProject(null);
+              } catch {
+                setDeleteProjectError("Unable to delete project. Try again.");
+              } finally {
+                setDeleting(false);
+              }
+            }}
+            onCancel={() => setDeletingProject(null)}
+            error={deleteProjectError()}
+          />
+        )}</Show>
+        <Show when={renamingSession()}>{(sess) => (
+          <Modal
+            title="Rename chat"
+            onClose={() => setRenamingSession(null)}
+            size="sm"
+            dismissible={!renaming()}
+            error={renameChatError()}
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setRenamingSession(null)} disabled={renaming()}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={async () => {
+                    setRenaming(true);
+                    setRenameChatError("");
+                    try {
+                      await renameAgentSession(sess().agentId, sess().sessionId, sessionTitleInput());
+                      await refreshSessions();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                      setRenamingSession(null);
+                    } catch {
+                      setRenameChatError("Unable to rename chat. Try again.");
+                    } finally {
+                      setRenaming(false);
+                    }
+                  }}
+                  disabled={renaming()}
+                  loading={renaming()}
+                >
+                  Rename
+                </Button>
+              </>
+            }
+          >
+            <TextField
+              label="Title"
+              value={sessionTitleInput()}
+              onInput={(e) => setSessionTitleInput(e.currentTarget.value)}
+              disabled={renaming()}
+              autofocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  document.querySelector<HTMLButtonElement>(".ui-modal__footer .ui-button--primary")?.click();
+                }
+              }}
+            />
+          </Modal>
+        )}</Show>
+        <Show when={deletingSession()}>{(sess) => (
+          <ConfirmDialog
+            title="Delete this chat?"
+            description="This can't be undone."
+            confirmLabel="Delete chat"
+            danger
+            onConfirm={async () => {
+              const selected = currentChat().agentId === sess().agentId && currentChat().sessionId === sess().sessionId;
+              await deleteAgentSession(sess().agentId, sess().sessionId);
+              setSessions((items) =>
+                items.filter((item) => item.sessionId !== sess().sessionId || item.agentId !== sess().agentId)
+              );
+              window.dispatchEvent(new Event("chat-projects-changed"));
+              if (selected) navigate(`/chat/${encodeURIComponent(sess().agentId)}`);
+              setDeletingSession(null);
+            }}
+            onCancel={() => setDeletingSession(null)}
+          />
+        )}</Show>
+        <Show when={movingSession()}>{(session) => (
+          <Modal
+            title="Move to project"
+            onClose={() => setMovingSession(null)}
+            size="sm"
+            error={moveChatError()}
+            footer={
+              <Button variant="secondary" onClick={() => setMovingSession(null)}>
+                Cancel
+              </Button>
+            }
+          >
+            <div class="project-move-list">
+              <Show when={projects().length === 0}>
+                <p class="project-move-empty">No projects available.</p>
+              </Show>
+              <For each={projects()}>{(project) => (
+                <button
+                  type="button"
+                  class="project-move-row"
+                  onClick={async () => {
+                    setMoveChatError("");
+                    try {
+                      await moveChatToProject(session().agentId, session().sessionId, project.id);
+                      setMovingSession(null);
+                      await refreshSessions();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                    } catch {
+                      setMoveChatError("Unable to move chat. Try again.");
+                    }
+                  }}
+                >
+                  <i class="fa-solid fa-folder" aria-hidden="true" />
+                  <span>{project.name}</span>
+                </button>
+              )}</For>
+              <Show when={session().projectId}>
+                <button
+                  type="button"
+                  class="project-move-row project-move-row--remove"
+                  onClick={async () => {
+                    setMoveChatError("");
+                    try {
+                      await moveChatToProject(session().agentId, session().sessionId, null);
+                      setMovingSession(null);
+                      await refreshSessions();
+                      window.dispatchEvent(new Event("chat-projects-changed"));
+                    } catch {
+                      setMoveChatError("Unable to remove chat from project. Try again.");
+                    }
+                  }}
+                >
+                  Remove from project
+                </button>
+              </Show>
+            </div>
+          </Modal>
+        )}</Show>
         <div class="sidebar-footer">
           <Show when={capabilities.multiUser}>
             <Suspense>
               <LazySidebarAccountPanel collapsed={props.collapsed} />
             </Suspense>
+          </Show>
+          <Show when={!capabilities.multiUser}>
+            <A href="/archive" class="archive-link" title="Archive">
+              <i class="fa-solid fa-box-archive" aria-hidden="true" />
+              <span class="archive-label">Archive</span>
+            </A>
           </Show>
           <button
             class="theme-toggle"
@@ -441,6 +881,83 @@ export function AgentSidebar(props: AgentSidebarProps) {
       </div>
 
       <style>{`
+        .chat-project-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px;
+        }
+        .project-chevron,
+        .project-icon {
+          flex-shrink: 0;
+        }
+        .project-chevron {
+          border: none;
+          background: transparent;
+          color: var(--text-secondary);
+          cursor: pointer;
+          padding: 2px 4px;
+          font-size: 11px;
+        }
+        .project-icon {
+          font-size: 11px;
+          color: var(--text-tertiary);
+        }
+        .project-link {
+          flex: 1;
+          min-width: 0;
+          color: var(--text-primary);
+          text-decoration: none;
+          font-size: 12px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          padding: 2px 4px;
+          border-radius: 4px;
+        }
+        .project-link.active {
+          background: var(--bg-raised);
+        }
+        .project-move-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0;
+        }
+        .project-move-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 12px;
+          border: none;
+          border-radius: 8px;
+          background: transparent;
+          color: var(--text-primary);
+          font-size: 13px;
+          font-family: inherit;
+          text-align: left;
+          cursor: pointer;
+          transition: background 150ms;
+        }
+        .project-move-row:hover {
+          background: var(--bg-raised);
+        }
+        .project-move-row i {
+          color: var(--text-tertiary);
+          font-size: 12px;
+        }
+        .project-move-row--remove {
+          margin-top: 8px;
+          padding-top: 12px;
+          border-top: 1px solid var(--border-subtle);
+          color: var(--tone-error, #dc2626);
+        }
+        .project-move-empty {
+          margin: 0 0 12px;
+          padding: 12px;
+          text-align: center;
+          font-size: 13px;
+          color: var(--text-secondary);
+        }
         .agent-sidebar {
           position: relative;
           z-index: 40;
@@ -713,8 +1230,53 @@ export function AgentSidebar(props: AgentSidebarProps) {
           pointer-events: auto;
         }
 
-        .session-action {
+        .session-actions[open] {
+          opacity: 1;
+          pointer-events: auto;
+          z-index: 1;
+        }
+
+        .session-actions summary {
+          cursor: pointer;
+          list-style: none;
           padding: 4px;
+        }
+
+        .session-pin {
+          font-size: 10px;
+          color: var(--text-tertiary);
+        }
+
+        .chat-project-sessions {
+          padding-left: 14px;
+        }
+
+        .session-menu {
+          white-space: nowrap;
+          min-width: 160px;
+          position: absolute;
+          top: 100%;
+          right: 0;
+          display: flex;
+          flex-direction: column;
+          padding: 4px;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          background: var(--bg-surface);
+          box-shadow: 0 4px 12px var(--shadow-md);
+        }
+
+        .session-action {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 10px;
+          text-align: left;
+        }
+
+        .session-action i {
+          width: 16px;
+          text-align: center;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -728,6 +1290,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
           color: #ef4444;
         }
 
+        .session-menu-separator {
+          margin: 4px 0;
+          border: none;
+          border-top: 1px solid var(--border-default);
+        }
+
         .agent-sidebar.collapsed:not(:hover) .sidebar-sessions {
           display: none;
         }
@@ -735,6 +1303,37 @@ export function AgentSidebar(props: AgentSidebarProps) {
         .sidebar-footer {
           padding: 8px 10px 10px;
           border-top: 1px solid var(--border-default);
+        }
+
+        .archive-link {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding: 8px 10px;
+          border-radius: 8px;
+          background: transparent;
+          color: var(--text-secondary);
+          text-decoration: none;
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 1.2;
+          transition: background 0.2s ease, color 0.2s ease;
+          white-space: nowrap;
+        }
+
+        .archive-link:hover {
+          background: var(--bg-raised);
+          color: var(--text-primary);
+        }
+
+        .archive-link i {
+          width: 16px;
+          text-align: center;
+        }
+
+        .agent-sidebar.collapsed .archive-label {
+          display: none;
         }
 
         .theme-toggle {

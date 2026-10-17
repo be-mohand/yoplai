@@ -119,6 +119,30 @@ describe("pi adapter onecli env wiring", () => {
     }
   });
 
+  it("registers project memory host tools for local Claude project chats only", async () => {
+    const agent = makeAgent();
+    setLoadedConfig({ agents: [agent] } as GatewayConfig);
+    const session = {
+      messages: [{ role: "assistant", content: "done" }],
+      agent: { state: { messages: [] } },
+      subscribe: vi.fn(() => vi.fn()),
+      prompt: vi.fn(async () => undefined),
+      abort: vi.fn(),
+      dispose: vi.fn(),
+    };
+    mockCreateAgentSession.mockResolvedValue({ session });
+    const { piAdapter } = await import("../adapter.js");
+    await piAdapter.run(makeRunParams(agent));
+    expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({ customTools: [] }));
+    await piAdapter.run({ ...makeRunParams(agent), context: { kind: "web", project: { id: "research", instructions: "" } } });
+    expect(mockCreateAgentSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      customTools: expect.arrayContaining([
+        expect.objectContaining({ name: "project_references_add", execute: expect.any(Function) }),
+        expect.objectContaining({ name: "project_notes_append", execute: expect.any(Function) }),
+      ]),
+    }));
+  });
+
   it("sets proxy env before session creation and restores it after the run", async () => {
     const agent = makeAgent();
     const config = {

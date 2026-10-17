@@ -13,9 +13,28 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
 - Threadit masking now hides JSON secret values with escaped quotes whole; tool names that are raw commands (Codex style) are labelled `Running: …` and masked.
+- Project create/rename/delete and chat rename/delete now use in-app dialogs instead of native prompts; project page redesigned with chats list and context cards (Instructions, Files, References, Notes) in a right rail. Instructions and Notes render as markdown and are edited in a modal (Edit button; Esc cancels, ⌘/Ctrl+Enter saves). In project chats, the header shows the project as a pill next to the agent name and the back button returns to the project.
 
 ### Added
 
+- Archive sessions: put chats away with reversible archive from the sidebar row menu (hidden for MAIN session). Archived chats disappear from the sidebar, reachable from the new `/archive` page (link in sidebar footer in single-user, account menu in multi-user) with Open, Restore, and Delete actions. Archiving preserves pin and project membership so restoring returns the chat where it was. Opening an archived session shows a clear banner "This chat is archived. Sending a message will restore it." with a Restore button; sending a message automatically unarchives. Archive, restore, and delete actions now show success toasts ("Chat archived", "Chat restored", "Chat deleted"). Sidebar session and project row menus now close on outside click and Escape key, and opening one menu closes any other open menu. `PATCH /api/agents/:agentId/sessions/:sessionId` accepts `archived: boolean` (rejects MAIN with 400); `GET /api/agents/sessions` excludes archived by default, pass `?includeArchived=1` to include them. Persisted as append-only `meta` entry (`key: "archived"`, value: timestamp or `null`).
+- Multi-user account menu: clicking the avatar/name/email row in the sidebar footer opens a popover menu with Account connections, Archive, and Logout (with icons and separator before Logout). Menu closes on outside click, Escape, route change, or item selection. Single-user mode has no account panel; the `/archive` link appears in the sidebar footer (below theme toggle) in single-user mode, while multi-user accesses it via the account menu.
+
+- Sidebar row menu now shows icons (Pin `fa-thumbtack`, Move to project `fa-folder`, Remove from project `fa-folder-minus`, Rename `fa-pen`, Archive `fa-box-archive`, Delete `fa-trash`) and a separator before Delete to visually distinguish the destructive action.
+
+- `session_history` now also reads other agents' sessions in the current chat Project (listed as `agent/session`), and the project prompt tells the agent so. Same-user only; follows `sessionHistory.enabled`.
+
+- Agents now receive saved project reference paths alongside title/description so they can read referenced wiki files directly; the reference API and UI still hide paths.
+- Create project modal asks for the project's purpose and drafts starting instructions from it via a separate `POST /chat-projects/:id/instructions/draft` call (maintenance model, falls back to the raw text; retries never duplicate the project), and accepts optional files to upload on creation.
+- Share memory across agents in a personal chat project: agent-added wiki references with private paths, removable references, and editable dated project notes refreshed each turn.
+
+- Personal chat project files: upload, list, and delete documents/images, with bounded extracted context and read-only sandbox access.
+
+- Set instructions for a chat project and start a new chat with your chosen agent; project chats receive the latest instructions and a prompt to suggest useful wiki references on every turn.
+
+- Create personal chat projects, move chats between them, and browse project chats above Pinned and Recent; deleting a project keeps its chats. The orchestration Projects navigation is now labelled Board.
+
+- Pin sessions from the sidebar row menu; pinned chats stay above Recent, remain searchable, and persist across reloads.
 - Threadit `activity: "safe" | "detailed"` setting (root or per agent). `detailed` posts `task.checkpoint` labels and redacted tool targets (file paths, first bash line, one identifying argument) to the board's activity pane; `safe` stays the default and is unchanged.
 - Threadit agent tools (`threadit.*`). Agents use the board through the gateway, so the sandbox needs no token. `threadit.register` makes an agent account and saves the token. It never shows the token. The poller starts with a new token and waits for approval of a new account. Threadit works with only a `baseUrl`.
 - Extensions can save their own per-agent config and secrets through `ctx.updateAgentExtensionConfig`.
@@ -28,6 +47,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Maintenance-model calls (session auto-titles, tool labels, project instruction drafts) no longer send `temperature`, which reasoning models such as `openai-codex` reject with "Unsupported parameter: temperature".
 - Threadit: a download cannot write outside the workspace through a symlink. Sandbox uploads read `/workspace/data` and `/workspace/uploads`. A disabled agent drops its token. An agent that enables Threadit later gets a poller without a restart.
 - Slack's default `threadPolicy: always` keeps each opener and all thread replies in one persisted session owned by the opener, retaining attachments while each sender uses their own credentials; different senders wait for separate turns.
 - Container `send_file` now waits for gateway media registration and file-card emission before reporting success, returns registration failures to the agent, and logs failed outbound file requests.

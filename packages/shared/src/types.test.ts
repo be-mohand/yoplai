@@ -374,6 +374,7 @@ describe("container IPC schemas", () => {
 
   it("parses container input and output", () => {
     const input = ContainerInputSchema.parse({
+      context: { kind: "web", project: { instructions: "Read the files", filesPath: "/project-files", files: "notes.txt\nUseful notes" } },
       agentId: "sandbox-agent",
       sessionId: "session-1",
       message: "hello",
@@ -401,6 +402,7 @@ describe("container IPC schemas", () => {
     });
     const output = ContainerOutputSchema.parse({ text: "hello back" });
 
+    expect(input.context?.project).toEqual({ instructions: "Read the files", filesPath: "/project-files", files: "notes.txt\nUseful notes" });
     expect(input.workspaceDir).toBe("/workspace");
     expect(output.text).toBe("hello back");
   });

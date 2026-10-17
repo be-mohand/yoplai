@@ -112,6 +112,17 @@ afterEach(() => {
 });
 
 describe("internal tools", () => {
+  it("refuses project tools when the authenticated run has no project", async () => {
+    const { app, executeExtensionTool } = createDeps();
+    registerToken("token-project-refusal");
+    const response = await postTool(app, {
+      tool: "project_notes_append", args: { text: "Finding", projectId: "forged-project" },
+      agentId: "agent-1", agentToken: "token-project-refusal", sessionId: "session-1",
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Project memory tools are available only in project chats" });
+    expect(executeExtensionTool).not.toHaveBeenCalled();
+  });
   it("forwards task checkpoint progress to the owning container run", async () => {
     const { app, executeExtensionTool } = createDeps();
     const emitProgress = vi.fn();

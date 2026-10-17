@@ -49,6 +49,7 @@ vi.mock("../sessions/store.js", () => ({
 }));
 
 vi.mock("../history/store.js", () => ({
+  resolveSessionProject: vi.fn(async () => null),
   appendSessionMeta,
   appendRunFailureNotice,
   backfillFromPiSession: vi.fn(async () => false),
@@ -72,6 +73,11 @@ vi.mock("../history/store.js", () => ({
 
 vi.mock("../maintenance/session-auto-title.js", () => ({
   maybeAutoTitleSession,
+}));
+
+const resolveProjectContext = vi.fn(async () => undefined);
+vi.mock("../chat-projects/context-resolver.js", () => ({
+  ProjectContextResolver: class { resolve = resolveProjectContext; },
 }));
 
 vi.mock("./events.js", () => ({
@@ -108,6 +114,33 @@ function createAgent(config: Partial<AgentConfig>): AgentConfig {
     ...config,
   } as AgentConfig;
 }
+
+describe("runAgent session_history prompt gating", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getSessionThinkLevel.mockResolvedValue("low");
+  });
+
+  async function run(sdk: "pi" | "openclaw", config: Record<string, unknown> = {}) {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({ sdk }));
+    loadConfig.mockReturnValue({ agents: [], extensions: {}, sessions: {}, ...config });
+    const { runAgent } = await import("./runner.js");
+    await runAgent({ agentId: "alpha", message: "hi", sessionId: "s1", sessionKey: "main" });
+    return (resolveProjectContext.mock.calls[0] as unknown as [{ sessionHistory?: boolean }])[0].sessionHistory;
+  }
+
+  it("advertises for pi by default", async () => {
+    expect(await run("pi")).toBe(true);
+  });
+  it("does not advertise for openclaw", async () => {
+    expect(await run("openclaw")).toBe(false);
+  });
+  it("does not advertise when disabled in config", async () => {
+    expect(await run("pi", { sessionHistory: { enabled: false } })).toBe(false);
+  });
+});
 
 describe("runAgent think level resolution", () => {
   beforeEach(() => {

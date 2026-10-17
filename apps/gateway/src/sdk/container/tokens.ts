@@ -15,6 +15,7 @@ export type ContainerTokenContext = {
   userId?: string;
   sessionOwnerId?: string | null;
   requesterId?: string;
+  projectId?: string;
   emitProgress?: (event: {
     label: string;
     current?: number;

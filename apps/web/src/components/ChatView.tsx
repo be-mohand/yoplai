@@ -16,6 +16,7 @@ import {
 } from "solid-js";
 
 import { useParams, useNavigate, useSearchParams, A } from "@solidjs/router";
+import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { toolLabel } from "@yoplai/shared/tool-labels";
 import { refreshToolLabels, toolLabelTemplates } from "../lib/tool-labels";
@@ -27,12 +28,15 @@ import {
   fetchFullHistory,
   fetchAgent,
   fetchAgentSuggestions,
+  fetchAgentSessions,
+  archiveAgentSession,
   subscribeToSession,
   subscribeToRealtime,
   postAbort,
   postCompact,
   type DoneMeta,
 } from "../api";
+import { fetchChatProject } from "../api/chat-projects";
 import type {
   Message,
   HistoryViewMode,
@@ -68,6 +72,7 @@ import {
   type ActivitySegment,
   streamingActivityItems,
 } from "../lib/chat-activity";
+import { showToast } from "../lib/toast";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -1068,6 +1073,53 @@ export function ChatView() {
     ([agentId]) => fetchAgentSuggestions(agentId)
   );
 
+  // Get project ID from query params or session
+  const currentProjectId = createMemo(() => {
+    // First try query param
+    if (typeof searchParams.project === "string" && searchParams.project.trim()) {
+      return searchParams.project;
+    }
+    // Otherwise use resolved session's projectId if available
+    // We'll need to fetch sessions to get this
+    return undefined;
+  });
+
+  const [allSessions, { refetch: refetchSessions }] = createResource(
+    () => explicitSessionId(),
+    async (sessionId) => {
+      if (!sessionId) return { items: [] };
+      return fetchAgentSessions({ includeArchived: true });
+    }
+  );
+
+  const sessionProjectId = createMemo(() => {
+    const sid = explicitSessionId();
+    if (!sid || !allSessions()) return undefined;
+    const session = allSessions()?.items.find(s => s.sessionId === sid);
+    return session?.projectId ?? undefined;
+  });
+
+  const isSessionArchived = createMemo(() => {
+    const sid = explicitSessionId();
+    if (!sid || !allSessions()) return false;
+    const session = allSessions()?.items.find(s => s.agentId === params.agentId && s.sessionId === sid);
+    return session?.archived != null;
+  });
+
+  const projectId = () => currentProjectId() ?? sessionProjectId();
+
+  const [project] = createResource(
+    projectId,
+    async (id) => {
+      if (!id) return null;
+      try {
+        return await fetchChatProject(id);
+      } catch {
+        return null;
+      }
+    }
+  );
+
   const isOAuth = () => agent()?.authMode === "oauth";
 
   void loadCapabilities().catch(() => undefined);
@@ -1960,9 +2012,10 @@ export function ChatView() {
           ? `/chat/${params.agentId}/full`
           : `/chat/${params.agentId}`;
       const session = explicitSessionId();
-      const path = session
-        ? `${basePath}?session=${encodeURIComponent(session)}`
-        : basePath;
+      const query = new URLSearchParams();
+      if (session) query.set("session", session);
+      if (searchParams.project) query.set("project", String(searchParams.project));
+      const path = query.size ? `${basePath}?${query}` : basePath;
       navigate(path, { replace: true });
     }
   };
@@ -2166,6 +2219,37 @@ export function ChatView() {
       return;
     }
 
+    // Auto-unarchive if sending a message to an archived session
+    if (isSessionArchived()) {
+      try {
+        await archiveAgentSession(params.agentId, explicitSessionId()!, false);
+        showToast("Chat restored", "success");
+        // Refetch sessions to clear archived state
+        void refetchSessions();
+        window.dispatchEvent(new Event("chat-projects-changed"));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to restore session. Try again.";
+        setSimpleMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Error: ${message}`,
+            timestamp: Date.now(),
+          },
+        ]);
+        setFullMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: `Error: ${message}` }],
+            timestamp: Date.now(),
+          },
+        ]);
+        return;
+      }
+    }
+
     const isResetCommand =
       text === "/new" ||
       text.startsWith("/new ") ||
@@ -2208,6 +2292,7 @@ export function ChatView() {
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
     const streamOptions = {
+      ...(searchParams.project ? { projectId: String(searchParams.project) } : {}),
       ...(attachments?.length ? { attachments } : {}),
       ...(levelToSend ? { thinkLevel: levelToSend } : {}),
       ...(!isResetCommand && explicitSessionId()
@@ -2762,7 +2847,11 @@ export function ChatView() {
       }}
     >
       <header class="header">
-        <A href="/agents" class="back-btn" aria-label="Go back">
+        <A
+          href={projectId() ? `/p/${projectId()}` : "/agents"}
+          class="back-btn"
+          aria-label={projectId() ? "Back to project" : "Go back"}
+        >
           <svg
             width="18"
             height="18"
@@ -2789,7 +2878,17 @@ export function ChatView() {
             )}
           </Show>
           <div class="agent-info-text">
-            <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
+            <div class="agent-title-row">
+              <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
+              <Show when={project()}>
+                {(proj) => (
+                  <A href={`/p/${projectId()}`} class="chat-project-chip">
+                    <i class="fa-solid fa-folder" />
+                    <span>{proj().name}</span>
+                  </A>
+                )}
+              </Show>
+            </div>
             <div class="agent-status">
               <span class="status-dot" classList={{ active: isStreaming() }} />
               <span class="status-text">
@@ -2895,6 +2994,35 @@ export function ChatView() {
           New chat
         </button>
       </header>
+
+      <ArchivedSessionBanner
+        isArchived={isSessionArchived()}
+        onRestore={async () => {
+          await archiveAgentSession(params.agentId, explicitSessionId()!, false);
+          showToast("Chat restored", "success");
+          void refetchSessions();
+          window.dispatchEvent(new Event("chat-projects-changed"));
+        }}
+        onError={(message) => {
+          setSimpleMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `Error: ${message}`,
+              timestamp: Date.now(),
+            },
+          ]);
+          setFullMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: [{ type: "text", text: `Error: ${message}` }],
+              timestamp: Date.now(),
+            },
+          ]);
+        }}
+      />
 
       <div class="chat-body">
         <div class="hero-spacer hero-spacer-top" />
@@ -3727,6 +3855,38 @@ export function ChatView() {
           white-space: nowrap;
         }
 
+        .agent-title-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+
+        .chat-project-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+          padding: 2px 8px;
+          border: 1px solid var(--border-subtle);
+          border-radius: 999px;
+          font-size: 12px;
+          color: var(--text-secondary);
+          text-decoration: none;
+          transition: color 150ms ease, border-color 150ms ease;
+        }
+
+        .chat-project-chip span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .chat-project-chip:hover {
+          color: var(--text-primary);
+          border-color: var(--border-default);
+        }
+
         .agent-name {
           font-size: 15px;
           font-weight: 600;
@@ -3775,6 +3935,43 @@ export function ChatView() {
         .think-dropdown:focus {
           border-color: var(--accent);
           box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        /* ── Archived session banner ────────────────────────────── */
+        .archived-banner {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px max(18px, calc((100% - var(--transcript-width)) / 2 + 18px));
+          background: color-mix(in srgb, #f59e0b 10%, var(--bg-surface));
+          border-bottom: 1px solid color-mix(in srgb, #f59e0b 20%, transparent);
+          color: var(--text-primary);
+        }
+
+        .archived-banner i {
+          color: #f59e0b;
+          font-size: 16px;
+        }
+
+        .archived-banner-text {
+          flex: 1;
+          font-size: 13px;
+        }
+
+        .archived-banner-restore {
+          padding: 6px 14px;
+          border: none;
+          border-radius: 6px;
+          background: var(--accent);
+          color: white;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.15s ease;
+        }
+
+        .archived-banner-restore:hover {
+          background: color-mix(in srgb, var(--accent) 85%, black);
         }
 
         /* ── Empty-chat hero ─────────────────────────────────────── */

@@ -6,6 +6,26 @@ import {
   renderAgentContext,
 } from "./context-rendering.js";
 
+describe("project context", () => {
+  it("renders one instructions and discovery block without technical metadata", () => {
+    const rendered = renderAgentContext({ kind: "web", project: { id: "private-project-id", instructions: "Use primary sources.", references: "- Wiki: Useful source", notes: "- Sally learned this" } });
+    expect(rendered).toContain("[PROJECT CONTEXT]\nUse primary sources.");
+    expect(rendered).toContain("from the project instructions, files and notes, look for additional useful wiki sources and propose adding them as project references");
+    expect(rendered).toContain("Project references:\n- Wiki: Useful source");
+    expect(rendered).toContain("Project notes (latest):\n- Sally learned this");
+    expect(rendered).not.toContain("private-project-id");
+    expect(rendered.match(/\[PROJECT CONTEXT\]/g)).toHaveLength(1);
+    expect(renderAgentContext({ kind: "web" })).not.toContain("PROJECT CONTEXT");
+  });
+  it("announces session_history only when enabled for the project", () => {
+    expect(renderAgentContext({ kind: "web", project: { instructions: "", sessionHistory: true } })).toContain("session_history:");
+    expect(renderAgentContext({ kind: "web", project: { instructions: "" } })).not.toContain("session_history");
+  });
+  it("keeps the discovery nudge when instructions are empty", () => {
+    expect(renderAgentContext({ kind: "web", project: { instructions: "" } })).toContain("propose adding them as project references");
+  });
+});
+
 describe("renderAgentContext web user context", () => {
   it("renders the web user context block", () => {
     expect(renderAgentContext(buildUserContext({ name: "Thinh" }))).toBe(

@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveHomeDir, type FileAttachment, type GatewayConfig } from "@yoplai/shared";
+import { resolveHomeDir, type AgentContext, type FileAttachment, type GatewayConfig } from "@yoplai/shared";
 import type { SdkRunParams } from "../types.js";
 import {
   buildContainerArgs,
   buildVolumeMounts,
   CONTAINER_UPLOADS_DIR,
+  CONTAINER_PROJECT_FILES_DIR,
   getAgentDataDir,
   getRunIpcDir,
   getSessionUploadsDir,
@@ -65,6 +66,13 @@ export function buildContainerLaunchSpec(
         ? `/users/${sessionOwnerId}/sessions/${params.agentId}/${params.sessionId}.jsonl`
         : `/sessions/${params.sessionId}.jsonl`,
       readonly: false,
+    });
+  }
+  if (params.context?.project?.filesPath) {
+    mounts.push({
+      source: fs.realpathSync(params.context.project.filesPath),
+      target: CONTAINER_PROJECT_FILES_DIR,
+      readonly: true,
     });
   }
   const args = buildContainerArgs(
@@ -147,6 +155,16 @@ export function remapAttachmentsToContainer(
       path: path.join(CONTAINER_UPLOADS_DIR, `${attachmentKey(attachment.path)}-${safeName}`),
     };
   });
+}
+
+export function remapProjectContextToContainer(
+  context: AgentContext | undefined
+): AgentContext | undefined {
+  if (!context?.project?.filesPath) return context;
+  return {
+    ...context,
+    project: { ...context.project, filesPath: CONTAINER_PROJECT_FILES_DIR },
+  };
 }
 
 function attachmentKey(filePath: string): string {

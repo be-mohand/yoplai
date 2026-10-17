@@ -1,6 +1,6 @@
 import type { Accessor } from "solid-js";
-import { Show, createMemo, createSignal } from "solid-js";
-import { A } from "@solidjs/router";
+import { Show, createMemo, createSignal, onCleanup, createEffect, on } from "solid-js";
+import { useNavigate, useLocation } from "@solidjs/router";
 import { signOut, useSession } from "./client";
 
 type SidebarAccountPanelProps = {
@@ -22,13 +22,19 @@ function initialsFor(name: string | null | undefined): string {
 
 export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
   const session = useSession();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [isSigningOut, setIsSigningOut] = createSignal(false);
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  let menuRef: HTMLDivElement | undefined;
+  let buttonRef: HTMLButtonElement | undefined;
   const user = createMemo(
     () => (session().data?.user ?? null) as SessionUser | null
   );
 
   async function handleSignOut() {
     setIsSigningOut(true);
+    setMenuOpen(false);
     try {
       await signOut();
     } finally {
@@ -36,48 +42,193 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
     }
   }
 
+  function handleClickOutside(event: MouseEvent) {
+    if (
+      menuRef &&
+      buttonRef &&
+      !menuRef.contains(event.target as Node) &&
+      !buttonRef.contains(event.target as Node)
+    ) {
+      setMenuOpen(false);
+    }
+  }
+
+  function handleEscape(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      setMenuOpen(false);
+      buttonRef?.focus();
+    }
+  }
+
+  createEffect(() => {
+    if (menuOpen()) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleEscape);
+      onCleanup(() => {
+        document.removeEventListener("mousedown", handleClickOutside);
+        document.removeEventListener("keydown", handleEscape);
+      });
+    }
+  });
+
+  // Close menu on route change
+  createEffect(on(() => location.pathname, () => setMenuOpen(false)));
+
   return (
     <Show when={user()}>
       {(currentUser) => (
         <>
-          <div class="sidebar-account">
-            <div class="sidebar-account-avatar" aria-hidden="true">
-              <Show
-                when={currentUser().image}
-                fallback={<span>{initialsFor(currentUser().name)}</span>}
+          <div class="sidebar-account sidebar-account--menu">
+              <button
+                ref={buttonRef}
+                class="sidebar-account-toggle"
+                type="button"
+                onClick={() => setMenuOpen(!menuOpen())}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen()}
+                aria-label="Account menu"
               >
-                <img src={currentUser().image!} alt="" />
+                <div class="sidebar-account-avatar" aria-hidden="true">
+                  <Show
+                    when={currentUser().image}
+                    fallback={<span>{initialsFor(currentUser().name)}</span>}
+                  >
+                    <img src={currentUser().image!} alt="" />
+                  </Show>
+                </div>
+                <div class="sidebar-account-body">
+                  <div class="sidebar-account-name">
+                    {currentUser().name ?? "Signed in"}
+                  </div>
+                  <div class="sidebar-account-email">{currentUser().email}</div>
+                </div>
+                <i
+                  class={`fa-solid ${menuOpen() ? "fa-chevron-down" : "fa-chevron-up"}`}
+                  aria-hidden="true"
+                />
+              </button>
+              <Show when={menuOpen()}>
+                <div ref={menuRef} class="account-menu" role="menu">
+                  <button
+                    type="button"
+                    class="account-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate("/account/connections");
+                    }}
+                  >
+                    <i class="fa-solid fa-plug" aria-hidden="true" />
+                    Account connections
+                  </button>
+                  <button
+                    type="button"
+                    class="account-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate("/archive");
+                    }}
+                  >
+                    <i class="fa-solid fa-box-archive" aria-hidden="true" />
+                    Archive
+                  </button>
+                  <hr class="account-menu-separator" />
+                  <button
+                    type="button"
+                    class="account-menu-item"
+                    role="menuitem"
+                    onClick={() => void handleSignOut()}
+                    disabled={isSigningOut()}
+                  >
+                    <i class="fa-solid fa-right-from-bracket" aria-hidden="true" />
+                    {isSigningOut() ? "Logging out..." : "Logout"}
+                  </button>
+                </div>
               </Show>
-            </div>
-            <div class="sidebar-account-body">
-              <div class="sidebar-account-name">
-                {currentUser().name ?? "Signed in"}
-              </div>
-              <div class="sidebar-account-email">{currentUser().email}</div>
-              <A class="sidebar-account-settings" href="/account/connections">Account connections</A>
-            </div>
-            <button
-              class="sidebar-account-logout"
-              type="button"
-              onClick={() => void handleSignOut()}
-              disabled={isSigningOut()}
-              aria-label="Log out"
-              title="Log out"
-            >
-              <span class="sidebar-account-logout-full">
-                {isSigningOut() ? "..." : "Logout"}
-              </span>
-              <span class="sidebar-account-logout-short">↗</span>
-            </button>
           </div>
           <style>{`
             .sidebar-account {
+              position: relative;
               display: grid;
               grid-template-columns: auto minmax(0, 1fr) auto;
               align-items: center;
               gap: 10px;
               padding: 0 0 8px;
               margin-bottom: 6px;
+            }
+
+            .sidebar-account-toggle {
+              display: grid;
+              grid-template-columns: auto minmax(0, 1fr) auto;
+              align-items: center;
+              gap: 10px;
+              width: 100%;
+              padding: 0;
+              border: none;
+              background: transparent;
+              cursor: pointer;
+              text-align: left;
+              transition: opacity 0.2s ease;
+            }
+
+            .sidebar-account-toggle:hover {
+              opacity: 0.8;
+            }
+
+            .sidebar-account-toggle i {
+              color: var(--text-secondary);
+              font-size: 12px;
+            }
+
+            .account-menu {
+              position: absolute;
+              bottom: calc(100% + 4px);
+              left: 0;
+              right: 0;
+              background: var(--bg-raised);
+              border: 1px solid var(--border-default);
+              border-radius: 8px;
+              padding: 4px 0;
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+              z-index: 100;
+            }
+
+            .account-menu-item {
+              display: flex;
+              align-items: center;
+              gap: 10px;
+              width: 100%;
+              padding: 8px 12px;
+              border: none;
+              background: transparent;
+              color: var(--text-primary);
+              font-size: 13px;
+              font-family: inherit;
+              text-align: left;
+              cursor: pointer;
+              transition: background 0.15s ease;
+            }
+
+            .account-menu-item:hover:not(:disabled) {
+              background: var(--bg-surface);
+            }
+
+            .account-menu-item:disabled {
+              opacity: 0.6;
+              cursor: default;
+            }
+
+            .account-menu-item i {
+              width: 16px;
+              text-align: center;
+              color: var(--text-secondary);
+            }
+
+            .account-menu-separator {
+              margin: 4px 0;
+              border: none;
+              border-top: 1px solid var(--border-default);
             }
 
             .sidebar-account-avatar {
@@ -122,71 +273,24 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
               font-size: 12px;
             }
 
-            .sidebar-account-settings {
-              display: inline-block;
-              margin-top: 3px;
-              color: var(--text-secondary);
-              font-size: 11px;
-              text-decoration: none;
-            }
-
-            .sidebar-account-settings:hover {
-              color: var(--text-primary);
-            }
-
-            .sidebar-account-logout {
-              border: none;
-              background: transparent;
-              color: var(--text-secondary);
-              cursor: pointer;
-              padding: 6px 8px;
-              border-radius: 8px;
-              transition: background 0.2s ease, color 0.2s ease;
-              white-space: nowrap;
-            }
-
-            .sidebar-account-logout:hover:not(:disabled) {
-              background: var(--bg-raised);
-              color: var(--text-primary);
-            }
-
-            .sidebar-account-logout:disabled {
-              cursor: default;
-              opacity: 0.6;
-            }
-
-            .sidebar-account-logout-short {
-              display: none;
-            }
-
-            .agent-sidebar.collapsed .sidebar-account {
+            .agent-sidebar.collapsed .sidebar-account--menu .sidebar-account-toggle {
               grid-template-columns: 1fr;
               justify-items: center;
-              padding-bottom: 4px;
             }
 
-            .agent-sidebar.collapsed .sidebar-account-body,
-            .agent-sidebar.collapsed .sidebar-account-logout-full {
+            .agent-sidebar.collapsed .sidebar-account--menu .sidebar-account-body,
+            .agent-sidebar.collapsed .sidebar-account--menu i {
               display: none;
             }
 
-            .agent-sidebar.collapsed .sidebar-account-logout-short {
-              display: inline;
-            }
-
-            .agent-sidebar.collapsed:hover .sidebar-account {
+            .agent-sidebar.collapsed:hover .sidebar-account--menu .sidebar-account-toggle {
               grid-template-columns: auto minmax(0, 1fr) auto;
               justify-items: stretch;
-              padding-bottom: 8px;
             }
 
-            .agent-sidebar.collapsed:hover .sidebar-account-body,
-            .agent-sidebar.collapsed:hover .sidebar-account-logout-full {
+            .agent-sidebar.collapsed:hover .sidebar-account--menu .sidebar-account-body,
+            .agent-sidebar.collapsed:hover .sidebar-account--menu i {
               display: block;
-            }
-
-            .agent-sidebar.collapsed:hover .sidebar-account-logout-short {
-              display: none;
             }
           `}</style>
         </>

@@ -426,6 +426,172 @@ describe("api core session resolution", () => {
     expect(body.items[1]).toMatchObject({ title: "renamed", avatar: "🦊" });
   });
 
+  it("round-trips append-only pins and reads the latest metadata without changing recency", async () => {
+    const sessionsDir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    getSessionEntry.mockResolvedValue(null);
+    const file = path.join(sessionsDir, "alpha-pinnable.jsonl");
+    const history = JSON.stringify({
+      type: "history", role: "user", timestamp: Date.now(),
+      content: [{ type: "text", text: "Keep this chat" }],
+    }) + "\n";
+    await fs.writeFile(file, history);
+    const { api } = await import("./api.core.js");
+    const list = async () => {
+      const response = await api.request(new Request("http://localhost/agents/sessions"));
+      return (await response.json()).items[0];
+    };
+    const initial = await list();
+    expect(initial.pinned).toBeNull();
+    const patch = (body: unknown) => api.request(new Request(
+      "http://localhost/agents/alpha/sessions/pinnable", {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ));
+    const pin = await patch({ pinned: true, title: "Saved" });
+    expect(pin.status).toBe(200);
+    expect((await pin.json()).pinned).toEqual(expect.any(Number));
+    expect(await list()).toMatchObject({ title: "Saved", pinned: expect.any(Number), lastActivity: initial.lastActivity });
+    expect((await patch({ pinned: false })).status).toBe(200);
+    expect(await list()).toMatchObject({ title: "Saved", pinned: null, lastActivity: initial.lastActivity });
+    expect((await patch({ pinned: true })).status).toBe(200);
+    expect((await list()).pinned).toEqual(expect.any(Number));
+    const raw = await fs.readFile(file, "utf8");
+    expect(raw.startsWith(history)).toBe(true);
+    expect(raw.trim().split("\n").map((line) => JSON.parse(line)).filter((entry) => entry.key === "pinned").map((entry) => entry.value)).toEqual([expect.any(Number), null, expect.any(Number)]);
+    expect((await patch({ pinned: "yes" })).status).toBe(400);
+    expect(await fs.readFile(file, "utf8")).toBe(raw);
+  });
+
+  it("archives sessions, guards MAIN, and filters with includeArchived query param", async () => {
+    const sessionsDir = "/tmp/yoplai-test/history";
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    const history = JSON.stringify({
+      type: "history", role: "user", timestamp: Date.now(),
+      content: [{ type: "text", text: "Archive test" }],
+    }) + "\n";
+    await fs.writeFile(path.join(sessionsDir, "alpha-archivable.jsonl"), history);
+    await fs.writeFile(path.join(sessionsDir, "alpha-main.jsonl"), history);
+    getSessionEntry.mockImplementation(async (agentId: string, key: string) => {
+      if (key === "main") return { sessionId: "main", updatedAt: Date.now() };
+      return null;
+    });
+    const { api } = await import("./api.core.js");
+    const list = async (includeArchived = false) => {
+      const url = includeArchived ? "http://localhost/agents/sessions?includeArchived=1" : "http://localhost/agents/sessions";
+      const response = await api.request(new Request(url));
+      return (await response.json()).items;
+    };
+    const patch = (sessionId: string, body: unknown) => api.request(new Request(
+      `http://localhost/agents/alpha/sessions/${sessionId}`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ));
+    const initial = await list();
+    expect(initial.length).toBe(2);
+    expect(initial.every((s: { archived: unknown }) => s.archived === null)).toBe(true);
+    const archive = await patch("archivable", { archived: true });
+    expect(archive.status).toBe(200);
+    expect((await archive.json()).archived).toEqual(expect.any(Number));
+    const afterArchive = await list();
+    expect(afterArchive.length).toBe(1);
+    expect(afterArchive[0].sessionId).toBe("main");
+    const withArchived = await list(true);
+    expect(withArchived.length).toBe(2);
+    const archivedSession = withArchived.find((s: { sessionId: string }) => s.sessionId === "archivable");
+    expect(archivedSession?.archived).toEqual(expect.any(Number));
+    const restore = await patch("archivable", { archived: false });
+    expect(restore.status).toBe(200);
+    expect((await restore.json()).archived).toBeNull();
+    expect((await list()).length).toBe(2);
+    const archiveMain = await patch("main", { archived: true });
+    expect(archiveMain.status).toBe(400);
+    expect((await archiveMain.json()).error).toBe("Main session cannot be archived");
+    expect((await patch("archivable", { archived: "yes" })).status).toBe(400);
+  });
+
+  it("scopes project CRUD and session membership to the requester, preserving chats on deletion", async () => {
+    await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
+    const { api } = await import("./api.core.js");
+    multiUserState.loaded = true;
+    const asUser = (id: string) => {
+      multiUserState.authContext = { user: { id }, session: { id: `session-${id}`, userId: id } };
+    };
+    const request = (url: string, method = "GET", body?: unknown) => api.request(new Request(`http://localhost${url}`, {
+      method, headers: { "content-type": "application/json" },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    }));
+    asUser("alice");
+    expect((await request("/chat-projects", "POST", { name: " " })).status).toBe(400);
+    const { setProjectInstructionsDepsForTests, resetProjectInstructionsDepsForTests } = await import("../maintenance/project-instructions.js");
+    setProjectInstructionsDepsForTests({ complete: async () => "Drafted instructions" });
+    asUser("purpose-user");
+    const purposeProject = await (await request("/chat-projects", "POST", { name: "Purposeful" })).json();
+    expect(purposeProject.instructions).toBeUndefined();
+    expect((await request(`/chat-projects/${purposeProject.id}/instructions/draft`, "POST", { purpose: 5 })).status).toBe(400);
+    expect((await request(`/chat-projects/${purposeProject.id}/instructions/draft`, "POST", { purpose: "  " })).status).toBe(400);
+    expect((await request("/chat-projects/missing/instructions/draft", "POST", { purpose: "Q3 deck" })).status).toBe(404);
+    const drafted = await request(`/chat-projects/${purposeProject.id}/instructions/draft`, "POST", { purpose: "Q3 deck" });
+    expect(drafted.status).toBe(200);
+    expect(await drafted.json()).toMatchObject({ id: purposeProject.id, instructions: "Drafted instructions" });
+    asUser("alice");
+    expect((await request(`/chat-projects/${purposeProject.id}/instructions/draft`, "POST", { purpose: "Q3 deck" })).status).toBe(404);
+    resetProjectInstructionsDepsForTests();
+    const created = await request("/chat-projects", "POST", { name: "Research" });
+    expect(created.status).toBe(201);
+    const project = await created.json();
+    expect(await (await request(`/chat-projects/${project.id}`)).json()).toEqual(project);
+    expect(await (await request(`/chat-projects/${project.id}`, "PATCH", { name: "Work" })).json()).toMatchObject({ name: "Work" });
+    expect(await (await request(`/chat-projects/${project.id}`, "PATCH", { instructions: "Use primary sources." })).json()).toMatchObject({ name: "Work", instructions: "Use primary sources." });
+    expect((await request(`/chat-projects/${project.id}`, "PATCH", { instructions: 5 })).status).toBe(400);
+    expect(await (await request(`/chat-projects/${project.id}`, "PATCH", { instructions: "" })).json()).toMatchObject({ instructions: "" });
+    loadConfigValue.agents = [{ id: "alpha" }];
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    getSessionEntry.mockResolvedValue(null);
+    const dir = "/tmp/yoplai-test/sessions/users/alice/history";
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, "alpha-groupable.jsonl");
+    await fs.writeFile(file, JSON.stringify({ type: "history", role: "user", timestamp: 1000, content: [{ type: "text", text: "Hello" }] }) + "\n");
+    const sessionUrl = "/agents/alpha/sessions/groupable";
+    const list = async () => (await (await request("/agents/sessions")).json()).items[0];
+    const initial = await list();
+    expect(initial).toMatchObject({ projectId: null });
+    expect((await request(sessionUrl, "PATCH", { projectId: project.id })).status).toBe(200);
+    expect(await list()).toMatchObject({ projectId: project.id, lastActivity: initial.lastActivity });
+    expect((await request(sessionUrl, "PATCH", { projectId: "../escape", title: "Wrong" })).status).toBe(400);
+    expect((await request(sessionUrl, "PATCH", { projectId: "missing" })).status).toBe(404);
+    expect((await request(sessionUrl, "PATCH", { projectId: 42 })).status).toBe(400);
+    expect((await request(sessionUrl, "PATCH", { projectId: null })).status).toBe(200);
+    expect(await list()).toMatchObject({ projectId: null });
+    expect((await request(sessionUrl, "PATCH", { projectId: project.id })).status).toBe(200);
+    asUser("bob");
+    expect(await (await request("/chat-projects")).json()).toEqual({ items: [] });
+    for (const method of ["GET", "PATCH", "DELETE"]) {
+      expect((await request(`/chat-projects/${project.id}`, method, method === "PATCH" ? { name: "Stolen" } : undefined)).status).toBe(404);
+    }
+    await fs.mkdir("/tmp/yoplai-test/sessions/users/bob/history", { recursive: true });
+    await fs.writeFile("/tmp/yoplai-test/sessions/users/bob/history/alpha-groupable.jsonl", await fs.readFile(file));
+    expect((await request(sessionUrl, "PATCH", { projectId: project.id })).status).toBe(404);
+    asUser("alice");
+    const removedAgentFile = path.join(dir, "removed-agent-archived.jsonl");
+    await fs.writeFile(removedAgentFile, await fs.readFile(file));
+    expect((await request(`/chat-projects/${project.id}`, "DELETE")).status).toBe(200);
+    expect(await list()).toMatchObject({ projectId: null, lastActivity: initial.lastActivity, messageCount: 1 });
+    expect((await fs.readFile(removedAgentFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).at(-1)).toMatchObject({ key: "project", value: null });
+    expect(await fs.readFile("/tmp/yoplai-test/sessions/users/bob/history/alpha-groupable.jsonl", "utf8")).toContain(project.id);
+    expect(await (await request("/chat-projects")).json()).toEqual({ items: [] });
+    multiUserState.loaded = false;
+    multiUserState.authContext = null;
+    expect((await request("/chat-projects", "POST", { name: "Personal" })).status).toBe(201);
+    expect((await (await request("/chat-projects")).json()).items).toHaveLength(1);
+  });
+
   it("excludes ephemeral compact sessions from the sidebar listing", async () => {
     const sessionsDir = "/tmp/yoplai-test/history";
     await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });

@@ -64,7 +64,7 @@ describe("completeMaintenance", () => {
 
   it("uses the configured maintenance model", async () => {
     const modelRuntime = runtime();
-    const completeSimple = vi.fn(async () => ({ content: [{ type: "text", text: "  Session topic  " }] }));
+    const completeSimple = vi.fn(async (_model: unknown, _context: unknown, _options: Record<string, unknown>) => ({ content: [{ type: "text", text: "  Session topic  " }] }));
 
     await expect(completeMaintenance(params(), {
       getConfig: () => config({ provider: "maintenance-provider", model: "maintenance-model" }),
@@ -74,7 +74,8 @@ describe("completeMaintenance", () => {
     })).resolves.toBe("Session topic");
 
     expect(modelRuntime.getModel).toHaveBeenCalledWith("maintenance-provider", "maintenance-model");
-    expect(completeSimple).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ systemPrompt: "Return a label" }), expect.objectContaining({ temperature: 0, maxRetries: 0 }));
+    expect(completeSimple).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ systemPrompt: "Return a label" }), expect.objectContaining({ maxRetries: 0 }));
+    expect(completeSimple.mock.calls[0][2]).not.toHaveProperty("temperature");
   });
 
   it("falls back to the session agent model", async () => {

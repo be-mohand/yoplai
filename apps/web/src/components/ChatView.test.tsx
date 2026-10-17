@@ -18,6 +18,7 @@ const {
   fetchFullHistoryMock,
   fetchAgentStatusesMock,
   fetchCapabilitiesMock,
+  fetchAgentSessionsMock,
   getSessionKeyMock,
   postAbortMock,
   postCompactMock,
@@ -25,6 +26,7 @@ const {
   subscribeToSessionMock,
   subscribeToRealtimeMock,
   uploadFilesMock,
+  fetchChatProjectMock,
   routeState,
 } = vi.hoisted(() => ({
   fetchAgentMock: vi.fn(),
@@ -33,6 +35,7 @@ const {
   fetchFullHistoryMock: vi.fn(),
   fetchAgentStatusesMock: vi.fn(),
   fetchCapabilitiesMock: vi.fn(),
+  fetchAgentSessionsMock: vi.fn(),
   getSessionKeyMock: vi.fn(),
   postAbortMock: vi.fn(),
   postCompactMock: vi.fn(),
@@ -40,9 +43,11 @@ const {
   subscribeToSessionMock: vi.fn(),
   subscribeToRealtimeMock: vi.fn(),
   uploadFilesMock: vi.fn(),
+  fetchChatProjectMock: vi.fn(),
   routeState: {
     view: undefined as string | undefined,
     session: undefined as string | undefined,
+    project: undefined as string | undefined,
   },
 }));
 
@@ -52,6 +57,7 @@ vi.mock("@solidjs/router", () => ({
   useParams: () => ({ agentId: "agent-1", view: routeState.view }),
   useSearchParams: () => [
     {
+      get project() { return routeState.project; },
       get session() {
         routeVersion();
         return routeState.session;
@@ -68,6 +74,7 @@ vi.mock("../api", () => ({
   fetchFullHistory: fetchFullHistoryMock,
   fetchAgentStatuses: fetchAgentStatusesMock,
   fetchCapabilities: fetchCapabilitiesMock,
+  fetchAgentSessions: fetchAgentSessionsMock,
   getSessionKey: getSessionKeyMock,
   postAbort: postAbortMock,
   postCompact: postCompactMock,
@@ -75,6 +82,10 @@ vi.mock("../api", () => ({
   subscribeToSession: subscribeToSessionMock,
   subscribeToRealtime: subscribeToRealtimeMock,
   uploadFiles: uploadFilesMock,
+}));
+
+vi.mock("../api/chat-projects", () => ({
+  fetchChatProject: fetchChatProjectMock,
 }));
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -161,6 +172,7 @@ describe("ChatView abort handling", () => {
     uploadFilesMock.mockResolvedValue([]);
     routeState.view = undefined;
     routeState.session = undefined;
+    routeState.project = undefined;
     setRouteVersion(0);
   });
 
@@ -217,6 +229,23 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(container.querySelector(".system-message")).not.toBeNull());
     expect(container.textContent?.split(text)).toHaveLength(2);
     expect(container.textContent).not.toContain("Error:");
+    dispose();
+  });
+
+  it("passes the project query to the first run", async () => {
+    routeState.project = "project-1";
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+    const textarea = container.querySelector("textarea")!;
+    textarea.value = "Hello project";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    const button = container.querySelector<HTMLButtonElement>(".send-btn")!;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    button.click();
+    await tick();
+    expect(streamMessageMock.mock.calls[0]?.[7]).toMatchObject({ projectId: "project-1" });
     dispose();
   });
 
@@ -2112,6 +2141,80 @@ describe("ChatView stale-thinking reconciliation", () => {
     // The main chat must stay idle (send button), NOT flip to the Stop button.
     expect(container.querySelector(".stop-btn")).toBeFalsy();
 
+    dispose();
+  });
+});
+
+describe("ChatView project chip", () => {
+  beforeEach(() => {
+    delegateEvents(["click", "input", "keydown"]);
+    Element.prototype.scrollIntoView = vi.fn();
+
+    fetchAgentMock.mockResolvedValue({
+      id: "agent-1",
+      name: "Agent",
+      model: { provider: "openai", model: "gpt-5" },
+    });
+    fetchAgentSuggestionsMock.mockResolvedValue([]);
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [],
+      sessionId: "session-123",
+      thinkingLevel: undefined,
+      isStreaming: false,
+      activeTurn: null,
+    });
+    fetchCapabilitiesMock.mockResolvedValue({
+      version: 2,
+      extensions: {},
+      agents: ["agent-1"],
+      multiUser: false,
+      agentFab: false,
+    });
+    setCapabilitiesForTests({ multiUser: false });
+    getSessionKeyMock.mockReturnValue("main");
+    subscribeToSessionMock.mockImplementation(() => () => {});
+    subscribeToRealtimeMock.mockImplementation(() => () => {});
+    fetchAgentSessionsMock.mockResolvedValue({ items: [] });
+    routeState.view = undefined;
+    routeState.session = undefined;
+    routeState.project = undefined;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    routeState.project = undefined;
+    resetCapabilitiesForTests();
+  });
+
+  it("renders project chip with project name when ?project= is present and links to /p/:id", async () => {
+    routeState.project = "project-123";
+    fetchChatProjectMock.mockResolvedValue({
+      id: "project-123",
+      name: "My Project",
+      instructions: "Some instructions",
+    });
+
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+    await tick();
+
+    const chip = container.querySelector(".chat-project-chip");
+    expect(chip).toBeTruthy();
+    expect(chip?.textContent?.trim()).toContain("My Project");
+    expect(chip?.getAttribute("href")).toBe("/p/project-123");
+    expect(fetchChatProjectMock).toHaveBeenCalledWith("project-123");
+    expect(container.querySelector(".back-btn")?.getAttribute("href")).toBe("/p/project-123");
+
+    routeState.project = undefined;
+    dispose();
+  });
+
+  it("back button returns to the agent list outside a project", async () => {
+    const { container, dispose } = renderView();
+    await tick();
+
+    expect(container.querySelector(".back-btn")?.getAttribute("href")).toBe("/agents");
     dispose();
   });
 });

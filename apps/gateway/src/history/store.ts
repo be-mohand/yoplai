@@ -193,6 +193,44 @@ export async function appendSessionMeta(
   });
 }
 
+/** Read current project membership, tagging only a session without any prior turn. */
+export async function resolveSessionProject(
+  agentId: string,
+  sessionId: string,
+  userId?: string,
+  initialProjectId?: string,
+  validateInitialProject?: (id: string) => Promise<void>
+): Promise<string | null> {
+  return withSessionMetaWrite(agentId, sessionId, userId, async () => {
+    const file = await resolveHistoryFile(agentId, sessionId, userId);
+    const raw = await fs.readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    let projectId: string | null = null;
+    let hasProjectMeta = false;
+    let hasTurn = false;
+    for (const line of raw.split(/\r?\n/)) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === "history" && entry.role === "user") hasTurn = true;
+        if (entry.type === "meta" && entry.key === "project") {
+          hasProjectMeta = true;
+          projectId = typeof entry.value === "string" ? entry.value : null;
+        }
+      } catch {
+        // Ignore malformed history lines, as session summaries do.
+      }
+    }
+    if (!hasTurn && !hasProjectMeta && initialProjectId) {
+      await validateInitialProject?.(initialProjectId);
+      await appendSessionMetaUnlocked(agentId, sessionId, "project", initialProjectId, userId);
+      return initialProjectId;
+    }
+    return projectId;
+  });
+}
+
 async function appendSessionMetaUnlocked(
   agentId: string,
   sessionId: string,

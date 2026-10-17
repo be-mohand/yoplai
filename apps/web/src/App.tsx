@@ -23,8 +23,10 @@ import { AgentCatalog } from "./pages/AgentCatalog";
 import { EditAgent } from "./pages/EditAgent";
 import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { McpServerDetails } from "./pages/McpServerDetails";
+import { ChatProject } from "./pages/ChatProject";
 import { Teams } from "./pages/Teams";
 import { AccountConnections } from "./pages/AccountConnections";
+import { SessionArchive } from "./pages/SessionArchive";
 import {
   ImpersonationBanner,
   impersonationStatus,
@@ -46,6 +48,7 @@ import {
 } from "./lib/web-route-registry";
 import { documentTitle } from "./lib/document-title";
 import { stripBase } from "./lib/path";
+import { ToastHost } from "./lib/toast";
 
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
@@ -241,6 +244,7 @@ function Layout(props: { children?: JSX.Element }) {
           <OnboardingTour />
           <ConnectToolsPrompt />
         </div>
+        <ToastHost />
       </Show>
       <Show
         when={
@@ -457,6 +461,7 @@ export default function App() {
           </GuardedRoute>
         )}
       />
+      <Route path="/p/:id" component={() => <GuardedRoute><LeftNavShell><ChatProject /></LeftNavShell></GuardedRoute>} />
       <Route
         path="/chat/:agentId/:view?"
         component={() => (
@@ -491,6 +496,14 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <AdminMcpServersRouteShell />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/archive"
+        component={() => (
+          <GuardedRoute>
+            <SessionArchive />
           </GuardedRoute>
         )}
       />

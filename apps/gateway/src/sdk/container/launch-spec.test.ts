@@ -13,6 +13,7 @@ import {
   prepareContainerUploads,
   prepareLaunchFilesystem,
   remapAttachmentsToContainer,
+  remapProjectContextToContainer,
   sanitizeFilename,
 } from "./launch-spec.js";
 import type { SdkRunParams } from "../types.js";
@@ -88,6 +89,21 @@ describe("container launch spec", () => {
     expect(mountArgs).not.toContainEqual(expect.stringContaining(`source=${path.join(root, "sessions", agent.id)},`));
     expect(mountSource(spec.args, "/sessions")).toBe(path.join(spec.ipcDir, "sessions"));
     cleanupLaunchFilesystem(spec);
+  });
+
+  it("mounts project originals read-only and remaps their prompt location", () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const filesPath = path.join(root, "project", "files");
+    fs.mkdirSync(filesPath, { recursive: true });
+    fs.writeFileSync(path.join(filesPath, "note.txt"), "project source");
+    const agent = createAgent(root);
+    const params = createParams(agent, "session-1");
+    params.context = { kind: "web", project: { instructions: "", filesPath } };
+    const spec = buildContainerLaunchSpec(params, { agents: [agent], extensions: {} } as GatewayConfig);
+    expect(spec.args).toContain(`type=bind,source=${fs.realpathSync(filesPath)},target=/project-files,readonly`);
+    expect(remapProjectContextToContainer(params.context)?.project?.filesPath).toBe("/project-files");
+    expect(params.context.project?.filesPath).toBe(filesPath);
   });
 
   it("sanitizes names and remaps attachments to container upload paths", () => {

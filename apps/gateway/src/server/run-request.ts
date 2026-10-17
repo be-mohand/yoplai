@@ -27,6 +27,7 @@ export type RawRunRequestInput = {
   sessionKey?: unknown;
   thinkLevel?: unknown;
   attachments?: unknown;
+  projectId?: unknown;
 };
 
 export type RunRequestImmediateEvent = StreamEvent | WsSessionResetEvent;
@@ -108,6 +109,7 @@ export async function normalizeRunRequest({
   defaultSessionId,
 }: NormalizeRunRequestParams): Promise<NormalizedRunRequest> {
   const parsed = SendMessageRequestSchema.safeParse({
+    projectId: input.projectId,
     message: input.message,
     sessionId: input.sessionId,
     sessionKey: input.sessionKey,
@@ -192,6 +194,7 @@ export async function normalizeRunRequest({
         data.sessionId ?? (resolvedSession ? undefined : defaultSessionId),
       sessionKey: resolvedSession ? undefined : (data.sessionKey ?? "main"),
       resolvedSession,
+      projectId: data.projectId,
       thinkLevel: data.thinkLevel as ThinkLevel | undefined,
       context: userContext(authContext),
       extensionRuntime,

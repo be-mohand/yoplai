@@ -213,12 +213,24 @@ function renderUserContext(ctx: UserContext): string {
 }
 
 export function renderAgentContext(ctx: AgentContext): string {
-  if (ctx.kind === "discord") return renderDiscordContext(ctx);
-  if (ctx.kind === "slack") return renderSlackContext(ctx);
-  if (ctx.kind === "telegram") return renderTelegramContext(ctx);
-  if (ctx.kind === "irc") return renderIrcContext(ctx);
-  if (ctx.kind === "web") return renderUserContext(ctx);
-  return "";
+  let rendered = "";
+  if (ctx.kind === "discord") rendered = renderDiscordContext(ctx);
+  if (ctx.kind === "slack") rendered = renderSlackContext(ctx);
+  if (ctx.kind === "telegram") rendered = renderTelegramContext(ctx);
+  if (ctx.kind === "irc") rendered = renderIrcContext(ctx);
+  if (ctx.kind === "web") rendered = renderUserContext(ctx);
+  if (ctx.project) {
+    const block = ["[PROJECT CONTEXT]", ctx.project.instructions,
+      ctx.project.filesPath ? `Project files (read-only): ${ctx.project.filesPath}` : "",
+      ctx.project.files,
+      ctx.project.references ? `Project references:\n${ctx.project.references}` : "",
+      ctx.project.notes ? `Project notes (latest):\n${ctx.project.notes}` : "",
+      ctx.project.sessionHistory ? "session_history: you can list, search and read earlier chats in this project, including those of other agents." : "",
+      "from the project instructions, files and notes, look for additional useful wiki sources and propose adding them as project references",
+      "[END PROJECT CONTEXT]"].filter(Boolean).join("\n");
+    rendered = [rendered, block].filter(Boolean).join("\n\n");
+  }
+  return rendered;
 }
 
 export function buildUserContext(opts: { name?: string | null }): UserContext {

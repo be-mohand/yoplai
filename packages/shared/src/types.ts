@@ -1207,6 +1207,7 @@ export type RunAgentParams = {
   thinkLevel?: ThinkLevel;
   model?: RequiredModelConfig;
   context?: AgentContext;
+  projectId?: string;
   source?: string;
   /** Slack channel/thread/event identity for follow-up delivery envelopes. */
   slackDelivery?: ContainerDeliveryContext["slack"];
@@ -1639,6 +1640,7 @@ export const ExtensionDefinitionSchema = z.object({
 
 // API payloads
 export const SendMessageRequestSchema = z.object({
+  projectId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   message: z.string(),
   sessionId: z.string().optional(), // explicit session ID (bypasses sessionKey resolution)
   sessionKey: z.string().optional(), // logical key (resolved to sessionId with idle timeout)
@@ -1955,6 +1957,7 @@ export type StreamEvent = z.infer<typeof StreamEventSchema>;
 
 // WebSocket protocol types
 export type WsSendMessage = {
+  projectId?: string;
   type: "send";
   agentId: string;
   sessionId?: string; // explicit session ID (bypasses sessionKey resolution)
@@ -2301,12 +2304,13 @@ export type UserContext = {
   name?: string;
 };
 
-export type AgentContext =
+export type AgentContext = (
   | DiscordContext
   | SlackContext
   | TelegramContext
   | IrcContext
-  | UserContext;
+  | UserContext
+) & { project?: { id?: string; instructions: string; filesPath?: string; files?: string; references?: string; notes?: string; sessionHistory?: boolean } };
 
 const ContextHistoryBlockSchema = z.object({
   type: z.literal("history"),
@@ -2384,7 +2388,7 @@ export const AgentContextSchema: z.ZodType<AgentContext> = z.discriminatedUnion(
     }),
     z.object({ kind: z.literal("web"), name: z.string().optional() }),
   ]
-) as z.ZodType<AgentContext>;
+).and(z.object({ project: z.object({ id: z.string().optional(), instructions: z.string(), filesPath: z.string().optional(), files: z.string().optional(), references: z.string().optional(), notes: z.string().optional() }).optional() })) as z.ZodType<AgentContext>;
 
 export const HistoryEventSchema = z.discriminatedUnion("type", [
   z.object({

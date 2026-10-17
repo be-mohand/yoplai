@@ -34,6 +34,7 @@ export const GATEWAY_SOCKET_NAME = "gateway.sock";
 export const CONTAINER_GATEWAY_SOCKET_PATH = `${CONTAINER_GATEWAY_SOCKET_DIR}/${GATEWAY_SOCKET_NAME}`;
 export const CONTAINER_DATA_DIR = "/workspace/data";
 export const CONTAINER_UPLOADS_DIR = "/workspace/uploads";
+export const CONTAINER_PROJECT_FILES_DIR = "/project-files";
 
 function createContainerName(agentId: string): string {
   return `yoplai-agent-${agentId}-${randomUUID()}`;

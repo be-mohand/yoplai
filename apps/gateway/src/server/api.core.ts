@@ -78,6 +78,8 @@ import {
 } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
+import { createChatProjectRoutes } from "../chat-projects/routes.js";
+import { ChatProjectStore, isSafeChatProjectId } from "../chat-projects/store.js";
 import { getOAuthService } from "../oauth/service.js";
 import { readToolLabels } from "../maintenance/tool-labels.js";
 import { loadSuggestions } from "../suggestions/loader.js";
@@ -365,6 +367,7 @@ function contentDispositionFilename(filename: string): string {
 
 // OAuth connect framework (authorize + callback + status/disconnect).
 api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId }));
+api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
 api.route("/", createOAuthRoutes(
   undefined,
   callerHasAgentAccess,
@@ -587,6 +590,7 @@ api.get("/agents/sessions", async (c) => {
   const historyDir = getUserHistoryDir(userId, CONFIG_DIR);
   const agents = await getVisibleAgents(c);
   const agentIds = agents.map((agent) => agent.id);
+  const includeArchived = c.req.query("includeArchived") === "1";
   let entries: Array<{ dir: string; file: string }> = [];
   try {
     entries = (await fs.readdir(historyDir)).map((file) => ({
@@ -615,10 +619,12 @@ api.get("/agents/sessions", async (c) => {
     })
   );
 
+  const filtered = items
+    .filter((item): item is SessionSummary => item !== null)
+    .filter((item) => includeArchived || item.archived === null);
+
   return c.json({
-    items: items
-      .filter((item): item is SessionSummary => item !== null)
-      .sort((a, b) => b.lastActivity - a.lastActivity),
+    items: filtered.sort((a, b) => b.lastActivity - a.lastActivity),
   });
 });
 
@@ -649,7 +655,7 @@ api.delete("/agents/:agentId/sessions/:sessionId", async (c) => {
   return c.json({ ok: true });
 });
 
-// PATCH /api/agents/:agentId/sessions/:sessionId - set session title
+// PATCH /api/agents/:agentId/sessions/:sessionId - update session metadata
 api.patch("/agents/:agentId/sessions/:sessionId", async (c) => {
   const agentId = c.req.param("agentId");
   const sessionId = c.req.param("sessionId");
@@ -667,11 +673,49 @@ api.patch("/agents/:agentId/sessions/:sessionId", async (c) => {
     sessionId,
   });
   if (!filePath) return c.json({ error: "Session not found" }, 404);
-  const body = await c.req.json().catch(() => ({}));
-  const title = typeof body.title === "string" ? body.title.trim() : "";
-  await appendSessionMeta(agentId, sessionId, "title", title, userId);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid session metadata" }, 400);
+  }
+  if (body.pinned !== undefined && typeof body.pinned !== "boolean") {
+    return c.json({ error: "Pinned must be a boolean" }, 400);
+  }
+  if (body.archived !== undefined && typeof body.archived !== "boolean") {
+    return c.json({ error: "Archived must be a boolean" }, 400);
+  }
+  if (body.archived === true) {
+    const main = await getSessionEntry(agentId, "main", userId);
+    if (main?.sessionId === sessionId) {
+      return c.json({ error: "Main session cannot be archived" }, 400);
+    }
+  }
+  if (body.projectId !== undefined && body.projectId !== null) {
+    if (typeof body.projectId !== "string" || !isSafeChatProjectId(body.projectId)) {
+      return c.json({ error: "Invalid project id" }, 400);
+    }
+    if (!await new ChatProjectStore(CONFIG_DIR, userId).get(body.projectId)) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+  }
+  const updates: { title?: string; pinned?: number | null; archived?: number | null; projectId?: string | null } = {};
+  if (body.title !== undefined) {
+    updates.title = typeof body.title === "string" ? body.title.trim() : "";
+    await appendSessionMeta(agentId, sessionId, "title", updates.title, userId);
+  }
+  if (typeof body.pinned === "boolean") {
+    updates.pinned = body.pinned ? Date.now() : null;
+    await appendSessionMeta(agentId, sessionId, "pinned", updates.pinned, userId);
+  }
+  if (typeof body.archived === "boolean") {
+    updates.archived = body.archived ? Date.now() : null;
+    await appendSessionMeta(agentId, sessionId, "archived", updates.archived, userId);
+  }
+  if (body.projectId !== undefined) {
+    updates.projectId = body.projectId;
+    await appendSessionMeta(agentId, sessionId, "project", updates.projectId, userId);
+  }
   invalidateResolvedHistoryFile(agentId, sessionId, userId);
-  return c.json({ ok: true, title });
+  return c.json({ ok: true, ...updates });
 });
 
 // GET /api/agents/:id - get single agent
