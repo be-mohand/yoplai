@@ -837,7 +837,12 @@ export const piAdapter: SdkAdapter = {
       const lastAssistantRecord = lastAssistant as
         | (Record<string, unknown> & AssistantMessage)
         | undefined;
-      if (lastAssistantRecord?.stopReason === "error") {
+      // Pi 1.x reports cancellation during request setup as an error message.
+      const cancelledDuringSetup =
+        aborted &&
+        lastAssistantRecord?.stopReason === "error" &&
+        lastAssistantRecord.errorMessage === "This operation was aborted";
+      if (lastAssistantRecord?.stopReason === "error" && !cancelledDuringSetup) {
         const errorMessage =
           typeof lastAssistantRecord.errorMessage === "string" &&
           lastAssistantRecord.errorMessage

@@ -285,6 +285,44 @@ afterEach(() => {
 });
 
 describe("container adapter", () => {
+  // Startup seams approved by Thinh on ALG-492 (2026-10-17).
+  it.each(["setup", "publication", "runner startup"])("honors cancellation during %s and accepts a later run", async (phase) => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    let releaseSetup = () => {};
+    const setup = new Promise<boolean>((resolve) => {
+      releaseSetup = () => resolve(false);
+    });
+    vi.mocked(ensureWorkspaceFiles).mockReturnValueOnce(setup);
+    const controller = new AbortController();
+    const params = {
+      ...createParams(agent),
+      abortSignal: controller.signal,
+      onSessionHandle: () => {
+        if (phase === "publication") controller.abort();
+      },
+    };
+
+    const run = getContainerAdapter().run(params);
+    if (phase === "setup") controller.abort();
+    releaseSetup();
+    if (phase === "runner startup") {
+      await tick();
+      controller.abort();
+    }
+
+    await expect(run).resolves.toEqual({ text: "", aborted: true });
+    const later = getContainerAdapter().run(createParams(agent));
+    await tick();
+    processes[1].emitOutput({ text: "later-ok" });
+    processes[1].finish(0);
+    await expect(later).resolves.toEqual({ text: "later-ok", aborted: undefined });
+  });
+
   it("spawns docker and writes ContainerInput to stdin", async () => {
     const root = tempDir();
     const homeDir = path.join(root, "yoplai");

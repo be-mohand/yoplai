@@ -212,6 +212,7 @@ const LARGE_TOOL_RESULT_THRESHOLD = 20_000;
 const LARGE_TOOL_RESULT_PREVIEW_LENGTH = 2_000;
 
 let activeSession: AgentSession | undefined;
+let activeAbortRequested = false;
 let pendingFollowUps: string[] = [];
 // Follow-ups stay buffered until the initial prompt's agent run has started.
 // Sending them earlier would start a separate run on the idle session that
@@ -310,6 +311,7 @@ async function steerPendingFollowUps(session: AgentSession): Promise<void> {
 }
 
 export function abortActiveAgent(): void {
+  if (activeSession) activeAbortRequested = true;
   void activeSession?.abort();
 }
 
@@ -326,6 +328,7 @@ export async function runAgent(
   );
 
   activeSession = undefined;
+  activeAbortRequested = false;
   activeOAuthContext = undefined;
   initialRunStarted = false;
 
@@ -631,7 +634,13 @@ export async function runAgent(
     const lastAssistantRecord = lastAssistant as
       | (Record<string, unknown> & AssistantMessage)
       | undefined;
-    if (lastAssistantRecord?.stopReason === "error") {
+    // Pi 1.x reports cancellation during request setup as an error message.
+    const cancelledDuringSetup =
+      activeAbortRequested &&
+      lastAssistantRecord?.stopReason === "error" &&
+      lastAssistantRecord.errorMessage === "This operation was aborted";
+    if (cancelledDuringSetup) aborted = true;
+    if (lastAssistantRecord?.stopReason === "error" && !cancelledDuringSetup) {
       const message =
         typeof lastAssistantRecord.errorMessage === "string" &&
         lastAssistantRecord.errorMessage

@@ -51,6 +51,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Pi startup cancellation remains an aborted run after the SDK 1.3 upgrade instead of becoming an agent error, on host and sandbox agents.
 - Maintenance-model calls (session auto-titles, tool labels, project instruction drafts) no longer send `temperature`, which reasoning models such as `openai-codex` reject with "Unsupported parameter: temperature".
 - Threadit: a download cannot write outside the workspace through a symlink. Sandbox uploads read `/workspace/data` and `/workspace/uploads`. A disabled agent drops its token. An agent that enables Threadit later gets a poller without a restart.
 - Slack's default `threadPolicy: always` keeps each opener and all thread replies in one persisted session owned by the opener, retaining attachments while each sender uses their own credentials; different senders wait for separate turns.

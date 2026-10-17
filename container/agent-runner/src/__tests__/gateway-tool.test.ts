@@ -3,9 +3,9 @@ import { createServer } from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ContainerInput } from "@yoplai/shared";
 import { gatewayTool } from "../gateway-tool.js";
+import { createToolContext } from "./tool-context.js";
 
 const input = {
   gatewayUrl: "http://gateway:3000",
@@ -35,7 +35,7 @@ function createTool(turnDeadlineAt?: number) {
       id: string,
       args: Record<string, unknown>,
       signal?: AbortSignal
-    ) => tool.execute(id, args, signal, undefined, {} as ExtensionContext),
+    ) => tool.execute(id, args, signal, undefined, createToolContext()),
   };
 }
 
@@ -181,11 +181,11 @@ describe("gateway tool deadlines", () => {
           { timeout: 0.05 },
           undefined,
           undefined,
-          {} as ExtensionContext
+          createToolContext()
         )
       ).rejects.toThrow("tool test_tool timed out after 0.05s");
       await expect(
-        tool.execute("next", {}, undefined, undefined, {} as ExtensionContext)
+        tool.execute("next", {}, undefined, undefined, createToolContext())
       ).resolves.toMatchObject({ details: { ok: true } });
       expect(requests).toEqual([
         {
