@@ -286,12 +286,23 @@ export class ThreaditPoller {
     }
   }
 
+  /** True when live config is gone or has another account. Then the batch is stale. */
+  private configChanged(): boolean {
+    if (!this.readConfig) return false;
+    const latest = this.readConfig();
+    return (
+      !latest ||
+      latest.token !== this.config.token ||
+      latest.baseUrl !== this.config.baseUrl
+    );
+  }
+
   private async resumeProcessing(): Promise<boolean> {
     const items = await this.listAttention("processing");
     if (!items) return false;
     let complete = true;
     for (const item of items.sort((a, b) => a.id - b.id)) {
-      if (this.stopped) return false;
+      if (this.stopped || this.configChanged()) return false;
       if (this.handled.has(item.id)) continue;
       const state = sessionOf(item, this.meId)?.state ?? "";
       if (state === "working" || state === "stale") {
@@ -316,7 +327,7 @@ export class ThreaditPoller {
           : 1
     );
     for (const item of items) {
-      if (this.stopped) return;
+      if (this.stopped || this.configChanged()) return;
       if (!this.handled.has(item.id)) await this.handleItem(item, false);
     }
   }

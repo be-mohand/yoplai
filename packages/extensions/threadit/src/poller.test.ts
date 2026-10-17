@@ -883,6 +883,78 @@ describe("ThreaditPoller", () => {
       expect(replies(board)).toEqual([]);
     });
 
+    it.each(["unacknowledged", "processing"] as const)(
+      "discards the rest of a %s batch when disabled during item 1",
+      async (status) => {
+        let latest: ReturnType<typeof config> | undefined = config("tok");
+        let finish: (() => void) | undefined;
+        const items =
+          status === "processing"
+            ? [message(3, { agent_sessions: [session()] }), message(4, { agent_sessions: [session()] })]
+            : [message(3), message(4)];
+        const { runAgent, poller } = setup(
+          { [status]: items },
+          () =>
+            new Promise<RunAgentResult>((resolve) => {
+              finish = () => resolve(okResult("Hello"));
+            }),
+          { token: "tok", readConfig: () => latest }
+        );
+        poller.start();
+        await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+        latest = undefined;
+        finish?.();
+        await settle(120);
+        expect(runAgent).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it("runs once across disable and re-enable, and recovers with the rebuilt client", async () => {
+      let latest: ReturnType<typeof config> | undefined = config("tok");
+      let finish: (() => void) | undefined;
+      const { board, runAgent, poller } = setup(
+        { unacknowledged: [message(3)] },
+        () =>
+          new Promise<RunAgentResult>((resolve) => {
+            finish = () => resolve(okResult("Hello"));
+          }),
+        { token: "tok", readConfig: () => latest }
+      );
+      poller.start();
+      await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+      latest = undefined;
+      finish?.();
+      await waitFor(() => expect(replies(board).length).toBe(1));
+      board.unacknowledged.length = 0;
+      await settle(60);
+      latest = config("tok");
+      board.calls.length = 0;
+      board.processing = [message(5, { agent_sessions: [session()] })];
+      await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(2));
+      expect(board.calls.length).toBeGreaterThan(0);
+      expect(new Set(board.calls.map((c) => c.auth))).toEqual(new Set(["Bearer tok"]));
+    });
+
+    it("aborts a turn that started before disable when the poller shuts down", async () => {
+      let latest: ReturnType<typeof config> | undefined = config("tok");
+      let signal: AbortSignal | undefined;
+      const { runAgent, poller } = setup(
+        { unacknowledged: [message(3)] },
+        (params) => {
+          signal = params.signal;
+          return abortable(params);
+        },
+        { token: "tok", readConfig: () => latest }
+      );
+      poller.start();
+      await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+      latest = undefined;
+      await settle(40);
+      expect(signal?.aborted).toBe(false);
+      await poller.stop();
+      expect(signal?.aborted).toBe(true);
+    });
+
     it("stops after disable", async () => {
       let latest: ReturnType<typeof config> | undefined = config("tok");
       const { board, poller } = setup({}, async () => okResult("x"), {
