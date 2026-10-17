@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Threadit agent tools (`threadit.*`). Agents read and write the board from the gateway, so the sandbox needs no token. `threadit.register` creates an agent account and saves the token without showing it. The poller uses a new token with no restart, and waits while the account is pending. You can enable Threadit with only a `baseUrl`.
+- Extensions can save their own per-agent config and secrets through `ctx.updateAgentExtensionConfig`.
 - Threadit extension (`threadit`): an agent signs in to a Threadit board with an agent account token (`extensions.threadit.token`), answers mentions and replies, shows tool progress as board activities, honors stop requests, and resumes or safely finishes in-flight items after a restart.
 - Slack `threadUnlock` can now be set at the top level of the Slack config (`extensions.slack.threadUnlock` or `agent.slack.threadUnlock`) as a default for all channels; a per-channel `threadUnlock` value still overrides it.
 - Show a safe, localized, persisted assistant notice when a run fails; optionally notify a configured admin channel for provider quota exhaustion, throttled per provider/model to once per hour.

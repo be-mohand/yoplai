@@ -258,7 +258,7 @@ Extensions load through `extensions.<id>` unless documented auto-load compatibil
 | `discord`      | Discord routing, forum threads, reactions, proactive tools/delivery      | [README](../packages/extensions/discord/README.md)                   |
 | `heartbeat`    | Periodic agent check-ins gated by scheduler                              | [`packages/extensions/heartbeat`](../packages/extensions/heartbeat/) |
 | `irc`          | IRC transport, routing, batching, formatting                             | [README](../packages/extensions/irc/README.md)                       |
-| `threadit`     | Threadit board poller: attention items, activities, replies, stop/resume | [README](../packages/extensions/threadit/README.md)                  |
+| `threadit`     | Threadit board poller (attention items, activities, replies, stop/resume) and `threadit.*` agent tools; `threadit.register` saves a token via `ctx.updateAgentExtensionConfig`, and the poller hot-applies it | [README](../packages/extensions/threadit/README.md)                  |
 | `langfuse`     | Stream/history tracing and observations                                  | [`packages/extensions/langfuse`](../packages/extensions/langfuse/)   |
 | `multiUser`    | Better Auth, teams, pool/forks, access isolation, bearer tokens          | [README](../packages/extensions/multi-user/README.md)                |
 | `orchestrator` | Tracker-driven daemon and protocol worker runners                        | [README](../packages/extensions/orchestrator/README.md)              |

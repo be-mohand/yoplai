@@ -32,7 +32,7 @@ Some messaging transports retain supported per-agent compatibility config. Webho
 | `multiUser`    | Better Auth, teams, agent forks, isolation | [package README](../packages/extensions/multi-user/README.md)                               |
 | `orchestrator` | Tracker-backed autonomous workers          | [package README](../packages/extensions/orchestrator/README.md)                             |
 | `projects`     | Projects, slices, subagents, Space         | [Projects guide](projects.md) / [package README](../packages/extensions/projects/README.md) |
-| `threadit`     | Threadit board agent (polling channel)     | [package README](../packages/extensions/threadit/README.md)                                 |
+| `threadit`     | Threadit board agent (poller and `threadit.*` tools) | [package README](../packages/extensions/threadit/README.md)                                 |
 | `scheduler`    | Cron, scripts, delivery                    | [Scheduling](scheduling.md) / [package README](../packages/extensions/scheduler/README.md)  |
 | `slack`        | Slack Socket Mode transport                | [package README](../packages/extensions/slack/README.md)                                    |
 | `subagents`    | Project-agnostic CLI runs                  | [package README](../packages/extensions/subagents/README.md)                                |
@@ -62,6 +62,8 @@ Personal token fields are encrypted in `$YOPLAI_HOME/credentials` using `oauth.e
 The existing `PATCH /api/agents/:id/extensions/:extensionId` endpoint accepts `{"credentialScope":"personal","config":{"email":"<you>"},"secrets":{"apiToken":"<token>"}}`. Personal scope accepts any declared config field; `config` replaces your previous setting overrides, while secrets merge; the server derives the user from authentication and rejects a supplied `userId`. `credentialScope: "team"` or an omitted scope uses the existing config/env writer and requires an admin in multi-user mode. The catalog includes `personalSecretFields` (names only), `personalConfigValues` (your setting overrides), and `canConfigureTeam` for token-backed extensions in multi-user mode.
 
 To unset credentials, the extension form shows **Remove my credentials** (Just me) or **Remove team credentials** (Whole team, admins). Personal removal uses `DELETE /api/agents/:id/connections/extension/:extensionId` and clears all your values for that extension. Team removal uses `DELETE /api/agents/:id/extensions/:extensionId/credentials`, which drops the secret fields from `agent.yaml` (and the `.env` values Yoplai wrote for them) while keeping non-secret settings and the enabled flag. Secrets configured at the gateway root are not affected.
+
+An extension can also save its own per-agent config. It calls `ctx.updateAgentExtensionConfig(agentId, extensionId, patch)`. The patch has the same shape as the REST write: `enabled`, `config`, `secrets`, and `removeSecrets`. The host writes `agent.yaml` and the agent `.env`, then reloads the config. An extension can write only its own `extensionId`. Threadit uses this in `threadit.register`.
 
 ## Multi-user mode
 
