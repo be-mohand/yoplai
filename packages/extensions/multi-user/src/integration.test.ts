@@ -443,6 +443,7 @@ describe("multi-user integration", () => {
         agents: ["main"],
         multiUser: false,
         agentFab: false,
+        enableCronMonitoring: false,
         forkedAgents: false,
       });
 
@@ -509,6 +510,7 @@ describe("multi-user integration", () => {
         agents: ["main"],
         multiUser: false,
         agentFab: false,
+        enableCronMonitoring: false,
         forkedAgents: false,
       });
     } finally {

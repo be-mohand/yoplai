@@ -750,10 +750,9 @@ describe("ChatView abort handling", () => {
 
   it("forces simple view and hides view toggle for non-admin users", async () => {
     routeState.view = "full";
-    setCapabilitiesForTests({
-      multiUser: true,
-      user: { id: "user-1", role: "user" },
-    });
+    const nonAdmin = { multiUser: true, user: { id: "user-1", role: "user" } };
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: ["agent-1"], ...nonAdmin });
+    setCapabilitiesForTests(nonAdmin);
     fetchFullHistoryMock.mockResolvedValue({
       messages: [
         {
