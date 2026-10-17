@@ -1,4 +1,4 @@
-import { redact } from "./redact.js";
+import { looksLikeToken, redact, sensitiveName } from "./redact.js";
 
 /**
  * Progress labels. Safe mode uses tool names only. Detailed mode adds a
@@ -121,8 +121,8 @@ export function detailedToolLabel(name: string, rawArgs: unknown): string | unde
   }
   if (lower === "bash") {
     const command = typeof args.command === "string" ? args.command : "";
-    const line = command.split("\n").find((l) => l.trim() !== "") ?? "";
-    return line ? trimText(`Running: ${redact(line)}`, 80) : label;
+    const shown = bashLabel(command);
+    return shown ? trimText(`Running: ${redact(shown)}`, 80) : label;
   }
   const key = ID_KEYS.find((k) => stringArg(args, [k]) !== undefined);
   if (!key) return label;
@@ -130,4 +130,46 @@ export function detailedToolLabel(name: string, rawArgs: unknown): string | unde
   if (key === "url") value = shortUrl(value);
   else if (key === "path") value = shortPath(value);
   return `${label}: ${trimText(redact(value), 60)}`;
+}
+
+const SENSITIVE_FLAG =
+  /^(?:-[uHdpbeEP]|--(?:user|header|data[\w-]*|pass|password|passwd|token|key|api-key|apikey|auth|auth-[\w-]+|authorization|cookie[\w-]*|env|proxy-user|oauth2-bearer|form|form-string|secret[\w-]*))$/;
+const PLAIN = /^[A-Za-z0-9_.\/,+%~-]+$/;
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The visible part of a shell command: the first non-empty line, without
+ * leading env assignments, cut at the first word that may carry a secret.
+ * Empty when nothing is safe to show.
+ */
+export function bashLabel(command: string): string {
+  const line = command.split("\n").find((l) => l.trim() !== "") ?? "";
+  const words = line.trim().split(/\s+/);
+  let i = 0;
+  for (; i < words.length && ASSIGNMENT.test(words[i]!); i++) {
+    // A quoted or escaped value may span words. Show nothing then.
+    if (/["'`\\$]/.test(words[i]!)) return "";
+  }
+  const shown: string[] = [];
+  let cut = false;
+  for (; i < words.length; i++) {
+    const word = words[i]!;
+    const flag = word.startsWith("-");
+    const harmless =
+      PLAIN.test(word) &&
+      !looksLikeToken(word) &&
+      !(flag && !/^(?:-[A-Za-z]{1,3}|--[A-Za-z][A-Za-z0-9-]*)$/.test(word)) &&
+      !(flag && word.startsWith("--") && sensitiveName(word.slice(2)));
+    if (!harmless) {
+      cut = true;
+      break;
+    }
+    shown.push(word);
+    if (SENSITIVE_FLAG.test(word)) {
+      cut = i + 1 < words.length;
+      break;
+    }
+  }
+  if (shown.length === 0) return "";
+  return cut ? `${shown.join(" ")} …` : shown.join(" ");
 }

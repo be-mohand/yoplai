@@ -1106,9 +1106,12 @@ describe("ThreaditPoller", () => {
       for (const secret of ["private", "ghp_", "task.checkpoint"]) {
         expect(json).not.toContain(secret);
       }
-      // Only the latest queued action survives while a post is in flight.
-      const actions = posted.filter((a) => a.kind === "action");
-      expect(actions.length).toBeLessThanOrEqual(1);
+      expect(posted).toEqual([
+        { kind: "thought", body: "Started" },
+        { kind: "thought", body: "Checked the deploy" },
+        { kind: "action", body: "Reading …/b/c/memory.md", ephemeral: true },
+        { kind: "thought", body: "token=••• done" },
+      ]);
     });
 
     it("coalesces queued actions but keeps every thought", async () => {
@@ -1144,6 +1147,20 @@ describe("ThreaditPoller", () => {
       ]);
     });
 
+    it("safe mode posts nothing when a tool event is followed by an immediate stop", async () => {
+      let target: ThreaditPoller | undefined;
+      const { board, poller } = setup({ unacknowledged: [message(3)] }, async (params) => {
+        params.onEvent?.({ type: "tool_call", id: "1", name: "read", arguments: {} });
+        void target?.stop();
+        return { payloads: [], meta: { durationMs: 1, sessionId: "s", aborted: true } };
+      });
+      target = poller;
+      poller.start();
+      await waitFor(() => expect(activities(board)).toHaveLength(1));
+      await settle();
+      expect(activities(board)).toEqual([{ kind: "thought", body: "Started" }]);
+    });
+
     it("safe mode drops checkpoints and arguments", async () => {
       const { board, poller } = setup({ unacknowledged: [message(3)] }, async (params) => {
         params.onEvent?.({ type: "progress", label: "Step one" });
@@ -1177,6 +1194,48 @@ describe("ThreaditPoller", () => {
       poller.start();
       await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
       expect(activities(board)).toContainEqual({ kind: "thought", body: "Live step" });
+    });
+
+    it.each([
+      ["detailed", "safe"],
+      ["safe", "detailed"],
+    ] as const)("switches %s -> %s between items of one batch", async (first, second) => {
+      let latest: PollerOptions["config"] = {
+        baseUrl: "http://board",
+        token: "secret-token",
+        pollIntervalMs: 10,
+        turnTimeoutMinutes: 60,
+        activity: first,
+      };
+      const { board, poller } = setup(
+        { unacknowledged: [message(3), message(4)] },
+        async (params) => {
+          params.onEvent?.({ type: "progress", label: "Step" });
+          params.onEvent?.({ type: "tool_call", id: "1", name: "read", arguments: { path: "a.ts" } });
+          latest = { ...latest, activity: second };
+          return okResult("ok");
+        },
+        { readConfig: () => latest }
+      );
+      poller.start();
+      await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅", "👀", "✅"]));
+      const of = (id: number) =>
+        board.calls
+          .filter((c) => c.path === `/api/messages/${id}/agent-activities`)
+          .map((c) => c.body);
+      const expected = (mode: string) =>
+        mode === "detailed"
+          ? [
+              { kind: "thought", body: "Started" },
+              { kind: "thought", body: "Step" },
+              { kind: "action", body: "Reading a.ts", ephemeral: true },
+            ]
+          : [
+              { kind: "thought", body: "Started" },
+              { kind: "action", body: "Reading files", ephemeral: true },
+            ];
+      expect(of(3)).toEqual(expected(first));
+      expect(of(4)).toEqual(expected(second));
     });
   });
 });

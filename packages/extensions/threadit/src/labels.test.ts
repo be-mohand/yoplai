@@ -38,7 +38,7 @@ describe("detailedToolLabel", () => {
     expect(Array.from(long)).toHaveLength(80);
     expect(long.endsWith("…")).toBe(true);
     expect(detailedToolLabel("bash", { command: "curl -H 'Authorization: Bearer abc123' x" })).not.toContain("abc123");
-    expect(detailedToolLabel("bash", { command: "API_KEY=hunter2 run" })).toBe("Running: API_KEY=••• run");
+    expect(detailedToolLabel("bash", { command: "API_KEY=hunter2 run" })).toBe("Running: run");
   });
 
   it("adds one identifying argument for other tools", () => {
@@ -59,5 +59,59 @@ describe("progressLabel", () => {
     expect(progressLabel("Deployed with password=abc")).toBe("Deployed with password=•••");
     expect(Array.from(progressLabel("y".repeat(500))!)).toHaveLength(200);
     expect(trimText("a  b\n c", 10)).toBe("a b c");
+  });
+});
+
+describe("credential forms never reach a label", () => {
+  // [command, bash label, checkpoint label]
+  const rows: Array<[string, string, string]> = [
+    ["curl -u alice:hunter2 https://example.com", "Running: curl -u …", "curl -u ••• https://example.com"],
+    ["SSHPASS=hunter2 sshpass -e ssh host", "Running: sshpass -e …", "SSHPASS=••• sshpass -e ••• host"],
+    ["MYSQL_PWD=hunter2 mysql -u root", "Running: mysql -u …", "MYSQL_PWD=••• mysql -u •••"],
+    ["PASSWORD=hello\\ world cmd", "Running commands", "PASSWORD=••• cmd"],
+    ["PASSWORD='hello''world' cmd", "Running commands", "PASSWORD=••• cmd"],
+    [
+      'curl -H "Cookie: theme=dark; session=abc123; sid=xyz789" x',
+      "Running: curl -H …",
+      'curl -H "Cookie: •••" x',
+    ],
+    [
+      'curl -d "{\\"password\\":\\"hunter2\\"}" x',
+      "Running: curl -d …",
+      'curl -d "{\\"password\\":\\"•••\\"}" x',
+    ],
+    [
+      `curl -d '{"password":123456,"token":987654}' x`,
+      "Running: curl -d …",
+      `curl -d '{"password":•••,"token":•••}' x`,
+    ],
+    ['curl "https://example.com?sig=abc123"', "Running: curl …", 'curl "https://example.com?•••"'],
+    ['curl -H "Authorization: Bearer abc123" x', "Running: curl -H …", 'curl -H "Authorization: •••" x'],
+    ["git push https://ghp_abcdefghijklmno@github.com", "Running: git push …", "git push https://•••@github.com"],
+  ];
+  const secrets = ["hunter2", "abc123", "xyz789", "123456", "987654", "world", "ghp_", "alice"];
+
+  it.each(rows)("%s", (command, bash, progress) => {
+    const shown = detailedToolLabel("bash", { command })!;
+    const thought = progressLabel(command)!;
+    expect(shown).toBe(bash);
+    expect(thought).toBe(progress);
+    expect(progressLabel(thought)).toBe(thought); // idempotent
+    for (const secret of secrets) {
+      expect(shown).not.toContain(secret);
+      expect(thought).not.toContain(secret);
+    }
+  });
+
+  it("keeps harmless commands readable", () => {
+    expect(detailedToolLabel("bash", { command: "git log --author Alice" })).toBe(
+      "Running: git log --author Alice"
+    );
+    expect(progressLabel("git log --author Alice")).toBe("git log --author Alice");
+    expect(progressLabel("monkey=banana keyboard x")).toBe("monkey=banana keyboard x");
+    expect(detailedToolLabel("bash", { command: "ls -la src | grep x" })).toBe(
+      "Running: ls -la src …"
+    );
+    expect(detailedToolLabel("bash", { command: "FOO=bar pnpm test" })).toBe("Running: pnpm test");
   });
 });

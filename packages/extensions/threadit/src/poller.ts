@@ -546,7 +546,9 @@ export class ThreaditPoller {
     let pending = 0;
     let lastLabel: string | undefined;
     let lastProgress: string | undefined;
-    const detailed = this.config.activity === "detailed";
+    // Read the mode per turn, so a change applies to the next item of a batch.
+    const detailed =
+      (this.readConfig?.()?.activity ?? this.config.activity) === "detailed";
     type Job = { kind: string; body: string; ephemeral: boolean };
     const queue: Job[] = [];
     let running = false;
@@ -580,7 +582,8 @@ export class ThreaditPoller {
       pending++;
       if (!running) {
         running = true;
-        chain = pump();
+        // Deferred to a microtask, so an immediate stop cancels the first post.
+        chain = Promise.resolve().then(pump);
       }
     };
 
