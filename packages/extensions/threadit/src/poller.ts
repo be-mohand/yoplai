@@ -147,7 +147,7 @@ export class ThreaditPoller {
     }
     if (
       !latest ||
-      (this.current &&
+      ((this.current || !latest.token) &&
         latest.token === this.config.token &&
         latest.baseUrl === this.config.baseUrl)
     ) {

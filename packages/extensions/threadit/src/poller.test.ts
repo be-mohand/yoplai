@@ -835,6 +835,21 @@ describe("ThreaditPoller", () => {
       expect(new Set(board.calls.map((c) => c.auth))).toEqual(new Set(["Bearer new-token"]));
     });
 
+    it("does not log a token change on each idle cycle without a token", async () => {
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
+      const { poller } = setup({}, async () => okResult("x"), {
+        token: undefined,
+        readConfig: () => config(undefined),
+      });
+      poller.start();
+      await settle(80);
+      await poller.stop();
+      // setup() starts with a token, so the switch to no token logs once.
+      const changes = info.mock.calls.flat().filter((m) => String(m).includes("token changed"));
+      expect(changes).toHaveLength(1);
+      info.mockRestore();
+    });
+
     it("drops the old token when the live config disappears", async () => {
       let latest: ReturnType<typeof config> | undefined = config("old-token");
       const { board, poller } = setup({}, async () => okResult("x"), {
