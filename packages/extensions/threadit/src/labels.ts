@@ -1,4 +1,4 @@
-import { looksLikeToken, redact, sensitiveName } from "./redact.js";
+import { looksLikeToken, redact } from "./redact.js";
 
 /**
  * Progress labels. Safe mode uses tool names only. Detailed mode adds a
@@ -132,15 +132,15 @@ export function detailedToolLabel(name: string, rawArgs: unknown): string | unde
   return `${label}: ${trimText(redact(value), 60)}`;
 }
 
-const SENSITIVE_FLAG =
-  /^(?:-[uHdpbeEP]|--(?:user|header|data[\w-]*|pass|password|passwd|token|key|api-key|apikey|auth|auth-[\w-]+|authorization|cookie[\w-]*|env|proxy-user|oauth2-bearer|form|form-string|secret[\w-]*))$/;
-const PLAIN = /^[A-Za-z0-9_.\/,+%~-]+$/;
+const WORD = /^[A-Za-z0-9._\/~-]+$/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const MAX_WORDS = 6;
 
 /**
- * The visible part of a shell command: the first non-empty line, without
- * leading env assignments, cut at the first word that may carry a secret.
- * Empty when nothing is safe to show.
+ * The visible part of a shell command: the program and its leading plain
+ * words (no options), from the first non-empty line, without leading env
+ * assignments or a plain `cd <dir> &&` prefix. Cut with " …" at the first
+ * option, risky or token-like word. Empty when nothing is safe to show.
  */
 export function bashLabel(command: string): string {
   const line = command.split("\n").find((l) => l.trim() !== "") ?? "";
@@ -150,33 +150,19 @@ export function bashLabel(command: string): string {
     // A quoted or escaped value may span words. Show nothing then.
     if (/["'`\\$]/.test(words[i]!)) return "";
   }
-  // Skip `cd <dir> &&` / `cd <dir>;` prefixes. The directory is not shown.
-  for (;;) {
-    if (words[i] !== "cd" || words[i + 1] === undefined) break;
-    if (words[i + 1]!.endsWith(";") && words[i + 2] !== undefined) i += 2;
-    else if ((words[i + 2] === "&&" || words[i + 2] === ";") && words[i + 3] !== undefined) i += 3;
+  // Skip `cd <plain-dir> &&` / `cd <plain-dir>;` prefixes. Anything else stays.
+  while (words[i] === "cd") {
+    const target = words[i + 1] ?? "";
+    if (target.endsWith(";") && WORD.test(target.slice(0, -1)) && words[i + 2]) i += 2;
+    else if (WORD.test(target) && (words[i + 2] === "&&" || words[i + 2] === ";") && words[i + 3]) i += 3;
     else break;
   }
   const shown: string[] = [];
-  let cut = false;
-  for (; i < words.length; i++) {
+  for (; i < words.length && shown.length < MAX_WORDS; i++) {
     const word = words[i]!;
-    const flag = word.startsWith("-");
-    const harmless =
-      PLAIN.test(word) &&
-      !looksLikeToken(word) &&
-      !(flag && !/^(?:-[A-Za-z]{1,3}|-\d+|--[A-Za-z][A-Za-z0-9-]*)$/.test(word)) &&
-      !(flag && word.startsWith("--") && sensitiveName(word.slice(2)));
-    if (!harmless) {
-      cut = true;
-      break;
-    }
+    if (word.startsWith("-") || !WORD.test(word) || looksLikeToken(word)) break;
     shown.push(word);
-    if (SENSITIVE_FLAG.test(word)) {
-      cut = i + 1 < words.length;
-      break;
-    }
   }
   if (shown.length === 0) return "";
-  return cut ? `${shown.join(" ")} …` : shown.join(" ");
+  return i < words.length ? `${shown.join(" ")} …` : shown.join(" ");
 }

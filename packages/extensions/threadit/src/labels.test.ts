@@ -65,28 +65,28 @@ describe("progressLabel", () => {
 describe("credential forms never reach a label", () => {
   // [command, bash label, checkpoint label]
   const rows: Array<[string, string, string]> = [
-    ["curl -u alice:hunter2 https://example.com", "Running: curl -u …", "curl -u ••• https://example.com"],
-    ["SSHPASS=hunter2 sshpass -e ssh host", "Running: sshpass -e …", "SSHPASS=••• sshpass -e ••• host"],
-    ["MYSQL_PWD=hunter2 mysql -u root", "Running: mysql -u …", "MYSQL_PWD=••• mysql -u •••"],
+    ["curl -u alice:hunter2 https://example.com", "Running: curl …", "curl -u ••• https://example.com"],
+    ["SSHPASS=hunter2 sshpass -e ssh host", "Running: sshpass …", "SSHPASS=••• sshpass -e ••• host"],
+    ["MYSQL_PWD=hunter2 mysql -u root", "Running: mysql …", "MYSQL_PWD=••• mysql -u •••"],
     ["PASSWORD=hello\\ world cmd", "Running commands", "PASSWORD=••• cmd"],
     ["PASSWORD='hello''world' cmd", "Running commands", "PASSWORD=••• cmd"],
     [
       'curl -H "Cookie: theme=dark; session=abc123; sid=xyz789" x',
-      "Running: curl -H …",
+      "Running: curl …",
       'curl -H "Cookie: •••" x',
     ],
     [
       'curl -d "{\\"password\\":\\"hunter2\\"}" x',
-      "Running: curl -d …",
+      "Running: curl …",
       'curl -d "{\\"password\\":\\"•••\\"}" x',
     ],
     [
       `curl -d '{"password":123456,"token":987654}' x`,
-      "Running: curl -d …",
+      "Running: curl …",
       `curl -d '{"password":•••,"token":•••}' x`,
     ],
     ['curl "https://example.com?sig=abc123"', "Running: curl …", 'curl "https://example.com?•••"'],
-    ['curl -H "Authorization: Bearer abc123" x', "Running: curl -H …", 'curl -H "Authorization: •••" x'],
+    ['curl -H "Authorization: Bearer abc123" x', "Running: curl …", 'curl -H "Authorization: •••" x'],
     ["git push https://ghp_abcdefghijklmno@github.com", "Running: git push …", "git push https://•••@github.com"],
   ];
   const secrets = ["hunter2", "abc123", "xyz789", "123456", "987654", "world", "ghp_", "alice"];
@@ -104,23 +104,49 @@ describe("credential forms never reach a label", () => {
   });
 
   it("keeps harmless commands readable", () => {
-    expect(detailedToolLabel("bash", { command: "git log --author Alice" })).toBe(
-      "Running: git log --author Alice"
-    );
+    expect(detailedToolLabel("bash", { command: "git log --author Alice" })).toBe("Running: git log …");
     expect(progressLabel("git log --author Alice")).toBe("git log --author Alice");
     expect(progressLabel("monkey=banana keyboard x")).toBe("monkey=banana keyboard x");
     expect(detailedToolLabel("bash", { command: "ls -la src | grep x" })).toBe(
-      "Running: ls -la src …"
+      "Running: ls …"
     );
     expect(detailedToolLabel("bash", { command: "FOO=bar pnpm test" })).toBe("Running: pnpm test");
   });
 
-  it("skips cd prefixes and keeps numeric flags", () => {
+  it("skips plain cd prefixes", () => {
     const label = (command: string) => detailedToolLabel("bash", { command });
-    expect(label("cd ~/pom && rg -n THREADIT .env")).toBe("Running: rg -n THREADIT .env");
-    expect(label("cd /a; cd b && git log -5")).toBe("Running: git log -5");
-    expect(label("cd src ; tail -n 20 x.log | grep err")).toBe("Running: tail -n 20 x.log …");
-    expect(label("cd app && curl -u bob:pw host")).toBe("Running: curl -u …");
+    expect(label("cd ~/pom && rg -n THREADIT .env")).toBe("Running: rg …");
+    expect(label("cd /a; cd b && git log -5")).toBe("Running: git log …");
+    expect(label("cd src ; tail -n 20 x.log | grep err")).toBe("Running: tail …");
+    expect(label("cd app && curl -u bob:pw host")).toBe("Running: curl …");
     expect(label("cd ~/pom")).toBe("Running: cd ~/pom");
+  });
+
+  it("shows only the program and leading plain words", () => {
+    const label = (command: string) => detailedToolLabel("bash", { command });
+    const rows: Array<[string, string]> = [
+      ["curl -sd hunter2 x", "Running: curl …"],
+      ["cd /tmp && curl -sd hunter2 x", "Running: curl …"],
+      ["mysql -pab db", "Running: mysql …"],
+      ["cd /tmp && mysql -pab db", "Running: mysql …"],
+      ["mysql -phunter2 db", "Running: mysql …"],
+      ["curl -ualice:hunter2 x", "Running: curl …"],
+      ['curl -H"X-Custom: hunter2" x', "Running: curl …"],
+      ["curl -dopaquevalue x", "Running: curl …"],
+      ["yoplai subagents status sar_x --json", "Running: yoplai subagents status sar_x …"],
+      ["a b c d e f g h", "Running: a b c d e f …"],
+      ["git status", "Running: git status"],
+      ['cd "a; hunter2 other" && git status', "Running: cd …"],
+      ["cd 'my dir' && git status", "Running: cd …"],
+      ["cd a\\;b && git status", "Running: cd …"],
+      ['cd x "&&" hunter2', "Running: cd x …"],
+    ];
+    for (const [command, expected] of rows) {
+      const shown = label(command)!;
+      expect(shown).toBe(expected);
+      for (const secret of ["hunter2", "ab db", "opaque", "alice"]) {
+        expect(shown).not.toContain(secret);
+      }
+    }
   });
 });
