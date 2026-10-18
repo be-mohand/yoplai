@@ -3,9 +3,9 @@ import { createServer } from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ContainerInput } from "@yoplai/shared";
 import { gatewayTool } from "../gateway-tool.js";
+import { createToolContext } from "./tool-context.js";
 
 const input = {
   gatewayUrl: "http://gateway:3000",
@@ -15,7 +15,7 @@ const input = {
   runId: "run",
 } as ContainerInput;
 
-function createTool(turnDeadlineAt?: number) {
+function createTool(turnDeadlineAt?: number, outputSchema?: Record<string, unknown>) {
   const tool = gatewayTool(
     { ...input, turnDeadlineAt },
     "test.tool",
@@ -27,7 +27,9 @@ function createTool(turnDeadlineAt?: number) {
       required: ["value"],
     },
     new Set(),
-    async (result) => JSON.stringify(result)
+    async (result) => JSON.stringify(result),
+    "test.tool",
+    outputSchema
   );
   return {
     ...tool,
@@ -35,7 +37,7 @@ function createTool(turnDeadlineAt?: number) {
       id: string,
       args: Record<string, unknown>,
       signal?: AbortSignal
-    ) => tool.execute(id, args, signal, undefined, {} as ExtensionContext),
+    ) => tool.execute(id, args, signal, undefined, createToolContext()),
   };
 }
 
@@ -53,6 +55,31 @@ function hangFetch() {
 
 describe("gateway tool deadlines", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  // ALG-507 approved seam c404cd21: wrapper execution + external HTTP response
+  // catches raw/direct/error contracts; real scripts and UI use separate seams.
+  it.each([
+    { declared: true, payload: { isError: true, refusal: { reason: "connect" } }, expectedError: true, text: '{"isError":true,"refusal":{"reason":"connect"}}\ntimeout reduced to 600s: turn time limit' },
+    { declared: true, payload: { ok: false, error: "rate limited" }, expectedError: undefined, text: '{"ok":false,"error":"rate limited"}\ntimeout reduced to 600s: turn time limit' },
+    { declared: true, payload: { isError: "true", error: "ordinary data" }, expectedError: undefined, text: '{"isError":"true","error":"ordinary data"}\ntimeout reduced to 600s: turn time limit' },
+    { declared: false, payload: { isError: true, refusal: { reason: "connect" } }, expectedError: undefined, text: '{"isError":true,"refusal":{"reason":"connect"}}\ntimeout reduced to 600s: turn time limit' },
+  ])("keeps direct output and timeout notes with declared=$declared and payload=$payload", async ({ declared, payload, expectedError, text }) => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    vi.spyOn(global, "fetch").mockResolvedValue(Response.json(payload));
+    const result = await createTool(602000, declared ? {
+      type: "object", properties: { count: { type: "number" } }, required: ["count"],
+    } : undefined).execute("call", { timeout: 900 });
+    expect(result.content).toEqual([{ type: "text", text }]);
+    expect(result.details).toEqual(payload);
+    expect(result.isError).toBe(expectedError);
+    if (declared) {
+      expect(result.structuredContent).toEqual(payload);
+      expect(result.structuredContent).not.toBe(result.details);
+    } else {
+      expect(result).not.toHaveProperty("structuredContent");
+      expect(result).not.toHaveProperty("isError");
+    }
+  });
 
   it("extends the schema and strips timeout while forwarding call metadata", async () => {
     const fetch = vi
@@ -181,11 +208,11 @@ describe("gateway tool deadlines", () => {
           { timeout: 0.05 },
           undefined,
           undefined,
-          {} as ExtensionContext
+          createToolContext()
         )
       ).rejects.toThrow("tool test_tool timed out after 0.05s");
       await expect(
-        tool.execute("next", {}, undefined, undefined, {} as ExtensionContext)
+        tool.execute("next", {}, undefined, undefined, createToolContext())
       ).resolves.toMatchObject({ details: { ok: true } });
       expect(requests).toEqual([
         {

@@ -327,6 +327,34 @@ function compactMessages(messages: SlackHistoryMessage[]) {
   });
 }
 
+const historyOutputSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean", const: true },
+    channel: { type: "string" },
+    messages: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          ts: { type: "string" },
+          user: { type: "string" },
+          username: { type: "string" },
+          botId: { type: "string" },
+          text: { type: "string" },
+          threadTs: { type: "string" },
+          replyCount: { type: "number" },
+        },
+        required: ["ts"],
+        additionalProperties: false,
+      },
+    },
+    hasMore: { type: "boolean" },
+  },
+  required: ["ok", "channel", "messages", "hasMore"],
+  additionalProperties: false,
+};
+
 function toolError(error: unknown) {
   return {
     ok: false as const,
@@ -782,6 +810,7 @@ export function slackAgentTools(): ExtensionAgentTool[] {
     },
     {
       name: "slack.get_channel_history",
+      outputSchema: historyOutputSchema,
       description:
         "Retrieve a channel's recent message history via conversations.history. Provide channel as a conversation ID (C..., D..., or G...); use slack.list_channels to resolve channel IDs. Messages are returned newest-first. To page backward, pass the oldest ts from the previous result as latest. threadTs and replyCount identify reply threads; use slack.get_thread_replies to read their messages.",
       parameters: {
@@ -864,6 +893,15 @@ export function slackAgentTools(): ExtensionAgentTool[] {
     },
     {
       name: "slack.get_thread_replies",
+      outputSchema: {
+        ...historyOutputSchema,
+        properties: {
+          ...historyOutputSchema.properties,
+          threadTs: { type: "string" },
+          nextCursor: { type: "string" },
+        },
+        required: [...historyOutputSchema.required, "threadTs"],
+      },
       description:
         "Read a Slack thread, including its parent message, via conversations.replies. Provide a conversation ID and the parent's threadTs. Messages are returned oldest-first. Pass nextCursor as cursor to read more replies until hasMore is false.",
       parameters: {

@@ -45,14 +45,17 @@ vi.mock("../../../extensions/tools.js", () => ({
   getExtensionAgentTools: mockGetExtensionAgentTools,
 }));
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
+  getCurrentTools: (await importOriginal<typeof import("@earendil-works/pi-ai")>()).getCurrentTools,
   getEnvApiKey: mockGetEnvApiKey,
 }));
 
-vi.mock("@earendil-works/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
+  createCodemodeExtension: (await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()).createCodemodeExtension,
+  createToolSearchExtension: (await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()).createToolSearchExtension,
   createAgentSession: mockCreateAgentSession,
   SessionManager: {
-    open: vi.fn(() => ({ close: vi.fn() })),
+    open: vi.fn(() => ({ close: vi.fn(), buildSessionContext: () => ({ messages: [] }) })),
   },
   SettingsManager: {
     create: vi.fn(() => ({})),
@@ -125,6 +128,7 @@ describe("pi adapter onecli env wiring", () => {
     const session = {
       messages: [{ role: "assistant", content: "done" }],
       agent: { state: { messages: [] } },
+      setActiveToolsByName: vi.fn(),
       subscribe: vi.fn(() => vi.fn()),
       prompt: vi.fn(async () => undefined),
       abort: vi.fn(),
@@ -165,6 +169,7 @@ describe("pi adapter onecli env wiring", () => {
           systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
         },
       },
+      setActiveToolsByName: vi.fn(),
       subscribe: vi.fn(() => vi.fn()),
       prompt: vi.fn(async () => undefined),
       abort: vi.fn(),
@@ -221,6 +226,7 @@ describe("pi adapter onecli env wiring", () => {
           systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
         },
       },
+      setActiveToolsByName: vi.fn(),
       subscribe: vi.fn(() => vi.fn()),
       prompt: vi.fn(async () => undefined),
       abort: vi.fn(),
@@ -277,6 +283,7 @@ describe("pi adapter onecli env wiring", () => {
     const session = {
       messages: [{ role: "assistant", content: "done" }],
       agent: { state: { messages: [] } },
+      setActiveToolsByName: vi.fn(),
       subscribe: vi.fn(() => vi.fn()),
       prompt: vi.fn(async () => undefined),
       abort: vi.fn(),
@@ -374,6 +381,7 @@ describe("pi adapter onecli env wiring", () => {
           session: {
             messages: [{ role: "assistant", content: agentId }],
             agent: { state: { messages: [] } },
+            setActiveToolsByName: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
             prompt: vi.fn(async () => {
               if (model.provider && agentId === firstAgent.id) {
@@ -435,6 +443,7 @@ describe("pi adapter onecli env wiring", () => {
       // getter exposes the effective prompt beforehand.
       systemPrompt: "You are Sally.\n\n[CHANNEL CONTEXT]\nchannel: slack",
       agent: { state: { messages: [], systemPrompt: "" } },
+      setActiveToolsByName: vi.fn(),
       subscribe: vi.fn(() => vi.fn()),
       prompt: vi.fn(async () => undefined),
       abort: vi.fn(),
@@ -484,6 +493,7 @@ describe("pi adapter onecli env wiring", () => {
     const session = {
       messages: [{ role: "assistant", content: "done" }],
       agent: { state: { messages: [], systemPrompt: "You are Sally." } },
+      setActiveToolsByName: vi.fn(),
       subscribe: vi.fn((callback) => {
         listener = callback;
         return vi.fn();
@@ -547,6 +557,7 @@ describe("pi adapter onecli env wiring", () => {
     const session = {
       messages: [{ role: "assistant", content: "done" }],
       agent: { state: { messages: [], systemPrompt: "You are Sally." } },
+      setActiveToolsByName: vi.fn(),
       subscribe: vi.fn(() => vi.fn()),
       prompt: vi.fn(async () => undefined),
       abort: vi.fn(),
@@ -588,6 +599,7 @@ describe("pi adapter onecli env wiring", () => {
       "write",
       "scratchpad_read",
       "send_file",
+      "tool_search",
     ]);
     expect(customToolNames).not.toEqual(
       expect.arrayContaining([

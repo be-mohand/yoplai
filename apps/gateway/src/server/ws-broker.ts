@@ -197,10 +197,12 @@ export class WsBroker {
       text: turn.assistantText,
       toolCalls: turn.toolCalls.map((tc) => ({
         id: tc.id,
+        parentToolCallId: tc.parentToolCallId,
         name: tc.name,
         arguments: tc.args,
         status: tc.status,
       })),
+      toolResults: turn.toolResults,
     });
   }
 

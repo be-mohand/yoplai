@@ -51,6 +51,7 @@ describe("container tool bridge", () => {
       {
         extensionId: "board",
         name: "scratchpad.read",
+        canonicalName: "scratchpad.read",
         description: "Read",
         parameters: { type: "object" },
       },

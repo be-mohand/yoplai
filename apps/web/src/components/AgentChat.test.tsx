@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { AgentChat, __resetAgentChatStateForTests } from "./AgentChat";
+import type { SubscriptionCallbacks } from "../api/realtime";
 
 const {
   fetchFullHistoryMock,
@@ -142,6 +143,89 @@ describe("AgentChat stop/send behavior", () => {
     vi.useRealTimers();
     document.body.innerHTML = "";
     vi.clearAllMocks();
+  });
+
+  it("keeps persisted child tool calls under their parent, collapsed by default", async () => {
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "assistant", timestamp: 1, content: [
+        { type: "toolCall", id: "code-1", name: "codemode", arguments: {} },
+        { type: "toolCall", id: "code-1/1", parentToolCallId: "code-1", name: "scheduler_list_jobs", arguments: {} },
+        { type: "toolCall", id: "ordinary", name: "ordinary_tool", arguments: {} },
+      ] },
+      { role: "toolResult", toolCallId: "code-1/1", parentToolCallId: "code-1", toolName: "scheduler_list_jobs", content: [{ type: "text", text: "child result" }], timestamp: 2 },
+    ] });
+    const { container, dispose } = renderLead();
+    await tick();
+    await tick();
+    const group = container.querySelector<HTMLDetailsElement>(".nested-tool-calls");
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    expect(group!.textContent).toContain("scheduler_list_jobs");
+    expect(group!.textContent).toContain("child result");
+    expect(container.textContent?.split("scheduler_list_jobs")).toHaveLength(2);
+    expect(group!.parentElement!.textContent).toContain("codemode");
+    expect(group!.textContent).not.toContain("ordinary_tool");
+    dispose();
+  });
+
+  it.each(["live", "reconnect"])("groups %s nested tool calls once with inspectable results", async (mode) => {
+    let callbacks: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_id, _key, next) => {
+      callbacks = next;
+      return () => {};
+    });
+    const { container, dispose } = renderLead();
+    await tick();
+    if (mode === "live") {
+      callbacks.onToolCall?.("code-1", "codemode", {});
+      await tick();
+      callbacks.onToolCall?.("code-1/1", "scheduler_list_jobs", {}, "code-1");
+      callbacks.onToolCall?.("code-1/1", "scheduler_list_jobs", {}, "code-1");
+    } else {
+      callbacks.onActiveTurn?.({ userText: null, userTimestamp: 1, startedAt: 1, thinking: "", text: "", toolCalls: [
+        { id: "code-1", name: "codemode", arguments: {}, status: "running" },
+        { id: "code-1/1", name: "scheduler_list_jobs", arguments: {}, parentToolCallId: "code-1", status: "done" },
+      ] });
+    }
+    callbacks.onToolResult?.("code-1/1", "scheduler_list_jobs", "live child result", false, undefined, "code-1");
+    await tick();
+    const group = container.querySelector<HTMLDetailsElement>(".nested-tool-calls");
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    expect(group!.textContent).toContain("live child result");
+    expect(container.textContent?.split("scheduler_list_jobs")).toHaveLength(2);
+    group!.open = true;
+    expect(group!.querySelector(".log-summary-text")?.textContent).toContain("scheduler_list_jobs");
+    dispose();
+  });
+
+  it.each(["reconnect", "refresh"])("keeps completed child results inspectable on %s without another result event", async (source) => {
+    let callbacks: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_id, _key, next) => {
+      callbacks = next;
+      return () => {};
+    });
+    const { container, dispose } = renderLead();
+    await tick();
+    if (source === "refresh") {
+      callbacks.onToolCall?.("code-1", "codemode", {});
+      await tick();
+      callbacks.onToolCall?.("code-1/1", "scheduler_list_jobs", {}, "code-1");
+      callbacks.onToolResult?.("code-1/1", "scheduler_list_jobs", "completed child result", false, undefined, "code-1");
+    }
+    callbacks.onActiveTurn?.({ userText: null, userTimestamp: 1, startedAt: 1, thinking: "", text: "", toolCalls: [
+      { id: "code-1", name: "codemode", arguments: {}, status: "running" },
+      { id: "code-1/1", name: "scheduler_list_jobs", arguments: {}, parentToolCallId: "code-1", status: "done" },
+    ], ...(source === "reconnect" ? { toolResults: [
+      { id: "code-1/1", name: "scheduler_list_jobs", content: "completed child result", isError: false, parentToolCallId: "code-1" },
+    ] } : {}) });
+    await tick();
+    const group = container.querySelector<HTMLDetailsElement>(".nested-tool-calls");
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    expect(group!.textContent).toContain("completed child result");
+    expect(container.textContent?.split("scheduler_list_jobs")).toHaveLength(2);
+    dispose();
   });
 
   it("shows Stop when subagent status is running", async () => {

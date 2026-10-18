@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
+import type { SubscriptionCallbacks } from "../api/realtime";
+import type { StreamCallbacks } from "../api/chat";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -180,6 +182,102 @@ describe("ChatView abort handling", () => {
     document.body.innerHTML = "";
     resetCapabilitiesForTests();
     vi.clearAllMocks();
+  });
+
+  it.each(["full", "simple"] as const)("nests history tool calls once, collapsed in %s mode", async (mode) => {
+    routeState.view = mode;
+    fetchFullHistoryMock.mockResolvedValue({ messages: [
+      { role: "assistant", timestamp: 1, content: [
+        { type: "toolCall", id: "code-1", name: "codemode", arguments: {} },
+        { type: "toolCall", id: "code-1/1", parentToolCallId: "code-1", name: "scheduler_list_jobs", arguments: {} },
+        { type: "toolCall", id: "ordinary", name: "ordinary_tool", arguments: {} },
+      ] },
+      { role: "toolResult", toolCallId: "code-1/1", parentToolCallId: "code-1", toolName: "scheduler_list_jobs", content: [{ type: "text", text: "child result" }], timestamp: 2 },
+    ] });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector(".activity-group-header")).not.toBeNull());
+    (container.querySelector(".activity-group-header") as HTMLButtonElement).click();
+    (container.querySelector("button.activity-line") as HTMLButtonElement).click();
+    const group = container.querySelector<HTMLDetailsElement>(".nested-tool-calls");
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    expect(group!.parentElement!.querySelector('[title="codemode"]')).not.toBeNull();
+    expect(group!.querySelector('[title="ordinary_tool"]')).toBeNull();
+    expect(container.querySelectorAll('[title="scheduler_list_jobs"]')).toHaveLength(1);
+    group!.open = true;
+    (group!.querySelector(".tool-header") as HTMLButtonElement).click();
+    expect(group!.textContent).toContain("child result");
+    dispose();
+  });
+
+  it.each([
+    ["full", "live"], ["simple", "live"], ["full", "reconnect"], ["simple", "reconnect"],
+  ] as const)("nests %s %s child calls with inspectable results", async (mode, source) => {
+    routeState.view = mode;
+    let callbacks: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_id, _key, next) => {
+      callbacks = next;
+      return () => {};
+    });
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+    if (source === "live") {
+      callbacks.onToolCall?.("code-1", "codemode", {});
+      callbacks.onToolCall?.("code-1/1", "scheduler_list_jobs", {}, "code-1");
+      callbacks.onToolCall?.("code-1/1", "scheduler_list_jobs", {}, "code-1");
+    } else {
+      callbacks.onActiveTurn?.({ userText: null, userTimestamp: 1, startedAt: 1, thinking: "", text: "", toolCalls: [
+        { id: "code-1", name: "codemode", arguments: {}, status: "running" },
+        { id: "code-1/1", name: "scheduler_list_jobs", arguments: {}, parentToolCallId: "code-1", status: "done" },
+      ] });
+    }
+    callbacks.onToolResult?.("code-1/1", "scheduler_list_jobs", "live child result", false, undefined, "code-1");
+    await waitFor(() => expect(container.querySelector("button.activity-line")).not.toBeNull());
+    (container.querySelector("button.activity-line") as HTMLButtonElement).click();
+    const group = container.querySelector<HTMLDetailsElement>(".nested-tool-calls");
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    expect(group!.parentElement!.querySelector('[title="codemode"]')).not.toBeNull();
+    expect(container.querySelectorAll('[title="scheduler_list_jobs"]')).toHaveLength(1);
+    group!.open = true;
+    (group!.querySelector(".tool-header") as HTMLButtonElement).click();
+    expect(group!.textContent).toContain("live child result");
+    dispose();
+  });
+
+  it.each([
+    ["full", "reconnect"], ["simple", "reconnect"], ["full", "refresh"], ["simple", "refresh"],
+  ] as const)("keeps completed %s child results on %s without another result event", async (mode, source) => {
+    routeState.view = mode;
+    let callbacks: SubscriptionCallbacks = {};
+    subscribeToSessionMock.mockImplementation((_id, _key, next) => {
+      callbacks = next;
+      return () => {};
+    });
+    const { container, dispose } = renderView();
+    await tick();
+    await tick();
+    if (source === "refresh") {
+      callbacks.onToolCall?.("code-1", "codemode", {});
+      callbacks.onToolCall?.("code-1/1", "scheduler_list_jobs", {}, "code-1");
+      callbacks.onToolResult?.("code-1/1", "scheduler_list_jobs", "completed child result", false, undefined, "code-1");
+    }
+    callbacks.onActiveTurn?.({ userText: null, userTimestamp: 1, startedAt: 1, thinking: "", text: "", toolCalls: [
+      { id: "code-1", name: "codemode", arguments: {}, status: "running" },
+      { id: "code-1/1", name: "scheduler_list_jobs", arguments: {}, parentToolCallId: "code-1", status: "done" },
+    ], ...(source === "reconnect" ? { toolResults: [
+      { id: "code-1/1", name: "scheduler_list_jobs", content: "completed child result", isError: false, parentToolCallId: "code-1" },
+    ] } : {}) });
+    (container.querySelector("button.activity-line") as HTMLButtonElement).click();
+    const group = container.querySelector<HTMLDetailsElement>(".nested-tool-calls");
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    group!.open = true;
+    (group!.querySelector(".tool-header") as HTMLButtonElement).click();
+    expect(group!.textContent).toContain("completed child result");
+    expect(container.querySelectorAll('[title="scheduler_list_jobs"]')).toHaveLength(1);
+    dispose();
   });
 
   it("resets a subscribed failed turn and renders its persisted notice once", async () => {
@@ -1708,24 +1806,21 @@ describe("ChatView abort handling", () => {
   });
 
   async function startFullStream() {
-    let callbacks:
-      | {
-          onThinking?: (chunk: string) => void;
-          onToolCall?: (id: string, name: string, args: unknown) => void;
-        }
-      | undefined;
+    let callbacks: Partial<StreamCallbacks> | undefined;
     let onText: ((chunk: string) => void) | undefined;
+    let onDone: (() => void) | undefined;
     streamMessageMock.mockImplementation(
       (
         _agentId: string,
         _message: string,
         _sessionKey: string,
         nextOnText: (chunk: string) => void,
-        _nextOnDone: () => void,
+        nextOnDone: () => void,
         _onError: (error: string) => void,
         nextCallbacks?: typeof callbacks
       ) => {
         onText = nextOnText;
+        onDone = nextOnDone;
         callbacks = nextCallbacks;
         return vi.fn();
       }
@@ -1748,9 +1843,41 @@ describe("ChatView abort handling", () => {
     return {
       ...view,
       onText: (c: string) => onText?.(c),
+      onDone: () => onDone?.(),
       callbacks: () => callbacks,
     };
   }
+
+  it.each([
+    ["full", "direct"], ["simple", "direct"], ["full", "queued"], ["simple", "queued"],
+  ] as const)("preserves %s %s nested calls through completion", async (mode, source) => {
+    routeState.view = mode;
+    const { container, dispose, callbacks, onText, onDone } = await startFullStream();
+    if (source === "queued") {
+      const input = container.querySelector("textarea") as HTMLTextAreaElement;
+      input.value = "next request";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await tick();
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await tick();
+    }
+    callbacks()?.onToolCall?.("code-1", "codemode", {});
+    callbacks()?.onToolCall?.("code-1/1", "scheduler_list_jobs", {}, "code-1");
+    callbacks()?.onToolResult?.("code-1/1", "scheduler_list_jobs", "direct child result", false, undefined, "code-1");
+    onText("batch complete");
+    onDone();
+    await tick();
+    (container.querySelector(".activity-group-header") as HTMLButtonElement).click();
+    (container.querySelector("button.activity-line") as HTMLButtonElement).click();
+    const group = container.querySelector<HTMLDetailsElement>(".nested-tool-calls");
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    expect(container.querySelectorAll('[title="scheduler_list_jobs"]')).toHaveLength(1);
+    group!.open = true;
+    (group!.querySelector(".tool-header") as HTMLButtonElement).click();
+    expect(group!.textContent).toContain("direct child result");
+    dispose();
+  });
 
   it.each(["full", "simple"] as const)(
     "re-renders streamed text chunks in %s view",

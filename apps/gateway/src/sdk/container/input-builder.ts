@@ -6,6 +6,7 @@ import {
   type GatewayConfig,
 } from "@yoplai/shared";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
+import { resolveToolDeferralConfig } from "@yoplai/shared/tool-deferral";
 import { getDefaultSdkId } from "../registry.js";
 import type { SdkRunParams } from "../types.js";
 import {
@@ -63,6 +64,8 @@ export class ContainerInputBuilder {
     const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
     return {
       agentId: params.agentId,
+      codemode: params.agent.codemode,
+      toolDeferral: resolveToolDeferralConfig(params.agent.toolDeferral),
       sessionId: params.sessionId,
       runId,
       userId: params.userId,

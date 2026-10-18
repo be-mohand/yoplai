@@ -10,7 +10,8 @@ export function gatewayTool(
   parameters: unknown,
   usedToolNames: Set<string>,
   formatResult: (result: unknown, toolCallId: string) => Promise<string>,
-  gatewayName = name
+  gatewayName = name,
+  outputSchema?: Record<string, unknown>
 ): ToolDefinition {
   const modelToolName = claimAgentToolName(name, usedToolNames);
   const schema = parameters as {
@@ -22,6 +23,7 @@ export function gatewayTool(
     label,
     description,
     promptSnippet: description,
+    outputSchema: outputSchema as ToolDefinition["outputSchema"],
     parameters: {
       ...schema,
       ...(schema.required
@@ -99,6 +101,11 @@ export function gatewayTool(
         return {
           content: [{ type: "text", text: text + note }],
           details: result,
+          ...(outputSchema ? {
+            structuredContent: JSON.parse(JSON.stringify(result ?? null)),
+            isError: typeof result === "object" && result !== null && !Array.isArray(result) &&
+              "isError" in result && result.isError === true ? true : undefined,
+          } : {}),
         };
       } catch (error) {
         if (sdkSignal?.aborted && signal.reason === sdkSignal.reason)

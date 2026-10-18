@@ -42,7 +42,7 @@ describe("defineToolExtension oauth injection", () => {
     try {
       const tools = await extension.getAgentTools!(makeAgent(), { config: makeConfig(), resolveOAuth: async () => ({ connected: false, provider: "google", reason, message: "Connect" }) });
       const context = { agent: makeAgent(), config: makeConfig(), userId: "alice", sessionId: "session" };
-      expect(await tools[0].execute({}, context)).toEqual({ error: "oauth_connection_required", authorizeUrl: "<slack-pair-link>", message: "Connect your personal google account at <slack-pair-link>, then try again." });
+      expect(await tools[0].execute({}, context)).toEqual({ isError: true, error: "oauth_connection_required", authorizeUrl: "<slack-pair-link>", message: "Connect your personal google account at <slack-pair-link>, then try again." });
       expect(provider).toHaveBeenCalledWith(context, { kind: "oauth", provider: "google", scopes: ["scope-a"] });
     } finally { unregister(); }
   });

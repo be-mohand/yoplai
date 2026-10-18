@@ -167,7 +167,7 @@ export function isRetryableProviderError(
     return true;
   }
   if (/\b(?:http\s*)?(?:429|5\d\d)\b/i.test(message)) return true;
-  return /\b(queue(?:d|ing)?|backpressure|retry[- ]after|too many requests|rate limit|quota(?: exhaustion| exceeded)?|econnreset|econnrefused|enotfound|connection reset|connection (?:failed|refused)|network (?:error|failure)|socket hang up|etimedout|timeout|timed out|temporar(?:y|ily) unavailable|model (?:is )?(?:unavailable|overloaded)|overloaded)\b/i.test(
+  return /\b(queue(?:d|ing)?|backpressure|retry[- ]after|too many requests|rate limit|quota(?: exhaustion| exceeded)?|econnreset|econnrefused|enotfound|connection reset|connection (?:error|failed|refused)|network (?:error|failure)|socket hang up|etimedout|timeout|timed out|temporar(?:y|ily) unavailable|model (?:is )?(?:unavailable|overloaded)|overloaded)\b/i.test(
     message
   );
 }

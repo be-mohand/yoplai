@@ -64,6 +64,7 @@ function rebindAtCallTime(extension: Extension, tool: ExtensionAgentTool): Exten
     if (current.missing.length) {
       const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
       return {
+        isError: true,
         error: "extension_credentials_required",
         message: `Add your own token using Just me at [Configure ${extension.displayName}](${connectUrl}) before using this tool. An admin can also configure Whole team credentials.`,
         connectUrl,
@@ -78,6 +79,7 @@ function rebindAtCallTime(extension: Extension, tool: ExtensionAgentTool): Exten
 
 export type LoadedExtensionAgentTool = ExtensionAgentTool & {
   extensionId: string;
+  extensionDescription?: string;
 };
 
 export type ExtensionRouteMetadata = {
@@ -242,6 +244,7 @@ export class ExtensionRuntime {
           return tools.map((tool) => ({
             ...tool,
             extensionId: extension.id,
+            extensionDescription: extension.description,
             // Rebuild at call time: credentials, and for OAuth the grant deciding personal vs team settings, may have changed.
             execute: withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute),
           }));

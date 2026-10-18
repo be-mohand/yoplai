@@ -47,6 +47,28 @@ Extensions can contribute routes, services, lifecycle hooks, capabilities, CLI c
 
 Secrets resolve before extension validation. Missing IDs and invalid config fail or warn at startup according to extension contract. Missing tool-extension tokens remain configurable at runtime: affected calls return a configuration link while unrelated tools keep working. Agent-local `.env` lets two agents reuse names such as `SLACK_TOKEN` without sharing values.
 
+### Tool result schemas
+
+Tool authors may declare an optional Zod `outputSchema` beside `parameters`:
+
+```ts
+{
+  name: "get_deal",
+  description: "Read a deal",
+  parameters: z.object({ id: z.number() }),
+  outputSchema: z.object({ id: z.number(), org_id: z.number().optional() }),
+  execute: async ({ id }) => client.getDeal(id),
+}
+```
+
+The helper converts both schemas to JSON Schema with `$refStrategy: "none"`. Direct `ExtensionAgentTool` records declare `outputSchema` as JSON Schema. Agent and discovery tools retain it, including tools deferred until `tool_search`; scripts can call deferred tools before loading their declarations.
+
+For a tool with an output schema, both Pi hosts add `structuredContent`, a JSON-safe copy of the full raw result, alongside the existing text `content` and raw `details`. Codemode resolves that object and describes its fields; scripts can read `deal.org_id` without `JSON.parse`. Container text previews, spill files and timeout notes remain unchanged, while scripts receive the full result. Success schemas describe results but are never enforced at runtime, so refusal/error objects can have different shapes.
+
+Only a schema-bearing result whose top-level `isError` is exactly `true` sets the Pi error flag. Such a result still resolves its structured data in codemode; thrown failures reject. Existing `{ ok: false, error }` results keep their behavior. Connection/reconnection refusals carry `isError: true`. Tools without an output schema retain their text-only script behavior and existing error classification. Older hosts ignore the additive metadata; newer hosts accept older extensions without it.
+
+Adapted external MCP tools expose one generic `CallToolResult` schema (`content`, optional `structuredContent` and `isError`), without forwarding a server-specific output schema. Disconnected MCP stubs declare the same metadata but retain their refusal payloads.
+
 ## Per-scope settings for OAuth extensions
 
 For OAuth extensions without credential fields (for example Google Drive's **Enable creating and writing files**), the extension form follows the connect card's **Just me** / **Whole team** tab. Each tab keeps its own value and its own OAuth scopes: **Just me** is stored per user and applies only when you have your own connection (unset means off, never the team value); **Whole team** is the admin-managed agent setting. Clicking **Connect** or **Reconnect** saves the tab's pending checkbox first, so no separate Save is needed. `PATCH` with `credentialScope: "personal"` works for any member; the catalog adds `oauth.personalScopes` for the Just me tab.

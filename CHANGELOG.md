@@ -9,6 +9,12 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").
+- With codemode on, a script call with wrong arguments now adds the tool's signature to the codemode result. The model then uses the correct parameter names on the next try. A call to a deferred tool that is not loaded now tells the model to use `tool_search`.
+- Langfuse traces now show the system prompt that the model got, including the `deferred-tools` section and later changes from loaded tools.
+
 ### Changed
 
 - Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
@@ -17,6 +23,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
+- Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.
+- Per-agent Pi codemode for host and container runs, with nested tool calls grouped in chat and parented tracing spans.
 - Per-conversation writable files for extension downloads and edits, available at `/workspace/files` in sandboxes, with local Pi `send_file` support and requester-private output downloads.
 - With cron monitoring enabled, Scheduled jobs refresh every two seconds and show a pulsing Running badge with elapsed time until execution finishes.
 - Scheduled run history refreshes automatically, and running traces show live thinking, tool results, and output while following the bottom until you scroll up.
@@ -52,6 +61,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Preserve the original message before follow-ups during Pi startup, and honor early cancellation on host and sandbox runs without starting the cancelled prompt.
+- Pi startup cancellation remains an aborted run after the SDK 1.3 upgrade instead of becoming an agent error, on host and sandbox agents.
 - Gateway API forwarding works with Node.js 24's request validation, and fresh read-only sandbox workspaces create the conversation-files and IPC mount targets before launch.
 - Maintenance-model calls (session auto-titles, tool labels, project instruction drafts) no longer send `temperature`, which reasoning models such as `openai-codex` reject with "Unsupported parameter: temperature".
 - Threadit: a download cannot write outside the workspace through a symlink. Sandbox uploads read `/workspace/data` and `/workspace/uploads`. A disabled agent drops its token. An agent that enables Threadit later gets a poller without a restart.

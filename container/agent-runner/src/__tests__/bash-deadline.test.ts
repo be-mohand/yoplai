@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createDeadlineBashTool } from "../bash-deadline.js";
+import { createToolContext } from "./tool-context.js";
 
-const context = {} as ExtensionContext;
+const context = createToolContext();
 const execute = vi.hoisted(() => vi.fn());
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   createBashToolDefinition: () => ({ name: "bash", execute }),

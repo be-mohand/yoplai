@@ -44,7 +44,7 @@ export async function oauthConnectionRefusal(context: ExtensionAgentToolContext,
   if (oauth.connected || oauth.reason === "provider_not_configured") return undefined;
   const link = await requestCredentialConnectLink(context, { kind: "oauth", ...requirement });
   if (!link) return undefined;
-  return { error: "oauth_connection_required", ...(oauth.reason === "insufficient_scope" ? { connected: false, reason: oauth.reason } : {}), authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
+  return { isError: true, error: "oauth_connection_required", ...(oauth.reason === "insufficient_scope" ? { connected: false, reason: oauth.reason } : {}), authorizeUrl: link, message: `Connect your personal ${oauth.provider} account at ${link}, then try again.` };
 }
 
 const connectors = new Map<string, (options: CredentialOAuthConnectorOptions) => Promise<string>>();

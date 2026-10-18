@@ -41,11 +41,15 @@ export class ContainerToolBridge {
       parameters: { type: "object", properties: { path: { type: "string", description: "Absolute container image path" }, question: { type: "string" } }, required: ["path"] },
     });
     if (params.context?.project?.id) gatewayTools.push(...projectTools);
-    return tools.map((tool) => ({
+    return tools.map<ContainerExtensionTool>((tool) => ({
       extensionId: tool.extensionId,
+      extensionDescription: tool.extensionDescription,
       name: tool.name,
+      canonicalName: tool.name,
       description: tool.description,
+      namespace: tool.namespace,
       parameters: tool.parameters,
+      outputSchema: tool.outputSchema,
     })).concat(gatewayTools);
   }
 }

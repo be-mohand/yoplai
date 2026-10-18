@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { renderToolSignature } from "@earendil-works/pi-codemode";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { getCurrentTools } from "@earendil-works/pi-ai";
+import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "@yoplai/shared";
@@ -55,6 +58,8 @@ import { getBuiltInSkillsDir } from "./skills.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
 import { getConversationFiles } from "../../media/conversation-files.js";
 import { ContainerFileOutputAdapter } from "../container/file-output.js";
+
+type SignatureSchema = Parameters<typeof renderToolSignature>[0]["inputSchema"];
 
 function runFailureError(message: string): Error {
   return Object.assign(new Error(message), {
@@ -115,7 +120,7 @@ async function createPiExtensionTools(
   usedToolNames: Set<string>,
   params: SdkRunParams,
   includeDescribeImage = false
-): Promise<{ tools: AgentTool[]; invisibleToolNames: Set<string> }> {
+) {
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
   const conversationFiles = getConversationFiles(agent.id, params.sessionId, params.userId);
@@ -127,14 +132,17 @@ async function createPiExtensionTools(
     params
   );
   const invisibleToolNames = new Set<string>();
-  const piTools: AgentTool[] = tools.map((tool): AgentTool => {
+  const descriptors: Parameters<typeof createToolDeferralCatalog>[0][number][] = [];
+  const piTools: ToolDefinition[] = tools.map((tool): ToolDefinition => {
     const name = claimAgentToolName(tool.name, usedToolNames);
     if (tool.extensionId === "taskLifecycle") invisibleToolNames.add(name);
+    descriptors.push({ ...tool, name, canonicalName: tool.name });
     return {
       name,
       label: tool.description,
       description: tool.description,
-      parameters: tool.parameters as unknown as AgentTool["parameters"],
+      parameters: tool.parameters as unknown as ToolDefinition["parameters"],
+      ...(tool.outputSchema ? { outputSchema: tool.outputSchema as ToolDefinition["outputSchema"] } : {}),
       execute: async (_toolCallId, toolParams, signal) => {
         const result = await tool.execute(toolParams, {
           agent,
@@ -152,19 +160,25 @@ async function createPiExtensionTools(
         return {
           content: [{ type: "text", text: stringifyToolResult(result) }],
           details: result,
+          ...(tool.outputSchema ? {
+            structuredContent: JSON.parse(JSON.stringify(result ?? null)),
+            isError: typeof result === "object" && result !== null && !Array.isArray(result) && "isError" in result && result.isError === true ? true : undefined,
+          } : {}),
         };
       },
     };
   });
+  const sendFileName = claimAgentToolName("send_file", usedToolNames);
+  descriptors.push({ name: sendFileName, extensionId: "core", core: true });
   piTools.push({
-    name: claimAgentToolName("send_file", usedToolNames),
+    name: sendFileName,
     label: "Send file to user",
     description: "Send a regular file directly in this conversation's files directory as a downloadable card in chat. Nested paths and symlinks are not supported. Finish writing the file first.",
     parameters: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path to the conversation file" } },
       required: ["path"],
-    } as AgentTool["parameters"],
+    } as ToolDefinition["parameters"],
     execute: async (_toolCallId, args, signal) => {
       const input = args as { path?: unknown };
       if (typeof input.path !== "string") throw new Error("send_file requires a path");
@@ -174,22 +188,32 @@ async function createPiExtensionTools(
     },
   });
   if (params.context?.project?.id) {
-    for (const tool of projectTools) piTools.push({
-      name: claimAgentToolName(tool.name, usedToolNames),
-      label: tool.description,
-      description: tool.description,
-      parameters: tool.parameters as unknown as AgentTool["parameters"],
-      execute: async (_toolCallId, args) => {
-        const result = await executeProjectTool(tool.name, args, {
-          agentId: params.agentId, sessionId: params.sessionId, userId: params.userId,
-          projectId: params.context?.project?.id,
-        });
-        return { content: [{ type: "text", text: stringifyToolResult(result) }], details: result };
-      },
-    });
+    for (const tool of projectTools) {
+      const name = claimAgentToolName(tool.name, usedToolNames);
+      descriptors.push({
+        name,
+        canonicalName: tool.name,
+        extensionId: tool.extensionId,
+        extensionDescription: "Read and manage project documents",
+      });
+      piTools.push({
+        name,
+        label: tool.description,
+        description: tool.description,
+        parameters: tool.parameters as unknown as ToolDefinition["parameters"],
+        execute: async (_toolCallId, args) => {
+          const result = await executeProjectTool(tool.name, args, {
+            agentId: params.agentId, sessionId: params.sessionId, userId: params.userId,
+            projectId: params.context?.project?.id,
+          });
+          return { content: [{ type: "text", text: stringifyToolResult(result) }], details: result };
+        },
+      });
+    }
   }
   if (includeDescribeImage && config.imageDescription?.enabled === true) {
     const name = claimAgentToolName("describe_image", usedToolNames);
+    descriptors.push({ name, extensionId: "imageDescription", core: true });
     piTools.push({
       name,
       label: "Describe an attached image",
@@ -199,7 +223,7 @@ async function createPiExtensionTools(
         type: "object",
         properties: { path: { type: "string" }, question: { type: "string" } },
         required: ["path"],
-      } as AgentTool["parameters"],
+      } as ToolDefinition["parameters"],
       execute: async (_toolCallId, toolParams) => {
         const args = toolParams as { path?: unknown; question?: unknown };
         if (typeof args.path !== "string")
@@ -227,7 +251,7 @@ async function createPiExtensionTools(
       },
     });
   }
-  return { tools: piTools, invisibleToolNames };
+  return { tools: piTools, invisibleToolNames, descriptors };
 }
 
 export async function findSessionImageAttachment(
@@ -334,6 +358,8 @@ export const piAdapter: SdkAdapter = {
       // Dynamically import pi-coding-agent
       const {
         createAgentSession,
+        createCodemodeExtension,
+        createToolSearchExtension,
         SessionManager,
         SettingsManager,
         ModelRuntime,
@@ -441,8 +467,8 @@ export const piAdapter: SdkAdapter = {
       const turnSupportsImages =
         modelSupportsImages(model) &&
         (!configuredFallback || modelSupportsImages(configuredFallback));
-      const usedToolNames = new Set<string>();
-      const { tools: extensionTools, invisibleToolNames } =
+      const usedToolNames = new Set([...builtInTools, "tool_search", "codemode"]);
+      const { tools: extensionTools, invisibleToolNames, descriptors } =
         await createPiExtensionTools(
           agent,
           usedToolNames,
@@ -452,7 +478,30 @@ export const piAdapter: SdkAdapter = {
       const tools = [
         ...builtInTools,
         ...extensionTools.map((tool) => tool.name),
+        ...(agent.codemode === true ? ["codemode"] : []),
+        ...(agent.toolDeferral?.enabled !== false ? ["tool_search"] : []),
       ];
+      const catalog = createToolDeferralCatalog(
+        [
+          ...descriptors,
+          ...tools.filter(name => !extensionTools.some(tool => tool.name === name))
+            .map(name => ({ name, extensionId: "host", core: true })),
+        ],
+        agent.toolDeferral,
+        { codemode: agent.codemode === true }
+      );
+      for (const tool of extensionTools)
+        Object.assign(tool, catalog.tools.get(tool.name));
+      const signatureOf = (name: string) => {
+        const tool = extensionTools.find((candidate) => candidate.name === name);
+        return tool
+          ? renderToolSignature({
+              name: tool.name,
+              inputSchema: tool.parameters as SignatureSchema,
+              outputSchema: tool.outputSchema as SignatureSchema,
+            })
+          : undefined;
+      };
       const extensionPrompts = await getExtensionSystemPromptContributions(
         agent,
         loadConfig(),
@@ -484,6 +533,29 @@ export const piAdapter: SdkAdapter = {
         cwd: params.workspaceDir,
         agentDir: CONFIG_DIR,
         settingsManager,
+        extensionFactories: [
+          ...(agent.toolDeferral?.enabled !== false
+            ? [createToolSearchExtension()]
+            : []),
+          ...(agent.codemode === true
+            ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
+            : []),
+          (pi) => {
+            pi.on("before_agent_start", (event) => {
+              if (catalog.summary)
+                event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
+              else delete event.systemPromptOptions.sections["deferred-tools"];
+            });
+            pi.on("message_end", (event) => {
+              const unloaded = catalog.hintUnloadedToolResult(event.message);
+              const message =
+                agent.codemode === true
+                  ? (catalog.hintCodemodeSignatures(unloaded ?? event.message, signatureOf) ?? unloaded)
+                  : unloaded;
+              return message ? { message } : undefined;
+            });
+          },
+        ],
         systemPromptOverride: () => PI_SYSTEM_PROMPT,
         appendSystemPrompt:
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
@@ -513,28 +585,39 @@ export const piAdapter: SdkAdapter = {
         settingsManager,
       });
 
+      agentSession.setActiveToolsByName(
+        catalog.activeToolNames(getCurrentTools(sessionManager.buildSessionContext().messages))
+      );
+
       // Repair orphaned tool calls from interrupted sessions
       repairOrphanedToolCalls(agentSession);
 
-      // Emit session handle for queue injection
-      params.onSessionHandle?.(agentSession);
-
-      let aborted = false;
+      let aborted = params.abortSignal.aborted;
 
       // Handle abort
-      params.abortSignal.addEventListener("abort", () => {
+      const onAbort = () => {
         aborted = true;
-        agentSession.abort();
-      });
+        void agentSession.abort();
+      };
+      params.abortSignal.addEventListener("abort", onAbort);
 
-      const systemPrompt = agentSession.systemPrompt;
-      if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
+      let sentSystemPrompt: string | undefined;
+      const sendSystemPrompt = () => {
+        const systemPrompt = agentSession.systemPrompt;
+        if (
+          typeof systemPrompt !== "string" ||
+          systemPrompt.trim().length === 0 ||
+          systemPrompt === sentSystemPrompt
+        )
+          return;
+        sentSystemPrompt = systemPrompt;
         params.onHistoryEvent({
           type: "system_prompt",
           text: systemPrompt,
           timestamp: Date.now(),
         });
-      }
+      };
+      sendSystemPrompt();
 
       if (renderedContext && params.context) {
         params.onHistoryEvent({
@@ -599,6 +682,13 @@ export const piAdapter: SdkAdapter = {
           .join("\n\n")
       );
 
+      // Aborting an idle Pi session does not cancel a future prompt.
+      if (aborted) {
+        params.abortSignal.removeEventListener("abort", onAbort);
+        agentSession.dispose();
+        return { text: "", aborted: true };
+      }
+
       // Emit user message to history (without context preamble)
       params.onHistoryEvent({
         type: "user",
@@ -608,7 +698,18 @@ export const piAdapter: SdkAdapter = {
       });
 
       // Subscribe to streaming events
+      let handlePublished = false;
       const unsubscribe = agentSession.subscribe((evt) => {
+        // An idle Pi session starts a new prompt on delivery. Publish only
+        // once the original run is active, so early messages stay buffered.
+        if (evt.type === "agent_start" && !handlePublished) {
+          handlePublished = true;
+          params.onSessionHandle?.(agentSession);
+        }
+        // Pi changes the prompt after session creation (`before_agent_start`
+        // sections) and between turns (loaded tools). Send each new prompt.
+        if (evt.type === "message_start" && evt.message.role === "assistant")
+          sendSystemPrompt();
         if (evt.type === "message_update") {
           const msg = (evt as { message?: AgentMessage }).message;
           if (msg?.role === "assistant") {
@@ -645,6 +746,7 @@ export const piAdapter: SdkAdapter = {
           const toolCallId =
             (evt as { toolCallId?: string }).toolCallId ?? `call_${Date.now()}`;
           const args = (evt as { args?: unknown }).args;
+          const parentToolCallId = evt.parentToolCallId;
 
           if (invisibleToolNames.has(toolName)) return;
           params.onEvent({ type: "tool_start", toolName });
@@ -653,12 +755,14 @@ export const piAdapter: SdkAdapter = {
             id: toolCallId,
             name: toolName,
             arguments: args,
+            parentToolCallId,
           });
           params.onHistoryEvent({
             type: "tool_call",
             id: toolCallId,
             name: toolName,
             args,
+            parentToolCallId,
             timestamp: Date.now(),
           });
         }
@@ -668,6 +772,7 @@ export const piAdapter: SdkAdapter = {
           const toolCallId = (evt as { toolCallId?: string }).toolCallId ?? "";
           const isError = (evt as { isError?: boolean }).isError ?? false;
           const rawResult = (evt as { result?: unknown }).result;
+          const parentToolCallId = evt.parentToolCallId;
 
           if (invisibleToolNames.has(toolName)) return;
           // Extract text from result - handle both string and structured formats
@@ -692,6 +797,7 @@ export const piAdapter: SdkAdapter = {
             name: toolName,
             content,
             isError,
+            parentToolCallId,
           });
           params.onHistoryEvent({
             type: "tool_result",
@@ -699,6 +805,7 @@ export const piAdapter: SdkAdapter = {
             name: toolName,
             content,
             isError,
+            parentToolCallId,
             timestamp: Date.now(),
           });
         }
@@ -847,6 +954,7 @@ export const piAdapter: SdkAdapter = {
       }
       } finally {
         unsubscribe();
+        params.abortSignal.removeEventListener("abort", onAbort);
       }
 
       const messages = agentSession.messages;
@@ -860,7 +968,12 @@ export const piAdapter: SdkAdapter = {
       const lastAssistantRecord = lastAssistant as
         | (Record<string, unknown> & AssistantMessage)
         | undefined;
-      if (lastAssistantRecord?.stopReason === "error") {
+      // Pi 1.x reports cancellation during request setup as an error message.
+      const cancelledDuringSetup =
+        aborted &&
+        lastAssistantRecord?.stopReason === "error" &&
+        lastAssistantRecord.errorMessage === "This operation was aborted";
+      if (lastAssistantRecord?.stopReason === "error" && !cancelledDuringSetup) {
         const errorMessage =
           typeof lastAssistantRecord.errorMessage === "string" &&
           lastAssistantRecord.errorMessage

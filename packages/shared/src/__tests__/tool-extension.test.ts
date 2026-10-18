@@ -4,6 +4,34 @@ import { defineToolExtension } from "../tool-extension.js";
 import { GatewayConfigSchema, resolveAgentConfigRoute } from "../types.js";
 
 describe("tool extensions", () => {
+  // ALG-507 seam 1 approved by Thinh (c404cd21): public registration catches
+  // conversion/discovery/legacy compatibility; runtime execution is tested in Pi.
+  it("declares nested result fields for agent and discovery callers without references", async () => {
+    const row = z.object({ id: z.number() });
+    const extension = defineToolExtension({
+      id: "sample", displayName: "Sample", description: "Sample",
+      configSchema: z.object({}), requiredSecrets: [],
+      createTools: () => [
+        { name: "list", description: "List", parameters: z.object({}), outputSchema: z.object({ first: row, second: row }), execute: async () => ({ first: { id: 7 }, second: { id: 9 } }) },
+        { name: "legacy", description: "Legacy", parameters: z.object({}), execute: async () => "legacy" },
+      ],
+    });
+    const config = GatewayConfigSchema.parse({ agents: [{ id: "main", name: "Main", workspace: "~/main", model: { provider: "test", model: "test" }, extensions: { sample: {} } }], extensions: { sample: {} } });
+    const agentTools = await extension.getAgentTools?.(config.agents[0]!, { config });
+    const discovery = await extension.getDiscoveryTools?.();
+    for (const tools of [agentTools, discovery]) {
+      expect(tools?.[0]?.outputSchema).toEqual({
+        $schema: "http://json-schema.org/draft-07/schema#", type: "object",
+        properties: {
+          first: { type: "object", properties: { id: { type: "number" } }, required: ["id"], additionalProperties: false },
+          second: { type: "object", properties: { id: { type: "number" } }, required: ["id"], additionalProperties: false },
+        }, required: ["first", "second"], additionalProperties: false,
+      });
+      expect(tools?.[1]?.outputSchema).toBeUndefined();
+    }
+    await expect(agentTools?.[1]?.execute({}, { agent: config.agents[0]!, config })).resolves.toBe("legacy");
+  });
+
   it("merges root and agent config, resolves env refs, and prefixes tools", async () => {
     process.env.YOPLAI_TEST_TOKEN = "secret";
     let receivedConfig: unknown;
@@ -27,6 +55,7 @@ describe("tool extensions", () => {
           {
             name: "ping",
             description: "Ping",
+            namespace: { name: "sample", displayName: "Sample service", description: "Check service availability" },
             parameters: z.object({}),
             execute: async () => "pong",
           },
@@ -66,14 +95,11 @@ describe("tool extensions", () => {
     });
     expect(tools?.[0]?.name).toBe("sample_ping");
     expect(tools?.[0]?.parameters).toMatchObject({ type: "object" });
+    expect(tools?.[0]?.namespace).toEqual({ name: "sample", displayName: "Sample service", description: "Check service availability" });
+    const discoveryTools = await extension.getDiscoveryTools?.();
+    expect(discoveryTools?.[0]?.namespace).toEqual({ name: "sample", displayName: "Sample service", description: "Check service availability" });
     expect(extension.advancedConfigFields).toEqual(["region"]);
-    expect(prompt).toEqual([
-      "Use Sample when needed.",
-      [
-        "Yoplai exposes this extension's tools with these exact names:",
-        "- sample_ping: Ping",
-      ].join("\n"),
-    ]);
+    expect(prompt).toEqual(["Use Sample when needed."]);
 
     delete process.env.YOPLAI_TEST_TOKEN;
   });
