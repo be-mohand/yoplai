@@ -565,6 +565,51 @@ describe("Pi gateway deferred tools", () => {
       )
     ).toHaveLength(1);
   });
+  it("hints tool_search for an unloaded deferred tool and records the final prompt with codemode rules", async () => {
+    const run = fixture(undefined, true);
+    const contexts: TranscriptContext[] = [];
+    setup.faux.setResponses([
+      (context) => {
+        contexts.push(structuredClone(context));
+        return fauxAssistantMessage(
+          fauxToolCall("mcp__claap__recording_042", {}, { id: "unloaded-042" }),
+          { stopReason: "toolUse" }
+        );
+      },
+      (context) => {
+        contexts.push(structuredClone(context));
+        return fauxAssistantMessage("Done");
+      },
+    ]);
+    await expect(piAdapter.run(run.params)).resolves.toMatchObject({
+      text: "Done",
+    });
+    expect(contexts[1].messages).toContainEqual(
+      expect.objectContaining({
+        role: "toolResult",
+        toolName: "mcp__claap__recording_042",
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "Tool mcp__claap__recording_042 is not loaded. Call tool_search to load it, then call it again.",
+          },
+        ],
+      })
+    );
+    const prompts = run.history.filter((event) => event.type === "system_prompt");
+    // The tracer keeps the latest prompt: it must be the one the model got.
+    const finalPrompt = prompts.at(-1);
+    expect(finalPrompt).toMatchObject({
+      text: getCurrentSystemPrompt(contexts[0].messages),
+    });
+    expect(finalPrompt).toMatchObject({
+      text: expect.stringContaining("call `await describeTool(name)`"),
+    });
+    expect(finalPrompt).toMatchObject({
+      text: expect.stringContaining("<deferred-tools>"),
+    });
+  });
   it("cuts frozen first-request schema bytes by at least 80 percent and honors canonical overrides", async () => {
     const measure = async (toolDeferral: {
       enabled?: boolean;

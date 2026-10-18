@@ -439,7 +439,7 @@ export async function runAgent(
         core: input.extensionTools![index].extensionId === "gateway" &&
           (input.extensionTools![index].canonicalName ?? input.extensionTools![index].name) === "describe_image",
       })),
-    ], toolDeferral);
+    ], toolDeferral, { codemode: input.codemode === true });
     for (const tool of customTools) Object.assign(tool, catalog.tools.get(tool.name));
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.workspaceDir,
@@ -454,6 +454,10 @@ export async function runAgent(
           pi.on("before_agent_start", (event) => {
             if (catalog.summary) event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
             else delete event.systemPromptOptions.sections["deferred-tools"];
+          });
+          pi.on("message_end", (event) => {
+            const message = catalog.hintUnloadedToolResult(event.message);
+            return message ? { message } : undefined;
           });
         },
       ],
@@ -498,8 +502,17 @@ export async function runAgent(
     activeSession = session;
     activeOAuthContext = { ctx: oauthCtx, provider };
 
-    const systemPrompt = session.systemPrompt;
-    if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
+    let sentSystemPrompt: string | undefined;
+    let systemPromptChecked = false;
+    const sendSystemPrompt = () => {
+      const systemPrompt = session.systemPrompt;
+      if (
+        typeof systemPrompt !== "string" ||
+        systemPrompt.trim().length === 0 ||
+        systemPrompt === sentSystemPrompt
+      )
+        return;
+      sentSystemPrompt = systemPrompt;
       const systemPromptEvent: HistoryEvent = {
         type: "system_prompt",
         text: systemPrompt,
@@ -507,12 +520,23 @@ export async function runAgent(
       };
       history.push(systemPromptEvent);
       onStreamEvent?.(systemPromptEvent);
-    }
+    };
+    sendSystemPrompt();
 
     const unsubscribe = session.subscribe((evt) => {
       if (evt.type === "agent_start" && !initialRunStarted) {
         initialRunStarted = true;
         void steerPendingFollowUps(session);
+      }
+      // `before_agent_start` adds sections such as `deferred-tools` after the
+      // session is created. Send the prompt again if the model got a new one.
+      if (
+        !systemPromptChecked &&
+        evt.type === "message_start" &&
+        evt.message.role === "assistant"
+      ) {
+        systemPromptChecked = true;
+        sendSystemPrompt();
       }
       for (const event of collectHistoryEvent(evt, history)) {
         onStreamEvent?.(event);

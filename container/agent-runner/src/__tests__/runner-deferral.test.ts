@@ -7,6 +7,7 @@ import {
   fauxToolCall,
   getCurrentTools,
   getCurrentSystemMessage,
+  getCurrentSystemPrompt,
   type FauxResponseStep,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
@@ -209,6 +210,47 @@ describe("Container Pi deferred tools", () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: "tool_result", id: "after-load", content: expect.stringContaining("count: number"),
     }));
+  });
+
+  it("hints tool_search for an unloaded deferred tool and records the final prompt with codemode rules", async () => {
+    const { run, respond, contexts, capture, requests, events } = await fixture();
+    respond([
+      (context) => {
+        contexts.push(context);
+        return fauxAssistantMessage(
+          fauxToolCall("meetings_count", {}, { id: "unloaded-count" }),
+          { stopReason: "toolUse" }
+        );
+      },
+      capture,
+    ]);
+    await expect(run({ codemode: true })).resolves.toMatchObject({ text: "done" });
+    expect(requests).toEqual([]);
+    expect(contexts[1].messages).toContainEqual(
+      expect.objectContaining({
+        role: "toolResult",
+        toolName: "meetings_count",
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "Tool meetings_count is not loaded. Call tool_search to load it, then call it again.",
+          },
+        ],
+      })
+    );
+    const prompts = events.filter((event) => event.type === "system_prompt");
+    // The tracer keeps the latest prompt: it must be the one the model got.
+    const finalPrompt = prompts.at(-1);
+    expect(finalPrompt).toMatchObject({
+      text: getCurrentSystemPrompt(contexts[0].messages),
+    });
+    expect(finalPrompt).toMatchObject({
+      text: expect.stringContaining("call `await describeTool(name)`"),
+    });
+    expect(finalPrompt).toMatchObject({
+      text: expect.stringContaining("<deferred-tools>"),
+    });
   });
 
   it("declares only core tools and the search loader on the first outgoing request", async () => {

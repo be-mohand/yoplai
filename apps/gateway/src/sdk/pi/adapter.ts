@@ -461,7 +461,8 @@ export const piAdapter: SdkAdapter = {
           ...tools.filter(name => !extensionTools.some(tool => tool.name === name))
             .map(name => ({ name, extensionId: "host", core: true })),
         ],
-        agent.toolDeferral
+        agent.toolDeferral,
+        { codemode: agent.codemode === true }
       );
       for (const tool of extensionTools)
         Object.assign(tool, catalog.tools.get(tool.name));
@@ -507,6 +508,10 @@ export const piAdapter: SdkAdapter = {
               if (catalog.summary)
                 event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
               else delete event.systemPromptOptions.sections["deferred-tools"];
+            });
+            pi.on("message_end", (event) => {
+              const message = catalog.hintUnloadedToolResult(event.message);
+              return message ? { message } : undefined;
             });
           },
         ],
@@ -555,14 +560,23 @@ export const piAdapter: SdkAdapter = {
       };
       params.abortSignal.addEventListener("abort", onAbort);
 
-      const systemPrompt = agentSession.systemPrompt;
-      if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
+      let sentSystemPrompt: string | undefined;
+      const sendSystemPrompt = () => {
+        const systemPrompt = agentSession.systemPrompt;
+        if (
+          typeof systemPrompt !== "string" ||
+          systemPrompt.trim().length === 0 ||
+          systemPrompt === sentSystemPrompt
+        )
+          return;
+        sentSystemPrompt = systemPrompt;
         params.onHistoryEvent({
           type: "system_prompt",
           text: systemPrompt,
           timestamp: Date.now(),
         });
-      }
+      };
+      sendSystemPrompt();
 
       if (renderedContext && params.context) {
         params.onHistoryEvent({
@@ -644,12 +658,24 @@ export const piAdapter: SdkAdapter = {
 
       // Subscribe to streaming events
       let handlePublished = false;
+      let systemPromptChecked = false;
       const unsubscribe = agentSession.subscribe((evt) => {
         // An idle Pi session starts a new prompt on delivery. Publish only
         // once the original run is active, so early messages stay buffered.
         if (evt.type === "agent_start" && !handlePublished) {
           handlePublished = true;
           params.onSessionHandle?.(agentSession);
+        }
+        // `before_agent_start` adds sections such as `deferred-tools` after
+        // the session is created. Send the prompt again if the model got a
+        // new one.
+        if (
+          !systemPromptChecked &&
+          evt.type === "message_start" &&
+          evt.message.role === "assistant"
+        ) {
+          systemPromptChecked = true;
+          sendSystemPrompt();
         }
         if (evt.type === "message_update") {
           const msg = (evt as { message?: AgentMessage }).message;

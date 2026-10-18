@@ -22,10 +22,26 @@ type ToolMetadata = {
   namespace?: { name: string; aliases?: string[]; description?: string };
 };
 
+// Pi does not list deferred tools in the codemode description, so a script
+// must read a signature before it calls the tool.
+const CODEMODE_DEFERRED_RULES = [
+  "In a codemode script, call `await describeTool(name)` before the first call to one of these tools. Use the parameter names that it shows.",
+  "A tool with an output schema resolves to an object. Do not use JSON.parse on it.",
+].join("\n");
+
+/** Structural view of a Pi tool result message; the runtimes pass their own type. */
+type ToolResultMessage = {
+  role: string;
+  toolName?: string;
+  isError?: boolean;
+  content?: unknown;
+};
+
 /** One policy for registration metadata, discoverability and branch activation. */
 export function createToolDeferralCatalog(
   catalog: readonly CatalogTool[],
-  config?: ToolDeferralConfig
+  config?: ToolDeferralConfig,
+  options: { codemode?: boolean } = {}
 ) {
   const policy = resolveToolDeferralConfig(config);
   const tools = new Map<string, ToolMetadata>();
@@ -85,7 +101,7 @@ export function createToolDeferralCatalog(
         : canonicalName
     );
   }
-  const summary = [...namespaces.entries()]
+  const namespaceSummary = [...namespaces.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, group]) => {
       const detail =
@@ -97,9 +113,44 @@ export function createToolDeferralCatalog(
       return `${label}: ${detail}`.replace(/\s+/g, " ").slice(0, 200);
     })
     .join("\n");
+  const summary =
+    namespaceSummary && options.codemode
+      ? `${namespaceSummary}\n${CODEMODE_DEFERRED_RULES}`
+      : namespaceSummary;
   return {
     tools,
     summary,
+    /**
+     * Pi answers a call to a deferred tool that is not loaded with a bare
+     * "Tool <name> not found" result, before any extension hook runs. Give
+     * the model the way to load the tool instead.
+     */
+    hintUnloadedToolResult<M extends ToolResultMessage>(
+      message: M
+    ): M | undefined {
+      const name = message.toolName;
+      if (
+        message.role !== "toolResult" ||
+        message.isError !== true ||
+        !name ||
+        tools.get(name)?.exposure !== "deferred" ||
+        !Array.isArray(message.content) ||
+        message.content.length !== 1
+      )
+        return undefined;
+      const [block] = message.content as { type?: unknown; text?: unknown }[];
+      if (block?.type !== "text" || block.text !== `Tool ${name} not found`)
+        return undefined;
+      return {
+        ...message,
+        content: [
+          {
+            type: "text",
+            text: `Tool ${name} is not loaded. Call tool_search to load it, then call it again.`,
+          },
+        ],
+      };
+    },
     activeToolNames(previousTools: readonly { name: string }[]) {
       const previous = new Set(previousTools.map((tool) => tool.name));
       return [...tools]
