@@ -27,6 +27,7 @@ describe("tool extensions", () => {
           {
             name: "ping",
             description: "Ping",
+            namespace: { name: "sample", displayName: "Sample service", description: "Check service availability" },
             parameters: z.object({}),
             execute: async () => "pong",
           },
@@ -66,14 +67,11 @@ describe("tool extensions", () => {
     });
     expect(tools?.[0]?.name).toBe("sample_ping");
     expect(tools?.[0]?.parameters).toMatchObject({ type: "object" });
+    expect(tools?.[0]?.namespace).toEqual({ name: "sample", displayName: "Sample service", description: "Check service availability" });
+    const discoveryTools = await extension.getDiscoveryTools?.();
+    expect(discoveryTools?.[0]?.namespace).toEqual({ name: "sample", displayName: "Sample service", description: "Check service availability" });
     expect(extension.advancedConfigFields).toEqual(["region"]);
-    expect(prompt).toEqual([
-      "Use Sample when needed.",
-      [
-        "Yoplai exposes this extension's tools with these exact names:",
-        "- sample_ping: Ping",
-      ].join("\n"),
-    ]);
+    expect(prompt).toEqual(["Use Sample when needed."]);
 
     delete process.env.YOPLAI_TEST_TOKEN;
   });

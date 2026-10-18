@@ -60,9 +60,10 @@ vi.mock("@earendil-works/pi-ai/compat", () => ({
 
 vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   createCodemodeExtension: (await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()).createCodemodeExtension,
+  createToolSearchExtension: (await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()).createToolSearchExtension,
   createAgentSession: mockCreateAgentSession,
   SessionManager: {
-    open: vi.fn(() => ({ close: vi.fn() })),
+    open: vi.fn(() => ({ close: vi.fn(), buildSessionContext: () => ({ messages: [] }) })),
   },
   SettingsManager: {
     create: vi.fn(() => ({})),
@@ -110,6 +111,7 @@ function makeSession() {
     sessionManager,
     refreshContext,
     subscribe: vi.fn(() => vi.fn()),
+    setActiveToolsByName: vi.fn(),
     setModel: vi.fn(async () => undefined),
     prompt: vi.fn(async () => undefined),
     abort: vi.fn(),

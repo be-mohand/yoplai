@@ -2,7 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { getCurrentTools } from "@earendil-works/pi-ai";
+import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "@yoplai/shared";
@@ -113,7 +115,7 @@ async function createPiExtensionTools(
   usedToolNames: Set<string>,
   params: SdkRunParams,
   includeDescribeImage = false
-): Promise<{ tools: AgentTool[]; invisibleToolNames: Set<string> }> {
+) {
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
   const tools = await getExtensionAgentTools(
@@ -124,14 +126,16 @@ async function createPiExtensionTools(
     params
   );
   const invisibleToolNames = new Set<string>();
-  const piTools: AgentTool[] = tools.map((tool): AgentTool => {
+  const descriptors: Parameters<typeof createToolDeferralCatalog>[0][number][] = [];
+  const piTools: ToolDefinition[] = tools.map((tool): ToolDefinition => {
     const name = claimAgentToolName(tool.name, usedToolNames);
     if (tool.extensionId === "taskLifecycle") invisibleToolNames.add(name);
+    descriptors.push({ ...tool, name, canonicalName: tool.name });
     return {
       name,
       label: tool.description,
       description: tool.description,
-      parameters: tool.parameters as unknown as AgentTool["parameters"],
+      parameters: tool.parameters as unknown as ToolDefinition["parameters"],
       execute: async (_toolCallId, toolParams, signal) => {
         const result = await tool.execute(toolParams, {
           agent,
@@ -153,22 +157,32 @@ async function createPiExtensionTools(
     };
   });
   if (params.context?.project?.id) {
-    for (const tool of projectTools) piTools.push({
-      name: claimAgentToolName(tool.name, usedToolNames),
-      label: tool.description,
-      description: tool.description,
-      parameters: tool.parameters as unknown as AgentTool["parameters"],
-      execute: async (_toolCallId, args) => {
-        const result = await executeProjectTool(tool.name, args, {
-          agentId: params.agentId, sessionId: params.sessionId, userId: params.userId,
-          projectId: params.context?.project?.id,
-        });
-        return { content: [{ type: "text", text: stringifyToolResult(result) }], details: result };
-      },
-    });
+    for (const tool of projectTools) {
+      const name = claimAgentToolName(tool.name, usedToolNames);
+      descriptors.push({
+        name,
+        canonicalName: tool.name,
+        extensionId: tool.extensionId,
+        extensionDescription: "Read and manage project documents",
+      });
+      piTools.push({
+        name,
+        label: tool.description,
+        description: tool.description,
+        parameters: tool.parameters as unknown as ToolDefinition["parameters"],
+        execute: async (_toolCallId, args) => {
+          const result = await executeProjectTool(tool.name, args, {
+            agentId: params.agentId, sessionId: params.sessionId, userId: params.userId,
+            projectId: params.context?.project?.id,
+          });
+          return { content: [{ type: "text", text: stringifyToolResult(result) }], details: result };
+        },
+      });
+    }
   }
   if (includeDescribeImage && config.imageDescription?.enabled === true) {
     const name = claimAgentToolName("describe_image", usedToolNames);
+    descriptors.push({ name, extensionId: "imageDescription", core: true });
     piTools.push({
       name,
       label: "Describe an attached image",
@@ -178,7 +192,7 @@ async function createPiExtensionTools(
         type: "object",
         properties: { path: { type: "string" }, question: { type: "string" } },
         required: ["path"],
-      } as AgentTool["parameters"],
+      } as ToolDefinition["parameters"],
       execute: async (_toolCallId, toolParams) => {
         const args = toolParams as { path?: unknown; question?: unknown };
         if (typeof args.path !== "string")
@@ -206,7 +220,7 @@ async function createPiExtensionTools(
       },
     });
   }
-  return { tools: piTools, invisibleToolNames };
+  return { tools: piTools, invisibleToolNames, descriptors };
 }
 
 export async function findSessionImageAttachment(
@@ -314,6 +328,7 @@ export const piAdapter: SdkAdapter = {
       const {
         createAgentSession,
         createCodemodeExtension,
+        createToolSearchExtension,
         SessionManager,
         SettingsManager,
         ModelRuntime,
@@ -421,8 +436,8 @@ export const piAdapter: SdkAdapter = {
       const turnSupportsImages =
         modelSupportsImages(model) &&
         (!configuredFallback || modelSupportsImages(configuredFallback));
-      const usedToolNames = new Set<string>();
-      const { tools: extensionTools, invisibleToolNames } =
+      const usedToolNames = new Set([...builtInTools, "tool_search", "codemode"]);
+      const { tools: extensionTools, invisibleToolNames, descriptors } =
         await createPiExtensionTools(
           agent,
           usedToolNames,
@@ -433,7 +448,18 @@ export const piAdapter: SdkAdapter = {
         ...builtInTools,
         ...extensionTools.map((tool) => tool.name),
         ...(agent.codemode === true ? ["codemode"] : []),
+        ...(agent.toolDeferral?.enabled !== false ? ["tool_search"] : []),
       ];
+      const catalog = createToolDeferralCatalog(
+        [
+          ...descriptors,
+          ...tools.filter(name => !extensionTools.some(tool => tool.name === name))
+            .map(name => ({ name, extensionId: "host", core: true })),
+        ],
+        agent.toolDeferral
+      );
+      for (const tool of extensionTools)
+        Object.assign(tool, catalog.tools.get(tool.name));
       const extensionPrompts = await getExtensionSystemPromptContributions(
         agent,
         loadConfig(),
@@ -464,9 +490,21 @@ export const piAdapter: SdkAdapter = {
         cwd: params.workspaceDir,
         agentDir: CONFIG_DIR,
         settingsManager,
-        extensionFactories: agent.codemode === true
-          ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
-          : [],
+        extensionFactories: [
+          ...(agent.toolDeferral?.enabled !== false
+            ? [createToolSearchExtension()]
+            : []),
+          ...(agent.codemode === true
+            ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
+            : []),
+          (pi) => {
+            pi.on("before_agent_start", (event) => {
+              if (catalog.summary)
+                event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
+              else delete event.systemPromptOptions.sections["deferred-tools"];
+            });
+          },
+        ],
         systemPromptOverride: () => PI_SYSTEM_PROMPT,
         appendSystemPrompt:
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
@@ -495,6 +533,10 @@ export const piAdapter: SdkAdapter = {
         sessionManager,
         settingsManager,
       });
+
+      agentSession.setActiveToolsByName(
+        catalog.activeToolNames(getCurrentTools(sessionManager.buildSessionContext().messages))
+      );
 
       // Repair orphaned tool calls from interrupted sessions
       repairOrphanedToolCalls(agentSession);

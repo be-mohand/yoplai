@@ -198,7 +198,8 @@ describe("Pi adapter codemode", () => {
       await expect(piAdapter.run(run.params)).resolves.toMatchObject({
         text: "Codemode disabled",
       });
-      expect(tools).toContain("fixture_count");
+      expect(tools).not.toContain("fixture_count");
+      expect(tools).toContain("tool_search");
       expect(tools).not.toContain("codemode");
     }
   );

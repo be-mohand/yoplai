@@ -240,6 +240,13 @@ export const AgentLoopConfigSchema = z.object({
 });
 export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 
+export const ToolDeferralConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  alwaysOnTools: z.array(z.string()).optional(),
+  alwaysOnExtensions: z.array(z.string()).optional(),
+});
+export type ToolDeferralConfig = z.infer<typeof ToolDeferralConfigSchema>;
+
 // Agent config
 const AgentConfigBaseSchema = z.object({
   id: z.string(),
@@ -274,6 +281,7 @@ const AgentConfigBaseSchema = z.object({
   extensions: z.record(z.string(), ExtensionBaseConfigSchema).optional(),
   globalSkills: z.boolean().optional(), // Include ~/.agents/skills/ (default: false)
   codemode: z.boolean().optional(),
+  toolDeferral: ToolDeferralConfigSchema.optional(),
   onecliToken: z.string().optional(), // Per-agent OneCLI proxy token
   sandbox: AgentSandboxConfigSchema.optional(),
 });
@@ -1481,9 +1489,17 @@ export type ExtensionAgentToolContext = {
   }) => void;
 };
 
+export const ToolNamespaceSchema = z.object({
+  name: z.string(),
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+});
+export type ToolNamespace = z.infer<typeof ToolNamespaceSchema>;
+
 export type ExtensionAgentTool = {
   name: string;
   description: string;
+  namespace?: ToolNamespace;
   parameters: Record<string, unknown>;
   execute(
     args: unknown,
@@ -2537,8 +2553,11 @@ export type ContainerRunnerProtocolEvent = z.infer<
 
 export const ContainerExtensionToolSchema = z.object({
   extensionId: z.string(),
+  extensionDescription: z.string().optional(),
   name: z.string(),
+  canonicalName: z.string().optional(),
   description: z.string(),
+  namespace: ToolNamespaceSchema.optional(),
   parameters: z.record(z.unknown()),
 });
 export type ContainerExtensionTool = z.infer<
@@ -2554,6 +2573,7 @@ export type ContainerSystemFile = z.infer<typeof ContainerSystemFileSchema>;
 export const ContainerInputSchema = z.object({
   agentId: z.string(),
   codemode: z.boolean().optional(),
+  toolDeferral: ToolDeferralConfigSchema.required().optional(),
   sessionId: z.string(),
   // Optional for back-compat with containers launched before per-run IPC
   // namespaces existed.

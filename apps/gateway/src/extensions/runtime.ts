@@ -77,6 +77,7 @@ function rebindAtCallTime(extension: Extension, tool: ExtensionAgentTool): Exten
 
 export type LoadedExtensionAgentTool = ExtensionAgentTool & {
   extensionId: string;
+  extensionDescription?: string;
 };
 
 export type ExtensionRouteMetadata = {
@@ -241,6 +242,7 @@ export class ExtensionRuntime {
           return tools.map((tool) => ({
             ...tool,
             extensionId: extension.id,
+            extensionDescription: extension.description,
             // Rebuild at call time: credentials, and for OAuth the grant deciding personal vs team settings, may have changed.
             execute: withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute),
           }));

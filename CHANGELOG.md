@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.
 - Per-agent Pi codemode for host and container runs, with nested tool calls grouped in chat and parented tracing spans.
 - With cron monitoring enabled, Scheduled jobs refresh every two seconds and show a pulsing Running badge with elapsed time until execution finishes.
 - Scheduled run history refreshes automatically, and running traces show live thinking, tool results, and output while following the bottom until you scroll up.

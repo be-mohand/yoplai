@@ -4,6 +4,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   InMemoryCredentialStore,
   ModelsError,
+  getCurrentTools,
   type AssistantMessage,
   type ImageContent,
   type OAuthCredential,
@@ -15,6 +16,7 @@ import {
   SettingsManager,
   createAgentSession,
   createCodemodeExtension,
+  createToolSearchExtension,
   type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -40,6 +42,7 @@ import {
   type HistoryEvent,
 } from "@yoplai/shared";
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
+import { createToolDeferralCatalog, resolveToolDeferralConfig } from "@yoplai/shared/tool-deferral";
 import { fetchOAuthToken, type OAuthTokenInput } from "./gateway-client.js";
 
 // The Pi SDK itself tries `oauth.refresh()` once a stored credential has
@@ -405,13 +408,55 @@ export async function runAgent(
       input.workspaceDir,
       input.sessionDir
     );
+    const toolDeferral = resolveToolDeferralConfig(input.toolDeferral);
+    const builtInTools = ["read", "bash", "edit", "write"];
+    const usedToolNames = new Set([
+      ...builtInTools,
+      "tool_search",
+      "codemode",
+    ]);
+    const sendFileTool = createSendFileTool(input, usedToolNames);
+    const extensionTools = createExtensionTools(input, usedToolNames);
+    const customTools = [
+      ...(input.turnDeadlineAt !== undefined
+        ? [createDeadlineBashTool(input.workspaceDir, input.turnDeadlineAt)]
+        : []),
+      ...extensionTools,
+      sendFileTool,
+    ];
+    const coreTools = [
+      ...builtInTools,
+      sendFileTool.name,
+      ...(toolDeferral.enabled ? ["tool_search"] : []),
+      ...(input.codemode === true ? ["codemode"] : []),
+    ];
+    const catalog = createToolDeferralCatalog([
+      ...coreTools.map((name) => ({ name, extensionId: "core", core: true })),
+      ...extensionTools.map((tool, index) => ({
+        ...input.extensionTools![index],
+        name: tool.name,
+        canonicalName: input.extensionTools![index].canonicalName ?? input.extensionTools![index].name,
+        core: input.extensionTools![index].extensionId === "gateway" &&
+          (input.extensionTools![index].canonicalName ?? input.extensionTools![index].name) === "describe_image",
+      })),
+    ], toolDeferral);
+    for (const tool of customTools) Object.assign(tool, catalog.tools.get(tool.name));
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.workspaceDir,
       agentDir: input.sessionDir,
       settingsManager,
-      extensionFactories: input.codemode === true
-        ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
-        : [],
+      extensionFactories: [
+        ...(toolDeferral.enabled ? [createToolSearchExtension()] : []),
+        ...(input.codemode === true
+          ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
+          : []),
+        (pi) => {
+          pi.on("before_agent_start", (event) => {
+            if (catalog.summary) event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
+            else delete event.systemPromptOptions.sections["deferred-tools"];
+          });
+        },
+      ],
       additionalSkillPaths: [
         getBuiltInSkillsDir(),
         path.join(input.workspaceDir, "skills"),
@@ -427,19 +472,11 @@ export async function runAgent(
     await resourceLoader.reload();
 
     const sessionManager = SessionManager.open(sessionFile, input.sessionDir);
-    const builtInTools = ["read", "bash", "edit", "write"];
-    const usedToolNames = new Set<string>();
-    const customTools = [
-      ...(input.turnDeadlineAt !== undefined
-        ? [createDeadlineBashTool(input.workspaceDir, input.turnDeadlineAt)]
-        : []),
-      ...createExtensionTools(input, usedToolNames),
-      createSendFileTool(input, usedToolNames),
-    ];
     // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
     const tools = [
       ...builtInTools,
       ...customTools.map((tool) => tool.name),
+      ...(toolDeferral.enabled ? ["tool_search"] : []),
       ...(input.codemode === true ? ["codemode"] : []),
     ];
 
@@ -455,6 +492,9 @@ export async function runAgent(
       sessionManager,
       settingsManager,
     });
+    session.setActiveToolsByName(catalog.activeToolNames(
+      getCurrentTools(sessionManager.buildSessionContext().messages)
+    ));
     activeSession = session;
     activeOAuthContext = { ctx: oauthCtx, provider };
 

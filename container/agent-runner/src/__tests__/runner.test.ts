@@ -12,7 +12,7 @@ const proxyFetchMock = vi.hoisted(() => vi.fn());
 const piMock = vi.hoisted(() => {
   const subscribers: Array<(event: unknown) => void> = [];
   const setRuntimeApiKey = vi.fn();
-  const sessionManagerOpen = vi.fn(() => ({}));
+  const sessionManagerOpen = vi.fn(() => ({ buildSessionContext: () => ({ messages: agent.state.messages }) }));
   const model = {
     provider: "anthropic",
     id: "claude-sonnet-4-6",
@@ -38,6 +38,7 @@ const piMock = vi.hoisted(() => {
       return vi.fn();
     }),
     setModel: vi.fn(async () => undefined),
+    setActiveToolsByName: vi.fn(),
     prompt: vi.fn(async () => undefined),
     sendUserMessage: vi.fn(async () => undefined),
     abort: vi.fn(async () => undefined),
@@ -60,6 +61,7 @@ const piMock = vi.hoisted(() => {
       agent.continue.mockResolvedValue(undefined);
       session.subscribe.mockClear();
       session.setModel.mockClear();
+      session.setActiveToolsByName.mockClear();
       session.prompt.mockReset();
       session.prompt.mockResolvedValue(undefined);
       session.sendUserMessage.mockClear();
@@ -73,7 +75,8 @@ const piMock = vi.hoisted(() => {
   };
 });
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
+  getCurrentTools: (await importOriginal<typeof import("@earendil-works/pi-ai")>()).getCurrentTools,
   InMemoryCredentialStore: class {
     private store = new Map<string, unknown>();
     async modify(
@@ -98,7 +101,9 @@ vi.mock("@earendil-works/pi-ai", () => ({
   },
 }));
 
-vi.mock("@earendil-works/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
+  createCodemodeExtension: (await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()).createCodemodeExtension,
+  createToolSearchExtension: (await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()).createToolSearchExtension,
   ModelRuntime: {
     create: vi.fn(async () => ({
       setRuntimeApiKey: piMock.setRuntimeApiKey,
@@ -591,7 +596,7 @@ describe("Pi runner", () => {
     );
     expect(piMock.createAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        tools: ["read", "bash", "edit", "write", "send_file"],
+        tools: ["read", "bash", "edit", "write", "send_file", "tool_search"],
       })
     );
     expect(piMock.session.dispose).toHaveBeenCalledTimes(1);
@@ -1025,6 +1030,7 @@ describe("Pi runner", () => {
       "write",
       "scratchpad_read",
       "send_file",
+      "tool_search",
     ]);
     expect(customToolNames).not.toEqual(
       expect.arrayContaining([

@@ -54,6 +54,16 @@
       "development": "./src/run-failure.ts",
       "import": "./dist/run-failure.js",
       "types": "./dist/run-failure.d.ts"
+    },
+    "./tool-deferral": {
+      "development": "./src/tool-deferral.ts",
+      "import": "./dist/tool-deferral.js",
+      "types": "./dist/tool-deferral.d.ts"
+    },
+    "./testing/tool-deferral-fixture": {
+      "development": "./src/testing/tool-deferral-fixture.ts",
+      "import": "./dist/testing/tool-deferral-fixture.js",
+      "types": "./dist/testing/tool-deferral-fixture.d.ts"
     }
   },
   "scripts": {

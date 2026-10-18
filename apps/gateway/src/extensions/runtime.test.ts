@@ -45,6 +45,30 @@ const config = GatewayConfigSchema.parse({
 });
 
 describe("ExtensionRuntime", () => {
+  it("retains server namespace metadata and extension capabilities when loading tools", async () => {
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({
+      id: "mcp",
+      description: "Connected external services",
+      getAgentTools: async () => [{
+        name: "mcp__recordings__get_transcript",
+        description: "Get one transcript",
+        namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts" },
+        parameters: {},
+        execute: async () => "transcript",
+      }],
+    })]);
+
+    const tools = await runtime.getTools(agent, config);
+
+    expect(tools).toMatchObject([{
+      extensionId: "mcp",
+      extensionDescription: "Connected external services",
+      namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts" },
+    }]);
+    await expect(tools[0]!.execute({}, { agent, config })).resolves.toBe("transcript");
+  });
+
   it("refuses a missing token with the trusted Slack flow link without executing the extension", async () => {
     const execute = vi.fn();
     const provider = vi.fn(async () => "<slack-pair-link>");
