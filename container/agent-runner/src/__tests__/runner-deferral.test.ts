@@ -337,6 +337,10 @@ describe("Container Pi deferred tools", () => {
         }),
       ])
     );
+    // The tracer keeps the latest prompt event: it must match the last request.
+    expect(
+      events.filter((event) => event.type === "system_prompt").at(-1)
+    ).toMatchObject({ text: getCurrentSystemPrompt(contexts[2].messages) });
     respond([capture]);
     await expect(run({ message: "again" })).resolves.toMatchObject({
       text: "done",

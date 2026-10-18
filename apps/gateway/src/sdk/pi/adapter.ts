@@ -658,7 +658,6 @@ export const piAdapter: SdkAdapter = {
 
       // Subscribe to streaming events
       let handlePublished = false;
-      let systemPromptChecked = false;
       const unsubscribe = agentSession.subscribe((evt) => {
         // An idle Pi session starts a new prompt on delivery. Publish only
         // once the original run is active, so early messages stay buffered.
@@ -666,17 +665,10 @@ export const piAdapter: SdkAdapter = {
           handlePublished = true;
           params.onSessionHandle?.(agentSession);
         }
-        // `before_agent_start` adds sections such as `deferred-tools` after
-        // the session is created. Send the prompt again if the model got a
-        // new one.
-        if (
-          !systemPromptChecked &&
-          evt.type === "message_start" &&
-          evt.message.role === "assistant"
-        ) {
-          systemPromptChecked = true;
+        // Pi changes the prompt after session creation (`before_agent_start`
+        // sections) and between turns (loaded tools). Send each new prompt.
+        if (evt.type === "message_start" && evt.message.role === "assistant")
           sendSystemPrompt();
-        }
         if (evt.type === "message_update") {
           const msg = (evt as { message?: AgentMessage }).message;
           if (msg?.role === "assistant") {

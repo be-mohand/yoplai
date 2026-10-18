@@ -553,6 +553,10 @@ describe("Pi gateway deferred tools", () => {
         ),
       })
     );
+    // The tracer keeps the latest prompt event: it must match the last request.
+    expect(
+      run.history.filter((event) => event.type === "system_prompt").at(-1)
+    ).toMatchObject({ text: getCurrentSystemPrompt(contexts[2].messages) });
     setup.faux.setResponses([capture]);
     await piAdapter.run({ ...run.params, message: "Check again" });
     expect(getCurrentTools(contexts[3].messages).map((t) => t.name)).toContain(

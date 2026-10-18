@@ -503,7 +503,6 @@ export async function runAgent(
     activeOAuthContext = { ctx: oauthCtx, provider };
 
     let sentSystemPrompt: string | undefined;
-    let systemPromptChecked = false;
     const sendSystemPrompt = () => {
       const systemPrompt = session.systemPrompt;
       if (
@@ -528,16 +527,10 @@ export async function runAgent(
         initialRunStarted = true;
         void steerPendingFollowUps(session);
       }
-      // `before_agent_start` adds sections such as `deferred-tools` after the
-      // session is created. Send the prompt again if the model got a new one.
-      if (
-        !systemPromptChecked &&
-        evt.type === "message_start" &&
-        evt.message.role === "assistant"
-      ) {
-        systemPromptChecked = true;
+      // Pi changes the prompt after session creation (`before_agent_start`
+      // sections) and between turns (loaded tools). Send each new prompt.
+      if (evt.type === "message_start" && evt.message.role === "assistant")
         sendSystemPrompt();
-      }
       for (const event of collectHistoryEvent(evt, history)) {
         onStreamEvent?.(event);
       }
