@@ -8,6 +8,7 @@ import {
   type Extension,
   type ExtensionAgentToolContext,
   type ExtensionAgentTool,
+  type ToolNamespace,
   type ExtensionHookContext,
   type GatewayConfig,
   type ValidationResult,
@@ -30,7 +31,9 @@ export interface ResolvedToolExtensionConfig {
 export interface ToolExtensionTool {
   name: string;
   description: string;
+  namespace?: ToolNamespace;
   parameters: z.AnyZodObject;
+  outputSchema?: z.ZodTypeAny;
   execute(
     params: unknown,
     context: ExtensionAgentToolContext
@@ -238,21 +241,6 @@ function getMountedToolName(
     : `${definition.id}_${toolName}`;
 }
 
-function renderMountedToolNames(
-  definition: ToolExtensionDefinition,
-  resolved: ResolvedToolExtensionConfig
-): string {
-  return [
-    "Yoplai exposes this extension's tools with these exact names:",
-    ...definition
-      .createTools(resolved)
-      .map(
-        (tool) =>
-          `- ${getMountedToolName(definition, tool.name)}: ${tool.description}`
-      ),
-  ].join("\n");
-}
-
 export function defineToolExtension(
   definition: ToolExtensionDefinition
 ): Extension {
@@ -318,6 +306,8 @@ export function defineToolExtension(
       return definition.createTools(empty).map((tool) => ({
         name: getMountedToolName(definition, tool.name),
         description: tool.description,
+        namespace: tool.namespace,
+        ...(tool.outputSchema ? { outputSchema: zodToJsonSchema(tool.outputSchema, { $refStrategy: "none" }) as Record<string, unknown> } : {}),
         parameters: zodToJsonSchema(tool.parameters, {
           $refStrategy: "none",
         }) as Record<string, unknown>,
@@ -333,15 +323,8 @@ export function defineToolExtension(
         context.env
       );
       if (!resolved) return undefined;
-      resolved.oauth = await resolveOAuthForDefinition(
-        definition,
-        agent,
-        context,
-        resolved
-      );
       return [
         definition.systemPrompt?.trim() || undefined,
-        renderMountedToolNames(definition, resolved),
       ].filter((prompt): prompt is string => Boolean(prompt));
     },
     async getAgentTools(agent, context): Promise<ExtensionAgentTool[]> {
@@ -363,6 +346,8 @@ export function defineToolExtension(
       return tools.map((tool) => ({
         name: getMountedToolName(definition, tool.name),
         description: tool.description,
+        namespace: tool.namespace,
+        ...(tool.outputSchema ? { outputSchema: zodToJsonSchema(tool.outputSchema, { $refStrategy: "none" }) as Record<string, unknown> } : {}),
         parameters: zodToJsonSchema(tool.parameters, {
           $refStrategy: "none",
         }) as Record<string, unknown>,

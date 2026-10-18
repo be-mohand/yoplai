@@ -34,6 +34,7 @@ export type WsStreamEvent =
       id: string;
       name: string;
       arguments: unknown;
+      parentToolCallId?: string;
     }
   | {
       type: "tool_result";
@@ -42,6 +43,7 @@ export type WsStreamEvent =
       content: string;
       isError?: boolean;
       details?: { diff?: string };
+      parentToolCallId?: string;
     }
   | {
       type: "tool_start";
@@ -90,8 +92,10 @@ export type WsStreamEvent =
         id: string;
         name: string;
         arguments: unknown;
+        parentToolCallId?: string;
         status: "running" | "done" | "error";
       }>;
+      toolResults?: ActiveTurn["toolResults"];
     }
   | {
       type: "error";
@@ -112,9 +116,17 @@ export function dispatchWsEvent(
       callbacks.onThinking?.(event.data);
       break;
     case "tool_call":
-      callbacks.onToolCall?.(event.id, event.name, event.arguments);
+      if (event.parentToolCallId) {
+        callbacks.onToolCall?.(event.id, event.name, event.arguments, event.parentToolCallId);
+      } else {
+        callbacks.onToolCall?.(event.id, event.name, event.arguments);
+      }
       break;
     case "tool_result":
+      if (event.parentToolCallId) {
+        callbacks.onToolResult?.(event.id, event.name, event.content, event.isError ?? false, event.details, event.parentToolCallId);
+        break;
+      }
       callbacks.onToolResult?.(
         event.id,
         event.name,
@@ -162,6 +174,7 @@ export function dispatchWsEvent(
         thinking: event.thinking,
         text: event.text,
         toolCalls: event.toolCalls,
+        ...(event.toolResults && { toolResults: event.toolResults }),
       });
       break;
     case "error":

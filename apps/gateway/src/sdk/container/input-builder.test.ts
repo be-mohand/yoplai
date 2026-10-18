@@ -2,11 +2,67 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { GatewayConfig } from "@yoplai/shared";
+import { z } from "zod";
+import { ContainerInputSchema, type GatewayConfig } from "@yoplai/shared";
 import { ContainerInputBuilder } from "./input-builder.js";
 import type { SdkRunParams } from "../types.js";
+import { ExtensionRuntime } from "../../extensions/runtime.js";
 
 describe("container input builder", () => {
+  it("transports resolved deferral settings and extension namespace capabilities through JSON", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-deferral-input-"));
+    try {
+      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "Deferral fixture guidance");
+      const runtime = new ExtensionRuntime();
+      runtime.load([{
+        id: "mcp", displayName: "MCP", description: "Connected services", dependencies: [],
+        configSchema: z.object({}), routePrefixes: [],
+        validateConfig: () => ({ valid: true, errors: [] }),
+        registerRoutes: () => undefined, start: async () => undefined, stop: async () => undefined,
+        capabilities: () => [],
+        getAgentTools: async () => [{
+          name: "mcp__meetings__find_recording", description: "Find a recording", parameters: { type: "object" },
+          namespace: { name: "meetings", displayName: "Meeting archive", description: "Search meeting recordings and transcripts" },
+          execute: async () => "recording",
+        }],
+      }]);
+      const params = {
+        agentId: "test", sessionId: "session", message: "hello", workspaceDir, extensionRuntime: runtime,
+        agent: { id: "test", workspace: workspaceDir, model: { provider: "anthropic", model: "test" }, toolDeferral: { enabled: false, alwaysOnTools: ["pipedrive.search"], alwaysOnExtensions: ["calendar"] } },
+      } as SdkRunParams;
+      const config = { agents: [params.agent], extensions: {} } as GatewayConfig;
+      const builder = new ContainerInputBuilder();
+      const input = ContainerInputSchema.parse(JSON.parse(JSON.stringify(await builder.build(params, config, "test-token"))));
+
+      expect(input.toolDeferral).toEqual({ enabled: false, alwaysOnTools: ["pipedrive.search"], alwaysOnExtensions: ["calendar"] });
+      expect(input.extensionTools).toContainEqual({
+        extensionId: "mcp", extensionDescription: "Connected services", canonicalName: "mcp__meetings__find_recording",
+        name: "mcp__meetings__find_recording", description: "Find a recording", parameters: { type: "object" },
+        namespace: { name: "meetings", displayName: "Meeting archive", description: "Search meeting recordings and transcripts" },
+      });
+      const defaults = await builder.build({ ...params, agent: { ...params.agent, toolDeferral: undefined } }, config, "test-token");
+      expect(ContainerInputSchema.parse(JSON.parse(JSON.stringify(defaults))).toolDeferral).toEqual({ enabled: true, alwaysOnTools: [], alwaysOnExtensions: [] });
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([true, false, undefined])("transports codemode %s to the runner", async (codemode) => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-codemode-input-"));
+    try {
+      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "test soul");
+      const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
+      const params = {
+        agentId: "test", sessionId: "session", message: "hello", workspaceDir,
+        agent: { id: "test", codemode, model: { provider: "anthropic", model: "test" } },
+      } as SdkRunParams;
+      const input = await builder.build(params, { agents: [params.agent], extensions: {} } as GatewayConfig, "test-token");
+      expect(ContainerInputSchema.parse(JSON.parse(JSON.stringify(input))).codemode).toBe(codemode);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("builds container input without leaking model auth tokens", async () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")

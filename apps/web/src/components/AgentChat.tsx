@@ -88,6 +88,9 @@ type LogItem = {
   collapsible?: boolean;
   systemCallout?: boolean;
   subagentRun?: SubagentRunInfo;
+  toolCallId?: string;
+  parentToolCallId?: string;
+  nestedToolCalls?: LogItem[];
   clientId?: string;
   pending?: boolean;
   queued?: boolean;
@@ -377,13 +380,18 @@ function buildLeadLogs(messages: FullHistoryMessage[]): LogItem[] {
             entries.push({ tone: "assistant", body: text });
           }
         } else if (block.type === "toolCall") {
+          const pushToolLog = (item: LogItem) => entries.push({
+            ...item,
+            toolCallId: block.id,
+            parentToolCallId: block.parentToolCallId,
+          });
           const toolName = block.name ?? "";
           const toolKey = toolName.toLowerCase();
           const args = block.arguments as Record<string, unknown>;
           if (toolKey === "read") {
             const output = toolResults.get(block.id);
             const body = output ? getTextBlocks(output.content) : "";
-            entries.push({
+            pushToolLog({
               tone: "muted",
               icon: "read",
               title: summarizeToolLabel(
@@ -401,7 +409,7 @@ function buildLeadLogs(messages: FullHistoryMessage[]): LogItem[] {
           if (toolKey === "bash") {
             const output = toolResults.get(block.id);
             const body = output ? getTextBlocks(output.content) : "";
-            entries.push({
+            pushToolLog({
               tone: "muted",
               icon: "bash",
               title: summarizeToolLabel(
@@ -419,7 +427,7 @@ function buildLeadLogs(messages: FullHistoryMessage[]): LogItem[] {
           if (toolKey === "write") {
             const content =
               typeof args?.content === "string" ? args.content : "";
-            entries.push({
+            pushToolLog({
               tone: "muted",
               icon: "write",
               title: summarizeToolLabel(toolKey, args, content),
@@ -432,7 +440,7 @@ function buildLeadLogs(messages: FullHistoryMessage[]): LogItem[] {
           if (toolKey === "skill") {
             const output = toolResults.get(block.id);
             const body = output ? getTextBlocks(output.content) : "";
-            entries.push({
+            pushToolLog({
               tone: "muted",
               icon: "tool",
               title: summarizeToolLabel(
@@ -472,7 +480,7 @@ function buildLeadLogs(messages: FullHistoryMessage[]): LogItem[] {
                 body: summary,
               });
             }
-            entries.push({
+            pushToolLog({
               tone: "muted",
               icon: "subagent",
               title: `Subagent Run${subagentType ? ` (${subagentType})` : ""}`,
@@ -485,7 +493,7 @@ function buildLeadLogs(messages: FullHistoryMessage[]): LogItem[] {
           }
           const output = toolResults.get(block.id);
           const outputText = output ? getTextBlocks(output.content) : "";
-          entries.push({
+          pushToolLog({
             tone: "muted",
             icon: "tool",
             title: summarizeToolLabel(
@@ -980,6 +988,20 @@ function renderLogItem(
   onToggle?: (next: boolean) => void,
   onMeasure?: (element: HTMLDivElement) => void
 ) {
+  if (item.nestedToolCalls?.length) {
+    return (
+      <div class="tool-call-group">
+        {renderLogItem(
+          { ...item, nestedToolCalls: undefined },
+          collapsibleKey, initialExpanded, onToggle, onMeasure
+        )}
+        <details class="nested-tool-calls">
+          <summary>{item.nestedToolCalls.length} nested tool call{item.nestedToolCalls.length === 1 ? "" : "s"}</summary>
+          {item.nestedToolCalls.map((child) => renderLogItem(child))}
+        </details>
+      </div>
+    );
+  }
   const useMarkdown = item.tone === "assistant" || item.tone === "user";
   if (item.collapsible) {
     const summaryText =
@@ -1674,8 +1696,10 @@ export function AgentChat(props: AgentChatProps) {
   const appendStreamingToolCall = (
     id: string,
     name: string,
-    rawArgs: unknown
+    rawArgs: unknown,
+    parentToolCallId?: string
   ) => {
+    if (streamingToolCalls.has(id)) return;
     const args =
       rawArgs && typeof rawArgs === "object"
         ? (rawArgs as Record<string, unknown>)
@@ -1755,7 +1779,7 @@ export function AgentChat(props: AgentChatProps) {
 
     setLeadLogs((prev) => {
       streamingToolCalls.set(id, { index: prev.length, name, args });
-      return [...prev, item];
+      return [...prev, { ...item, toolCallId: id, parentToolCallId }];
     });
   };
 
@@ -1822,6 +1846,26 @@ export function AgentChat(props: AgentChatProps) {
     }
   };
 
+  const applyLeadActiveTurn = (turn: import("../api").ActiveTurn) => {
+    const knownTools = new Map(leadLogs().filter((item) => item.toolCallId)
+      .map((item) => [item.toolCallId, item]));
+    setLeadStreaming(true);
+    setLeadLive(turn.text ?? "");
+    streamingToolCalls.clear();
+    setLeadLogs(buildLeadLogs(leadHistoryMessages()));
+    for (const tool of turn.toolCalls ?? []) {
+      appendStreamingToolCall(tool.id, tool.name, tool.arguments, tool.parentToolCallId);
+    }
+    setLeadLogs((items) => items.map((item) =>
+      item.toolCallId && !item.body && knownTools.get(item.toolCallId)?.body
+        ? { ...item, body: knownTools.get(item.toolCallId)!.body }
+        : item
+    ));
+    for (const result of turn.toolResults ?? []) {
+      updateStreamingToolResult(result.id, result.content, result.details);
+    }
+  };
+
   const loadLeadHistory = async () => {
     if (!props.agentId) return;
     const res = await fetchFullHistory(props.agentId, sessionKey());
@@ -1846,12 +1890,19 @@ export function AgentChat(props: AgentChatProps) {
       nextMessages,
       pending
     );
-    setLeadLogs(merged);
+    const liveTools = leadStreaming()
+      ? leadLogs().filter((item) => item.toolCallId && streamingToolCalls.has(item.toolCallId))
+      : [];
+    setLeadLogs([...merged, ...liveTools]);
+    for (const [id, entry] of streamingToolCalls) {
+      entry.index = leadLogs().findIndex((item) => item.toolCallId === id);
+    }
     setPendingLeadUserMessages(remaining);
     if (!leadStreaming()) {
       setLeadLive("");
       streamingToolCalls.clear();
     }
+    if (res.isStreaming && res.activeTurn) applyLeadActiveTurn(res.activeTurn);
   };
 
   const setupLead = () => {
@@ -1884,14 +1935,15 @@ export function AgentChat(props: AgentChatProps) {
       onProgress: () => {
         markLeadStreamActivity();
       },
-      onToolCall: (id, name, args) => {
+      onToolCall: (id, name, args, parentToolCallId) => {
         markLeadStreamActivity();
-        appendStreamingToolCall(id, name, args);
+        appendStreamingToolCall(id, name, args, parentToolCallId);
       },
       onToolResult: (id, _name, content, _isError, details) => {
         markLeadStreamActivity();
         updateStreamingToolResult(id, content, details);
       },
+      onActiveTurn: applyLeadActiveTurn,
       onDone: () => {
         setLeadStreaming(false);
         setLeadPending(false);
@@ -2500,7 +2552,16 @@ export function AgentChat(props: AgentChatProps) {
     setStopping(false);
   };
 
-  const leadLogItems = createMemo(() => leadLogs());
+  const leadLogItems = createMemo(() => {
+    const items = leadLogs();
+    return items.filter((item) => !item.parentToolCallId).map((item) => ({
+      ...item,
+      nestedToolCalls: item.toolCallId
+        ? items.filter((child) => child.parentToolCallId === item.toolCallId)
+        : [],
+    }));
+  });
+
   const estimatedContextUsagePct = createMemo(() => {
     let highestInputTokens = 0;
     let modelName: string | undefined;
@@ -3307,6 +3368,14 @@ export function AgentChat(props: AgentChatProps) {
         }
 
         /* ── Log lines — flat, full-width ── */
+
+        .nested-tool-calls {
+          margin: 4px 0 4px 14px;
+          padding-left: 12px;
+          border-left: 1px solid var(--border-default);
+          color: var(--text-muted);
+        }
+        .nested-tool-calls > summary { cursor: pointer; }
 
         .log-line {
           display: flex;

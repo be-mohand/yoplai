@@ -88,6 +88,46 @@ describe("config validation", () => {
     ]);
   });
 
+  it("preserves the optional codemode flag from agent YAML", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
+    for (const id of ["enabled", "disabled", "default"]) {
+      const dir = path.join(tmpDir, "agents", id);
+      await writeAgent(dir, id);
+      if (id !== "default") {
+        await fs.appendFile(path.join(dir, "agent.yaml"), `codemode: ${id === "enabled"}\n`);
+      }
+    }
+    await fs.writeFile(path.join(tmpDir, "yoplai.json"), JSON.stringify({ version: 3 }));
+    vi.stubEnv("YOPLAI_HOME", tmpDir);
+    const { loadConfig } = await import("./index.js");
+    expect(loadConfig().agents.map((agent) => [agent.id, agent.codemode])).toEqual([
+      ["default", undefined],
+      ["disabled", false],
+      ["enabled", true],
+    ]);
+  });
+
+  it("preserves tool deferral overrides from agent YAML without inventing absent settings", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
+    await writeAgent(path.join(tmpDir, "agents", "configured"), "configured");
+    await writeAgent(path.join(tmpDir, "agents", "default"), "default");
+    await fs.appendFile(path.join(tmpDir, "agents", "configured", "agent.yaml"), [
+      "toolDeferral:",
+      "  enabled: false",
+      "  alwaysOnTools: [pipedrive.search]",
+      "  alwaysOnExtensions: [calendar]",
+      "",
+    ].join("\n"));
+    await fs.writeFile(path.join(tmpDir, "yoplai.json"), JSON.stringify({ version: 3 }));
+    vi.stubEnv("YOPLAI_HOME", tmpDir);
+    const { loadConfig } = await import("./index.js");
+
+    expect(loadConfig().agents.map((agent) => [agent.id, agent.toolDeferral])).toEqual([
+      ["configured", { enabled: false, alwaysOnTools: ["pipedrive.search"], alwaysOnExtensions: ["calendar"] }],
+      ["default", undefined],
+    ]);
+  });
+
   it("discovers agents from exact directories and brace globs", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
     const home = path.join(tmpDir, "home");

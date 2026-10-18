@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { renderToolSignature } from "@earendil-works/pi-codemode";
 import {
   InMemoryCredentialStore,
   ModelsError,
+  getCurrentTools,
   type AssistantMessage,
   type ImageContent,
   type OAuthCredential,
@@ -14,6 +16,8 @@ import {
   SessionManager,
   SettingsManager,
   createAgentSession,
+  createCodemodeExtension,
+  createToolSearchExtension,
   type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -39,7 +43,10 @@ import {
   type HistoryEvent,
 } from "@yoplai/shared";
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
+import { createToolDeferralCatalog, resolveToolDeferralConfig } from "@yoplai/shared/tool-deferral";
 import { fetchOAuthToken, type OAuthTokenInput } from "./gateway-client.js";
+
+type SignatureSchema = Parameters<typeof renderToolSignature>[0]["inputSchema"];
 
 // The Pi SDK itself tries `oauth.refresh()` once a stored credential has
 // under 5 minutes of validity left, and throws because our credentials carry
@@ -212,6 +219,7 @@ const LARGE_TOOL_RESULT_THRESHOLD = 20_000;
 const LARGE_TOOL_RESULT_PREVIEW_LENGTH = 2_000;
 
 let activeSession: AgentSession | undefined;
+let activeAbortRequested = false;
 let pendingFollowUps: string[] = [];
 // Follow-ups stay buffered until the initial prompt's agent run has started.
 // Sending them earlier would start a separate run on the idle session that
@@ -310,6 +318,7 @@ async function steerPendingFollowUps(session: AgentSession): Promise<void> {
 }
 
 export function abortActiveAgent(): void {
+  activeAbortRequested = true;
   void activeSession?.abort();
 }
 
@@ -326,6 +335,7 @@ export async function runAgent(
   );
 
   activeSession = undefined;
+  activeAbortRequested = false;
   activeOAuthContext = undefined;
   initialRunStarted = false;
 
@@ -401,10 +411,73 @@ export async function runAgent(
       input.workspaceDir,
       input.sessionDir
     );
+    const toolDeferral = resolveToolDeferralConfig(input.toolDeferral);
+    const builtInTools = ["read", "bash", "edit", "write"];
+    const usedToolNames = new Set([
+      ...builtInTools,
+      "tool_search",
+      "codemode",
+    ]);
+    const sendFileTool = createSendFileTool(input, usedToolNames);
+    const extensionTools = createExtensionTools(input, usedToolNames);
+    const customTools = [
+      ...(input.turnDeadlineAt !== undefined
+        ? [createDeadlineBashTool(input.workspaceDir, input.turnDeadlineAt)]
+        : []),
+      ...extensionTools,
+      sendFileTool,
+    ];
+    const coreTools = [
+      ...builtInTools,
+      sendFileTool.name,
+      ...(toolDeferral.enabled ? ["tool_search"] : []),
+      ...(input.codemode === true ? ["codemode"] : []),
+    ];
+    const catalog = createToolDeferralCatalog([
+      ...coreTools.map((name) => ({ name, extensionId: "core", core: true })),
+      ...extensionTools.map((tool, index) => ({
+        ...input.extensionTools![index],
+        name: tool.name,
+        canonicalName: input.extensionTools![index].canonicalName ?? input.extensionTools![index].name,
+        core: input.extensionTools![index].extensionId === "gateway" &&
+          (input.extensionTools![index].canonicalName ?? input.extensionTools![index].name) === "describe_image",
+      })),
+    ], toolDeferral, { codemode: input.codemode === true });
+    for (const tool of customTools) Object.assign(tool, catalog.tools.get(tool.name));
+    const signatureOf = (name: string) => {
+      const tool = extensionTools.find((candidate) => candidate.name === name);
+      return tool
+        ? renderToolSignature({
+            name: tool.name,
+            inputSchema: tool.parameters as SignatureSchema,
+            outputSchema: tool.outputSchema as SignatureSchema,
+          })
+        : undefined;
+    };
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.workspaceDir,
       agentDir: input.sessionDir,
       settingsManager,
+      extensionFactories: [
+        ...(toolDeferral.enabled ? [createToolSearchExtension()] : []),
+        ...(input.codemode === true
+          ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
+          : []),
+        (pi) => {
+          pi.on("before_agent_start", (event) => {
+            if (catalog.summary) event.systemPromptOptions.sections["deferred-tools"] = catalog.summary;
+            else delete event.systemPromptOptions.sections["deferred-tools"];
+          });
+          pi.on("message_end", (event) => {
+            const unloaded = catalog.hintUnloadedToolResult(event.message);
+            const message =
+              input.codemode === true
+                ? (catalog.hintCodemodeSignatures(unloaded ?? event.message, signatureOf) ?? unloaded)
+                : unloaded;
+            return message ? { message } : undefined;
+          });
+        },
+      ],
       additionalSkillPaths: [
         getBuiltInSkillsDir(),
         path.join(input.workspaceDir, "skills"),
@@ -420,17 +493,13 @@ export async function runAgent(
     await resourceLoader.reload();
 
     const sessionManager = SessionManager.open(sessionFile, input.sessionDir);
-    const builtInTools = ["read", "bash", "edit", "write"];
-    const usedToolNames = new Set<string>();
-    const customTools = [
-      ...(input.turnDeadlineAt !== undefined
-        ? [createDeadlineBashTool(input.workspaceDir, input.turnDeadlineAt)]
-        : []),
-      ...createExtensionTools(input, usedToolNames),
-      createSendFileTool(input, usedToolNames),
-    ];
     // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
-    const tools = [...builtInTools, ...customTools.map((tool) => tool.name)];
+    const tools = [
+      ...builtInTools,
+      ...customTools.map((tool) => tool.name),
+      ...(toolDeferral.enabled ? ["tool_search"] : []),
+      ...(input.codemode === true ? ["codemode"] : []),
+    ];
 
     const { session } = await createAgentSession({
       cwd: input.workspaceDir,
@@ -444,11 +513,22 @@ export async function runAgent(
       sessionManager,
       settingsManager,
     });
+    session.setActiveToolsByName(catalog.activeToolNames(
+      getCurrentTools(sessionManager.buildSessionContext().messages)
+    ));
     activeSession = session;
     activeOAuthContext = { ctx: oauthCtx, provider };
 
-    const systemPrompt = session.systemPrompt;
-    if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
+    let sentSystemPrompt: string | undefined;
+    const sendSystemPrompt = () => {
+      const systemPrompt = session.systemPrompt;
+      if (
+        typeof systemPrompt !== "string" ||
+        systemPrompt.trim().length === 0 ||
+        systemPrompt === sentSystemPrompt
+      )
+        return;
+      sentSystemPrompt = systemPrompt;
       const systemPromptEvent: HistoryEvent = {
         type: "system_prompt",
         text: systemPrompt,
@@ -456,13 +536,18 @@ export async function runAgent(
       };
       history.push(systemPromptEvent);
       onStreamEvent?.(systemPromptEvent);
-    }
+    };
+    sendSystemPrompt();
 
     const unsubscribe = session.subscribe((evt) => {
       if (evt.type === "agent_start" && !initialRunStarted) {
         initialRunStarted = true;
         void steerPendingFollowUps(session);
       }
+      // Pi changes the prompt after session creation (`before_agent_start`
+      // sections) and between turns (loaded tools). Send each new prompt.
+      if (evt.type === "message_start" && evt.message.role === "assistant")
+        sendSystemPrompt();
       for (const event of collectHistoryEvent(evt, history)) {
         onStreamEvent?.(event);
       }
@@ -482,6 +567,9 @@ export async function runAgent(
             input.retry?.baseDelaySeconds ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
           runTurn: async (attempt) => {
             await ensureFreshOAuthToken(provider, oauthCtx);
+            if (activeAbortRequested) {
+              throw new DOMException("This operation was aborted", "AbortError");
+            }
             await runWithOAuthRefreshRetry(
               provider,
               oauthCtx,
@@ -627,11 +715,19 @@ export async function runAgent(
       unsubscribe();
     }
 
-    const lastAssistant = findLastAssistant(session.messages);
+    const lastAssistant = aborted && !initialRunStarted
+      ? undefined
+      : findLastAssistant(session.messages);
     const lastAssistantRecord = lastAssistant as
       | (Record<string, unknown> & AssistantMessage)
       | undefined;
-    if (lastAssistantRecord?.stopReason === "error") {
+    // Pi 1.x reports cancellation during request setup as an error message.
+    const cancelledDuringSetup =
+      activeAbortRequested &&
+      lastAssistantRecord?.stopReason === "error" &&
+      lastAssistantRecord.errorMessage === "This operation was aborted";
+    if (cancelledDuringSetup) aborted = true;
+    if (lastAssistantRecord?.stopReason === "error" && !cancelledDuringSetup) {
       const message =
         typeof lastAssistantRecord.errorMessage === "string" &&
         lastAssistantRecord.errorMessage
@@ -701,7 +797,9 @@ function createExtensionTools(
       tool.parameters,
       usedToolNames,
       (result, toolCallId) =>
-        formatGatewayToolResult(input, toolCallId, tool.name, result)
+        formatGatewayToolResult(input, toolCallId, tool.name, result),
+      tool.name,
+      tool.outputSchema
     )
   );
 }
@@ -798,6 +896,9 @@ function collectHistoryEvent(
     collected.push({
       type: "tool_call",
       id: typeof event.toolCallId === "string" ? event.toolCallId : "",
+      ...(typeof event.parentToolCallId === "string"
+        ? { parentToolCallId: event.parentToolCallId }
+        : {}),
       name: typeof event.toolName === "string" ? event.toolName : "unknown",
       args: event.args,
       timestamp: Date.now(),
@@ -808,6 +909,9 @@ function collectHistoryEvent(
     collected.push({
       type: "tool_result",
       id: typeof event.toolCallId === "string" ? event.toolCallId : "",
+      ...(typeof event.parentToolCallId === "string"
+        ? { parentToolCallId: event.parentToolCallId }
+        : {}),
       name: typeof event.toolName === "string" ? event.toolName : "unknown",
       content: extractToolResultText(event.result),
       isError: event.isError === true,

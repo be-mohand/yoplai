@@ -45,6 +45,30 @@ const config = GatewayConfigSchema.parse({
 });
 
 describe("ExtensionRuntime", () => {
+  it("retains server namespace metadata and extension capabilities when loading tools", async () => {
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({
+      id: "mcp",
+      description: "Connected external services",
+      getAgentTools: async () => [{
+        name: "mcp__recordings__get_transcript",
+        description: "Get one transcript",
+        namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts" },
+        parameters: {},
+        execute: async () => "transcript",
+      }],
+    })]);
+
+    const tools = await runtime.getTools(agent, config);
+
+    expect(tools).toMatchObject([{
+      extensionId: "mcp",
+      extensionDescription: "Connected external services",
+      namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts" },
+    }]);
+    await expect(tools[0]!.execute({}, { agent, config })).resolves.toBe("transcript");
+  });
+
   it("refuses a missing token with the trusted Slack flow link without executing the extension", async () => {
     const execute = vi.fn();
     const provider = vi.fn(async () => "<slack-pair-link>");
@@ -54,7 +78,7 @@ describe("ExtensionRuntime", () => {
     const requester = { ...agent, extensions: { sample: { enabled: true } } };
     try {
       const result = await runtime.executeTool(requester, "sample_send", {}, config, "session");
-      expect(result.result).toMatchObject({ error: "extension_credentials_required", connectUrl: "<slack-pair-link>" });
+      expect(result.result).toMatchObject({ isError: true, error: "extension_credentials_required", connectUrl: "<slack-pair-link>" });
       expect(provider).toHaveBeenCalledWith(expect.objectContaining({ agent: requester, sessionId: "session" }), { kind: "token", extensionId: "sample" });
       expect(execute).not.toHaveBeenCalled();
     } finally { unregister(); }
@@ -106,12 +130,12 @@ describe("ExtensionRuntime", () => {
     try {
       resolveToken.mockResolvedValue({ connected: false, provider: "google", reason: "insufficient_scope", message: "Reconnect" });
       expect((await runtime.executeTool(agent, "sample_send", {}, config, "s")).result).toEqual({
-        error: "oauth_connection_required", connected: false, reason: "insufficient_scope", authorizeUrl: "<link>",
+        isError: true, error: "oauth_connection_required", connected: false, reason: "insufficient_scope", authorizeUrl: "<link>",
         message: "Connect your personal google account at <link>, then try again.",
       });
       resolveToken.mockResolvedValue({ connected: false, provider: "google", reason: "not_connected", message: "nc" });
       expect((await runtime.executeTool(agent, "sample_send", {}, config, "s")).result).toEqual({
-        error: "oauth_connection_required", authorizeUrl: "<link>",
+        isError: true, error: "oauth_connection_required", authorizeUrl: "<link>",
         message: "Connect your personal google account at <link>, then try again.",
       });
       expect(execute).not.toHaveBeenCalled();
