@@ -17,6 +17,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
 - Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.
 - Per-agent Pi codemode for host and container runs, with nested tool calls grouped in chat and parented tracing spans.
 - With cron monitoring enabled, Scheduled jobs refresh every two seconds and show a pulsing Running badge with elapsed time until execution finishes.

@@ -33,6 +33,7 @@ export interface ToolExtensionTool {
   description: string;
   namespace?: ToolNamespace;
   parameters: z.AnyZodObject;
+  outputSchema?: z.ZodTypeAny;
   execute(
     params: unknown,
     context: ExtensionAgentToolContext
@@ -306,6 +307,7 @@ export function defineToolExtension(
         name: getMountedToolName(definition, tool.name),
         description: tool.description,
         namespace: tool.namespace,
+        ...(tool.outputSchema ? { outputSchema: zodToJsonSchema(tool.outputSchema, { $refStrategy: "none" }) as Record<string, unknown> } : {}),
         parameters: zodToJsonSchema(tool.parameters, {
           $refStrategy: "none",
         }) as Record<string, unknown>,
@@ -345,6 +347,7 @@ export function defineToolExtension(
         name: getMountedToolName(definition, tool.name),
         description: tool.description,
         namespace: tool.namespace,
+        ...(tool.outputSchema ? { outputSchema: zodToJsonSchema(tool.outputSchema, { $refStrategy: "none" }) as Record<string, unknown> } : {}),
         parameters: zodToJsonSchema(tool.parameters, {
           $refStrategy: "none",
         }) as Record<string, unknown>,

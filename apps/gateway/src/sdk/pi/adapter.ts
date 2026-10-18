@@ -136,6 +136,7 @@ async function createPiExtensionTools(
       label: tool.description,
       description: tool.description,
       parameters: tool.parameters as unknown as ToolDefinition["parameters"],
+      ...(tool.outputSchema ? { outputSchema: tool.outputSchema as ToolDefinition["outputSchema"] } : {}),
       execute: async (_toolCallId, toolParams, signal) => {
         const result = await tool.execute(toolParams, {
           agent,
@@ -152,6 +153,10 @@ async function createPiExtensionTools(
         return {
           content: [{ type: "text", text: stringifyToolResult(result) }],
           details: result,
+          ...(tool.outputSchema ? {
+            structuredContent: JSON.parse(JSON.stringify(result ?? null)),
+            isError: typeof result === "object" && result !== null && !Array.isArray(result) && "isError" in result && result.isError === true ? true : undefined,
+          } : {}),
         };
       },
     };

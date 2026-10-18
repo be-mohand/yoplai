@@ -1,4 +1,4 @@
-// Host validation, explicitly approved in ALG-506; this does not validate Linux.
+// Host validation, approved in ALG-506 and ALG-507 comment c404cd21; this does not validate Linux.
 // pnpm --filter @yoplai/shared --filter @yoplai/agent-runner build
 // node container/agent-runner/scripts/validate-codemode.mjs
 // The emitted runAgent interface + real SDK/bridge catches production worker and
@@ -25,9 +25,16 @@ const server = http.createServer(async (request, response) => {
   }
   let body = "";
   for await (const chunk of request) body += String(chunk);
-  bridgeCalls.push(JSON.parse(body));
+  const call = JSON.parse(body);
+  bridgeCalls.push(call);
   response.setHeader("content-type", "application/json");
-  response.end(JSON.stringify({ count: 11, sentinel: "ALG506_COMPILED_RAW_CHILD" }));
+  if (call.args.mode === "throw") {
+    response.writeHead(500).end(JSON.stringify({ error: "compiled bridge rejected" }));
+    return;
+  }
+  response.end(JSON.stringify(call.args.mode === "refusal"
+    ? { isError: true, refusal: { reason: "connect_account" } }
+    : { deal: { org_id: 11 }, sentinel: "ALG506_COMPILED_RAW_CHILD" }));
 });
 const faux = fauxProvider();
 const originalCreate = ModelRuntime.create.bind(ModelRuntime);
@@ -46,7 +53,7 @@ try {
   let nextRequest;
   faux.setResponses([
     fauxAssistantMessage(fauxToolCall("codemode", {
-      code: 'const result = JSON.parse(await tools.fixture_count({})); text(`count=${result.count};models=${typeof models}`);',
+      code: 'const result = await tools.fixture_count({}); text(`count=${result.deal.org_id};models=${typeof models}`); text((await tools.fixture_count({mode:"refusal"})).refusal.reason); try { await tools.fixture_count({mode:"throw"}); } catch (error) { text(error.message); } text(`recovered=${(await tools.fixture_count({})).deal.org_id}`);',
     }, { id: "compiled-parent" }), { stopReason: "toolUse" }),
     (context) => { nextRequest = JSON.stringify(context.messages); return fauxAssistantMessage("compiled success"); },
   ]);
@@ -67,7 +74,8 @@ try {
         extensionId: "fixture",
         name: "fixture_count",
         description: "Return the deterministic count",
-        parameters: { type: "object", properties: {} },
+        parameters: { type: "object", properties: { mode: { type: "string" } } },
+        outputSchema: { type: "object", properties: { deal: { type: "object", properties: { org_id: { type: "number" } } } } },
       }],
       sdkConfig: { sdk: "pi", model: { provider: "faux", model: "faux-1" } },
     }, (event) => events.push(event)),
@@ -76,19 +84,29 @@ try {
     }),
   ]);
   assert.equal(output.text, "compiled success");
-  assert.equal(bridgeCalls.length, 1);
+  assert.equal(bridgeCalls.length, 4);
   assert.equal(bridgeCalls[0].tool, "fixture_count");
   assert.deepEqual(bridgeCalls[0].args, {});
   assert.match(nextRequest, /count=11;models=undefined/);
+  assert.match(nextRequest, /connect_account/);
+  assert.match(nextRequest, /compiled bridge rejected/);
+  assert.match(nextRequest, /recovered=11/);
   assert.ok(!nextRequest.includes("ALG506_COMPILED_RAW_CHILD"));
   assert.ok(events.some((event) => event.type === "tool_result"
     && event.name === "fixture_count" && event.parentToolCallId === "compiled-parent"
     && event.content.includes("ALG506_COMPILED_RAW_CHILD")));
   assert.ok(events.some((event) => event.type === "tool_result"
     && event.id === "compiled-parent" && event.isError === false));
+  assert.ok(events.some((event) => event.type === "tool_result"
+    && event.id === "compiled-parent/2" && event.isError === true
+    && event.content.includes("connect_account")));
+  assert.ok(events.some((event) => event.type === "tool_result"
+    && event.id === "compiled-parent/3" && event.isError === true
+    && event.content.includes("compiled bridge rejected")));
   console.log(JSON.stringify({
     result: "PASS", node: process.version, runner: new URL("../dist/runner.js", import.meta.url).pathname,
     packageExports: "production", bridgeCalls: bridgeCalls.length, childContextIsolated: true,
+    structuredFields: true, structuredErrorData: true, thrownFailureRecovery: true,
     image: "not run, owned by Thinh's E2E",
   }));
 } finally {

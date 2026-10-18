@@ -1501,6 +1501,7 @@ export type ExtensionAgentTool = {
   description: string;
   namespace?: ToolNamespace;
   parameters: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   execute(
     args: unknown,
     context: ExtensionAgentToolContext
@@ -2559,6 +2560,7 @@ export const ContainerExtensionToolSchema = z.object({
   description: z.string(),
   namespace: ToolNamespaceSchema.optional(),
   parameters: z.record(z.unknown()),
+  outputSchema: z.record(z.unknown()).optional(),
 });
 export type ContainerExtensionTool = z.infer<
   typeof ContainerExtensionToolSchema

@@ -763,7 +763,9 @@ function createExtensionTools(
       tool.parameters,
       usedToolNames,
       (result, toolCallId) =>
-        formatGatewayToolResult(input, toolCallId, tool.name, result)
+        formatGatewayToolResult(input, toolCallId, tool.name, result),
+      tool.name,
+      tool.outputSchema
     )
   );
 }

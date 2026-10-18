@@ -17,6 +17,8 @@ import {
 import { ExtensionRuntime } from "../../../extensions/runtime.js";
 import { setLoadedConfig } from "../../../config/index.js";
 import { piAdapter } from "../adapter.js";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { bufferHistoryEvent, createTurnBuffer, flushTurnBuffer, getFullHistory } from "../../../history/store.js";
 
 // Approved by Thinh in ALG-506 comment 8fcf9742-a30b-45b2-bd18-5fb24d1cecda:
 // piAdapter.run/abort/abortSignal with real Pi + faux catches declarations,
@@ -86,7 +88,8 @@ function fixture(
     count: 3,
     sentinel: "RAW_CHILD_SENTINEL_506",
   }),
-  extensionId = "fixture"
+  extensionId = "fixture",
+  outputSchema?: Record<string, unknown>
 ) {
   const agent = AgentConfigSchema.parse({
     id: "codemode",
@@ -118,6 +121,7 @@ function fixture(
           name: "fixture_count",
           description: "Count deterministic records",
           parameters: { type: "object", properties: {} },
+          ...(outputSchema ? { outputSchema } : {}),
           execute,
         },
       ],
@@ -180,6 +184,86 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 describe("Pi adapter codemode", () => {
+  // ALG-507 seam 4 approved by Thinh (c404cd21): real Pi/faux and public
+  // callbacks catch script values/declarations/history; live UI is separate.
+  it("reads nested structured results before discovery and retains the same direct text and details", async () => {
+    const run = fixture(true, async () => ({ deal: { org_id: 37 }, optional: undefined }), "fixture", {
+      type: "object", properties: { deal: { type: "object", properties: { org_id: { type: "number" } }, required: ["org_id"] } }, required: ["deal"],
+    });
+    let nextRequest = "";
+    let session: AgentSession | undefined;
+    setup.faux.setResponses([
+      script("const result = await tools.fixture_count({}); text(`organization=${result.deal.org_id};optional=${typeof result.optional};declared=${(await describeTool('fixture_count')).includes('org_id')}`);"),
+      context => { nextRequest = JSON.stringify(context.messages); return fauxAssistantMessage(fauxToolCall("tool_search", { query: "fixture_count" }, { id: "load" }), { stopReason: "toolUse" }); },
+      fauxAssistantMessage(fauxToolCall("fixture_count", {}, { id: "direct" }), { stopReason: "toolUse" }),
+      script("text(`after-load=${(await tools.fixture_count({})).deal.org_id};declared=${(await describeTool('fixture_count')).includes('org_id')}`);", "script-after-load"),
+      fauxAssistantMessage("Joined"),
+    ]);
+    await expect(piAdapter.run({ ...run.params, onSessionHandle: handle => { session = handle as AgentSession; } })).resolves.toMatchObject({ text: "Joined" });
+    expect(nextRequest).toContain("organization=37;optional=undefined;declared=true");
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "script-after-load", isError: false, content: expect.stringContaining("after-load=37;declared=true") }));
+    expect(run.history).toContainEqual(expect.objectContaining({
+      type: "tool_result", name: "fixture_count", parentToolCallId: "script-506",
+      content: '{"deal":{"org_id":37}}', isError: false,
+    }));
+    expect(session?.sessionManager.getEntries()).toContainEqual(expect.objectContaining({
+      type: "message", message: expect.objectContaining({
+        role: "toolResult", toolName: "fixture_count",
+        content: [{ type: "text", text: '{"deal":{"org_id":37}}' }],
+        details: { deal: { org_id: 37 }, optional: undefined },
+      }),
+    }));
+  });
+
+  // Same approved real Pi seam: returned error data, exact flag, thrown rejection
+  // and subsequent work; external account/OAuth behavior is a separate test.
+  it("keeps returned error data, rejects thrown failures and continues later script work", async () => {
+    let call = 0;
+    const run = fixture(true, async () => {
+      switch (++call) {
+        case 1: return { isError: true, reason: { code: "connect_account" } };
+        case 2: return { ok: false, error: "existing failure" };
+        case 3: return { isError: "true", count: 2 };
+        case 4: throw new Error("Fixture unavailable");
+        default: return { count: 7 };
+      }
+    }, "fixture", { type: "object", properties: { count: { type: "number" } }, required: ["count"] });
+    setup.faux.setResponses([
+      script('const lines = []; const refusal = await tools.fixture_count({}); lines.push(refusal.reason.code); const oldFailure = await tools.fixture_count({}); lines.push(oldFailure.error); lines.push((await tools.fixture_count({})).count); try { await tools.fixture_count({}); } catch (error) { lines.push(error.message); } lines.push(`later=${(await tools.fixture_count({})).count}`); text(lines.join("|"));'),
+      fauxAssistantMessage("Recovered"),
+    ]);
+    await expect(piAdapter.run(run.params)).resolves.toMatchObject({ text: "Recovered" });
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "script-506/1", isError: true, content: '{"isError":true,"reason":{"code":"connect_account"}}' }));
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "script-506/2", isError: false, content: '{"ok":false,"error":"existing failure"}' }));
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "script-506/3", isError: false }));
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "script-506/4", isError: true, content: "Fixture unavailable" }));
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", id: "script-506", isError: false, content: expect.stringContaining("connect_account|existing failure|2|Fixture unavailable|later=7") }));
+  });
+
+  // ALG-507 seams 4 and 6 approved by Thinh (c404cd21): real Pi callbacks
+  // through canonical flush/read catch legacy text/flags and caller isolation;
+  // browser rendering and live provider remain separate validation.
+  it("keeps schema-less returned error flags as text and preserves isolated canonical nested history", async () => {
+    const sessionId = `legacy-callers-${++sessionNumber}`;
+    for (const userId of ["alice", "bob"]) {
+      const run = fixture(true, async (_args, context) => ({ isError: true, caller: context.userId }));
+      const buffer = createTurnBuffer();
+      setup.faux.setResponses([
+        script('const value = await tools.fixture_count({}); text(`${typeof value}:${value}`);'),
+        fauxAssistantMessage("Legacy done"),
+      ]);
+      await piAdapter.run({ ...run.params, sessionId, userId, onHistoryEvent: event => { run.history.push(event); bufferHistoryEvent(buffer, event); } });
+      expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", name: "fixture_count", isError: false, content: `{"isError":true,"caller":"${userId}"}` }));
+      expect(run.events).toContainEqual(expect.objectContaining({ type: "tool_result", name: "codemode", isError: false, content: expect.stringContaining(`string:{"isError":true,"caller":"${userId}"}`) }));
+      await flushTurnBuffer(run.params.agentId, sessionId, buffer, userId);
+    }
+    for (const [userId, other] of [["alice", "bob"], ["bob", "alice"]]) {
+      const history = await getFullHistory("codemode", sessionId, userId);
+      expect(history).toContainEqual(expect.objectContaining({ role: "toolResult", toolCallId: "script-506/1", toolName: "fixture_count", parentToolCallId: "script-506", content: [{ type: "text", text: `{"isError":true,"caller":"${userId}"}` }], isError: false }));
+      expect(JSON.stringify(history)).not.toContain(`\\"caller\\":\\"${other}\\"`);
+    }
+  });
+
   it.each([undefined, false])(
     "does not declare codemode when its agent flag is %s",
     async (enabled) => {

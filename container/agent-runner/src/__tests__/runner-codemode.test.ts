@@ -107,6 +107,101 @@ async function fixture(bridge?: (response: http.ServerResponse) => Promise<unkno
 }
 
 describe("Container Pi codemode", () => {
+  // ALG-507 approved seam c404cd21: real runner/Pi/bridge observes script
+  // values and declarations; browser rendering and external APIs are separate.
+  it("reads nested gateway result fields and their declaration without parsing text", async () => {
+    const { input, run, respond, events } = await fixture(async () => ({
+      deal: { org_id: 11 },
+      sentinel: "ALG507_STRUCTURED_RAW_ONLY",
+    }));
+    respond([
+      script('const result = await tools.fixture_count({}); text(`organization=${result.deal.org_id}`); text(await describeTool("fixture_count"));'),
+      fauxAssistantMessage("done"),
+    ]);
+    await expect(run({ extensionTools: [{
+      ...input.extensionTools![0],
+      outputSchema: {
+        type: "object",
+        properties: { deal: { type: "object", properties: { org_id: { type: "number" } } } },
+      },
+    }] })).resolves.toMatchObject({ text: "done" });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result",
+      id: "codemode-parent",
+      isError: false,
+      content: expect.stringContaining("organization=11"),
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result",
+      id: "codemode-parent",
+      content: expect.stringContaining("org_id"),
+    }));
+  });
+
+  it("keeps returned error data while thrown failures reject and later script work succeeds", async () => {
+    let calls = 0;
+    const { input, run, respond, events } = await fixture(async () => {
+      calls += 1;
+      if (calls === 1) return { isError: true, refusal: { reason: "connect_account" } };
+      if (calls === 2) throw new Error("fixture connection lost");
+      return { deal: { org_id: 11 } };
+    });
+    respond([
+      script('text((await tools.fixture_count({})).refusal.reason); try { await tools.fixture_count({}); } catch (error) { text(error.message); } text(`recovered=${(await tools.fixture_count({})).deal.org_id}`);'),
+      fauxAssistantMessage("done"),
+    ]);
+    await expect(run({ extensionTools: [{
+      ...input.extensionTools![0],
+      outputSchema: { type: "object", properties: { deal: { type: "object" } } },
+    }] })).resolves.toMatchObject({ text: "done" });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "codemode-parent/1", parentToolCallId: "codemode-parent",
+      isError: true, content: '{"isError":true,"refusal":{"reason":"connect_account"}}',
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "codemode-parent/2", isError: true,
+      content: expect.stringContaining("fixture connection lost"),
+    }));
+    const scriptResult = events.find((event) => event.type === "tool_result" && event.id === "codemode-parent");
+    expect(scriptResult).toMatchObject({ isError: false, content: expect.stringContaining("connect_account") });
+    expect(scriptResult).toMatchObject({ content: expect.stringContaining("fixture connection lost") });
+    expect(scriptResult).toMatchObject({ content: expect.stringContaining("recovered=11") });
+  });
+
+  it("spills a large gateway result and previews 2000 characters while scripts read the full object", async () => {
+    const { input, run, respond, events } = await fixture(async () => ({
+      deals: [{ id: 101, description: "x".repeat(21_000) }, { id: 202, title: "ALG507_LARGE_TAIL" }],
+    }));
+    let nextRequest = "";
+    respond([
+      script('const result = await tools.fixture_count({}); text(`deals=${result.deals.length};last=${result.deals[1].id}`);'),
+      (context) => { nextRequest = JSON.stringify(context.messages); return fauxAssistantMessage("done"); },
+    ]);
+    const output = await run({ extensionTools: [{
+      ...input.extensionTools![0],
+      outputSchema: { type: "object", properties: { deals: { type: "array", items: { type: "object" } } } },
+    }] });
+    expect(output.text).toBe("done");
+    const child = events.find((event) => event.type === "tool_result" && event.id === "codemode-parent/1");
+    if (child?.type !== "tool_result") throw new Error("Missing nested gateway result");
+    expect(child.content).toContain("Large tool result saved to ");
+    expect(child.content.split("Preview:\n")[1]).toHaveLength(2_000);
+    expect(child.content).not.toContain("ALG507_LARGE_TAIL");
+    const spillFiles = await fs.readdir(path.join(input.workspaceDir, "data", "tool-results"));
+    expect(spillFiles).toHaveLength(1);
+    const fullText = await fs.readFile(path.join(input.workspaceDir, "data", "tool-results", spillFiles[0]), "utf8");
+    expect(fullText.length).toBeGreaterThan(20_000);
+    expect(JSON.parse(fullText)).toMatchObject({ deals: [
+      { id: 101, description: expect.stringMatching(/^x{21000}$/) },
+      { id: 202, title: "ALG507_LARGE_TAIL" },
+    ] });
+    expect(nextRequest).toContain("deals=2;last=202");
+    expect(nextRequest).not.toContain("ALG507_LARGE_TAIL");
+    expect(output.history).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "codemode-parent/1", parentToolCallId: "codemode-parent", content: child.content,
+    }));
+  });
+
   it.each([undefined, false, true])("declares codemode only when the flag is true (%s)", async (codemode) => {
     const { run, respond } = await fixture();
     let declared: string[] = [];

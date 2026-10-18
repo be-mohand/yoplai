@@ -63,6 +63,7 @@ function rebindAtCallTime(extension: Extension, tool: ExtensionAgentTool): Exten
     if (current.missing.length) {
       const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
       return {
+        isError: true,
         error: "extension_credentials_required",
         message: `Add your own token using Just me at [Configure ${extension.displayName}](${connectUrl}) before using this tool. An admin can also configure Whole team credentials.`,
         connectUrl,

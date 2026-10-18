@@ -162,6 +162,55 @@ function declaredNames(context: TranscriptContext): string[] {
 }
 
 describe("Container Pi deferred tools", () => {
+  // ALG-507 approved seam c404cd21: real runner/Pi/bridge catches schema-bearing
+  // calls before and after activation; live providers and UI are separate seams.
+  it("reads structured results before tool_search and after namespace tool activation", async () => {
+    const { input, run, respond, contexts, capture, requests, events } = await fixture();
+    respond([
+      (context) => {
+        contexts.push(context);
+        return fauxAssistantMessage(fauxToolCall("codemode", {
+          code: 'text(`before=${(await tools.meetings_count({})).count}`); text((await describeNamespace("meetings")).name);',
+        }, { id: "before-load" }), { stopReason: "toolUse" });
+      },
+      (context) => {
+        contexts.push(context);
+        return fauxAssistantMessage(fauxToolCall("tool_search", {
+          query: "unique synthetic meeting count", limit: 1,
+        }, { id: "load-schema-tool" }), { stopReason: "toolUse" });
+      },
+      (context) => {
+        contexts.push(context);
+        return fauxAssistantMessage(fauxToolCall("codemode", {
+          code: 'text(`after=${(await tools.meetings_count({})).count}`); text(await describeTool("meetings_count"));',
+        }, { id: "after-load" }), { stopReason: "toolUse" });
+      },
+      capture,
+    ]);
+    await expect(run({ codemode: true, extensionTools: [{
+      ...input.extensionTools![0],
+      namespace: { name: "meetings", description: "Find meeting records" },
+      outputSchema: { type: "object", properties: { count: { type: "number" }, source: { type: "string" } }, required: ["count"] },
+    }] })).resolves.toMatchObject({ text: "done" });
+    expect(declaredNames(contexts[0])).not.toContain("meetings_count");
+    expect(declaredNames(contexts[1])).not.toContain("meetings_count");
+    expect(declaredNames(contexts[2])).toContain("meetings_count");
+    expect(declaredNames(contexts[3])).toContain("meetings_count");
+    expect(requests).toEqual([
+      expect.objectContaining({ tool: "meetings.count", args: {} }),
+      expect.objectContaining({ tool: "meetings.count", args: {} }),
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "before-load", isError: false, content: expect.stringContaining("before=7"),
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "after-load", isError: false, content: expect.stringContaining("after=7"),
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_result", id: "after-load", content: expect.stringContaining("count: number"),
+    }));
+  });
+
   it("declares only core tools and the search loader on the first outgoing request", async () => {
     const { run, respond, contexts, capture, registeredCatalogs } =
       await fixture();

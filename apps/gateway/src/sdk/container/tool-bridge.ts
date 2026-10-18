@@ -49,6 +49,7 @@ export class ContainerToolBridge {
       description: tool.description,
       namespace: tool.namespace,
       parameters: tool.parameters,
+      outputSchema: tool.outputSchema,
     })).concat(gatewayTools);
   }
 }
