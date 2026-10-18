@@ -41,6 +41,7 @@ describe("isRetryableProviderError", () => {
       "backpressure from upstream",
       "socket hang up",
       "read ECONNRESET",
+      "Connection error.",
       "connect ETIMEDOUT",
       "request timed out",
       "network failure contacting provider",
