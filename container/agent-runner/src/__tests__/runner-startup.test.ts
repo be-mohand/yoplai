@@ -7,7 +7,7 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContainerInput } from "@yoplai/shared";
 import { abortActiveAgent, runAgent, sendFollowUpMessage } from "../runner.js";
 
@@ -50,22 +50,13 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 let tempDir: string | undefined;
-let expectedFailureReached = true;
 const startupHook = "__alg492RunnerBeforeStart";
-
-beforeEach(() => {
-  expectedFailureReached = true;
-});
 
 afterEach(async () => {
   abortActiveAgent();
   vi.restoreAllMocks();
   Reflect.deleteProperty(globalThis, startupHook);
   if (tempDir) await fs.rm(tempDir, { recursive: true, force: true });
-  expect(
-    expectedFailureReached,
-    "Expected-failure test must reach its startup phase and recover before checking ALG-508"
-  ).toBe(true);
 });
 
 async function fixture(
@@ -137,7 +128,7 @@ describe("Container Pi startup", () => {
     const run = runAgent(input);
     try {
       await bounded(setup.entered);
-      await sendFollowUpMessage("second");
+      await bounded(sendFollowUpMessage("second"));
     } finally {
       setup.release();
     }
@@ -162,7 +153,8 @@ describe("Container Pi startup", () => {
     await expect(bounded(run)).resolves.toMatchObject({
       text: "first | second",
     });
-    await followUp;
+    if (!followUp) throw new Error("Follow-up was not sent");
+    await bounded(followUp);
     expect(received.at(-1)).toEqual(["first", "second"]);
     await expect(
       bounded(
@@ -177,7 +169,7 @@ describe("Container Pi startup", () => {
     const run = runAgent(input);
     try {
       await bounded(startup.entered);
-      await sendFollowUpMessage("second");
+      await bounded(sendFollowUpMessage("second"));
     } finally {
       startup.release();
     }
@@ -192,13 +184,12 @@ describe("Container Pi startup", () => {
     ).resolves.toMatchObject({ text: "later" });
   });
 
-  // ALG-508: also reproduces with Pi 0.87.1; runtime fixes excluded here.
-  it.fails(
+  it(
     "honors abort received during session setup and permits a later run",
     async () => {
-      expectedFailureReached = false;
       const setup = barrier();
-      const { input } = await fixture(setup);
+      const { input, faux } = await fixture(setup);
+      const callsBeforeRun = faux.state.callCount;
       const run = runAgent(input);
       try {
         await bounded(setup.entered);
@@ -207,22 +198,25 @@ describe("Container Pi startup", () => {
         setup.release();
       }
       const output = await bounded(run);
+      const modelCalls = faux.state.callCount - callsBeforeRun;
       await expect(
         bounded(
-          runAgent({ ...input, sessionId: "later-session", message: "later" })
+          runAgent({ ...input, message: "later" })
         )
-      ).resolves.toMatchObject({ text: "later" });
-      expectedFailureReached = true;
-      expect(output.text).toBe("");
+      ).resolves.toMatchObject({ text: "later", aborted: false });
+      expect(output).toMatchObject({ text: "", aborted: true });
+      expect(modelCalls).toBe(0);
     }
   );
 
-  // ALG-508: also reproduces with Pi 0.87.1; runtime fixes excluded here.
-  it.fails(
+  it(
     "honors abort after publication before the original starts and permits a later run",
     async () => {
-      expectedFailureReached = false;
-      const { input } = await fixture();
+      const { input, faux } = await fixture();
+      await expect(
+        bounded(runAgent({ ...input, message: "earlier" }))
+      ).resolves.toMatchObject({ text: "earlier", aborted: false });
+      const callsBeforeRun = faux.state.callCount;
       let published = false;
       const output = await bounded(
         runAgent(input, (event) => {
@@ -232,14 +226,15 @@ describe("Container Pi startup", () => {
           }
         })
       );
+      const modelCalls = faux.state.callCount - callsBeforeRun;
       await expect(
         bounded(
-          runAgent({ ...input, sessionId: "later-session", message: "later" })
+          runAgent({ ...input, message: "later" })
         )
-      ).resolves.toMatchObject({ text: "later" });
+      ).resolves.toMatchObject({ text: "earlier | later", aborted: false });
       expect(published).toBe(true);
-      expectedFailureReached = true;
-      expect(output.text).toBe("");
+      expect(output).toMatchObject({ text: "", aborted: true });
+      expect(modelCalls).toBe(0);
     }
   );
 

@@ -493,16 +493,14 @@ export const piAdapter: SdkAdapter = {
       // Repair orphaned tool calls from interrupted sessions
       repairOrphanedToolCalls(agentSession);
 
-      // Emit session handle for queue injection
-      params.onSessionHandle?.(agentSession);
-
-      let aborted = false;
+      let aborted = params.abortSignal.aborted;
 
       // Handle abort
-      params.abortSignal.addEventListener("abort", () => {
+      const onAbort = () => {
         aborted = true;
-        agentSession.abort();
-      });
+        void agentSession.abort();
+      };
+      params.abortSignal.addEventListener("abort", onAbort);
 
       const systemPrompt = agentSession.systemPrompt;
       if (typeof systemPrompt === "string" && systemPrompt.trim().length > 0) {
@@ -576,6 +574,13 @@ export const piAdapter: SdkAdapter = {
           .join("\n\n")
       );
 
+      // Aborting an idle Pi session does not cancel a future prompt.
+      if (aborted) {
+        params.abortSignal.removeEventListener("abort", onAbort);
+        agentSession.dispose();
+        return { text: "", aborted: true };
+      }
+
       // Emit user message to history (without context preamble)
       params.onHistoryEvent({
         type: "user",
@@ -585,7 +590,14 @@ export const piAdapter: SdkAdapter = {
       });
 
       // Subscribe to streaming events
+      let handlePublished = false;
       const unsubscribe = agentSession.subscribe((evt) => {
+        // An idle Pi session starts a new prompt on delivery. Publish only
+        // once the original run is active, so early messages stay buffered.
+        if (evt.type === "agent_start" && !handlePublished) {
+          handlePublished = true;
+          params.onSessionHandle?.(agentSession);
+        }
         if (evt.type === "message_update") {
           const msg = (evt as { message?: AgentMessage }).message;
           if (msg?.role === "assistant") {
@@ -824,6 +836,7 @@ export const piAdapter: SdkAdapter = {
       }
       } finally {
         unsubscribe();
+        params.abortSignal.removeEventListener("abort", onAbort);
       }
 
       const messages = agentSession.messages;

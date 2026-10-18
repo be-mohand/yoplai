@@ -311,7 +311,7 @@ async function steerPendingFollowUps(session: AgentSession): Promise<void> {
 }
 
 export function abortActiveAgent(): void {
-  if (activeSession) activeAbortRequested = true;
+  activeAbortRequested = true;
   void activeSession?.abort();
 }
 
@@ -485,6 +485,9 @@ export async function runAgent(
             input.retry?.baseDelaySeconds ?? DEFAULT_RETRY_BASE_DELAY_SECONDS,
           runTurn: async (attempt) => {
             await ensureFreshOAuthToken(provider, oauthCtx);
+            if (activeAbortRequested) {
+              throw new DOMException("This operation was aborted", "AbortError");
+            }
             await runWithOAuthRefreshRetry(
               provider,
               oauthCtx,
@@ -630,7 +633,9 @@ export async function runAgent(
       unsubscribe();
     }
 
-    const lastAssistant = findLastAssistant(session.messages);
+    const lastAssistant = aborted && !initialRunStarted
+      ? undefined
+      : findLastAssistant(session.messages);
     const lastAssistantRecord = lastAssistant as
       | (Record<string, unknown> & AssistantMessage)
       | undefined;

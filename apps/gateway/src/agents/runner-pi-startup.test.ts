@@ -99,6 +99,7 @@ const agent = AgentConfigSchema.parse({
   workspace: path.join(setup.home, "workspace"),
   sdk: "pi",
   model: { provider: "startup-test", model: setup.faux.getModel().id },
+  retryMaxAttempts: 1,
   retryBaseDelay: 0.001,
 });
 let sessionNumber = 0;
@@ -125,7 +126,7 @@ beforeEach(async () => {
   setup.faux.setResponses(Array.from({ length: 5 }, () => reply));
 });
 
-// Hook failures are outside it.fails: a timeout or failed recovery must fail the suite.
+// Every startup scenario must reach its phase and recover on the same session.
 afterEach(() => {
   expect(recovered, "the startup phase and a later run must complete").toBe(true);
 });
@@ -172,6 +173,7 @@ function expectOrderedDelivery({ firstResult, laterResult, history }: Awaited<Re
 async function abortAt(phase: Phase) {
   const gate = barrier();
   setup.hooks[phase] = gate.wait;
+  const callsBefore = setup.faux.state.callCount;
   const first = send("first").then((result) => ({ result }), (error: unknown) => ({ error }));
   let stop: ReturnType<typeof send> | undefined;
   try {
@@ -184,22 +186,21 @@ async function abortAt(phase: Phase) {
   const outcome = await bounded(first);
   if (!stop) throw new Error("Abort command was not sent");
   const stopped = await bounded(stop);
+  const modelCalls = setup.faux.state.callCount - callsBefore;
   const laterResult = await bounded(send("later"));
   expect(stopped.meta.aborted).toBe(true);
   expect(laterResult.meta.aborted).toBe(false);
   expect(laterResult.payloads).toEqual([{ text: expect.stringContaining("later") }]);
   recovered = true;
-  return outcome;
+  return { ...outcome, modelCalls };
 }
 
 describe("Pi host startup", () => {
-  // ALG-508: same ordering failure reproduced with Pi 0.87.1 and 1.3.0.
-  it.fails("delivers a message queued before session creation after the original exactly once", async () => {
+  it("delivers a message queued before session creation after the original exactly once", async () => {
     expectOrderedDelivery(await deliveryAt("beforeCreate"));
   });
 
-  // ALG-508: same ordering failure reproduced with Pi 0.87.1 and 1.3.0.
-  it.fails("delivers a message queued after publication before the original prompt exactly once", async () => {
+  it("delivers a message queued while preparing the original prompt exactly once", async () => {
     expectOrderedDelivery(await deliveryAt("beforePrompt"));
   });
 
@@ -207,14 +208,12 @@ describe("Pi host startup", () => {
     expectOrderedDelivery(await deliveryAt("duringStartup"));
   });
 
-  // ALG-508: same lost abort reproduced with Pi 0.87.1 and 1.3.0.
-  it.fails("honors an abort before session creation and accepts a later run", async () => {
-    expect(await abortAt("beforeCreate")).toMatchObject({ result: { payloads: [], meta: { aborted: true } } });
+  it("honors an abort before session creation and accepts a later run", async () => {
+    expect(await abortAt("beforeCreate")).toMatchObject({ result: { payloads: [], meta: { aborted: true } }, modelCalls: 0 });
   });
 
-  // ALG-508: idle-session abort still permits the prompt on Pi 0.87.1 and 1.3.0.
-  it.fails("honors an abort after publication before the original prompt and accepts a later run", async () => {
-    expect(await abortAt("beforePrompt")).toMatchObject({ result: { payloads: [], meta: { aborted: true } } });
+  it("honors an abort while preparing the original prompt and accepts a later run", async () => {
+    expect(await abortAt("beforePrompt")).toMatchObject({ result: { payloads: [], meta: { aborted: true } }, modelCalls: 0 });
   });
 
   it("honors an abort during Pi startup and accepts a later run", async () => {
