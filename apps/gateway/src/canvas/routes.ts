@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
+import { z } from "zod";
 import {
   resolveHomeDir,
   type AgentConfig,
@@ -8,11 +9,12 @@ import {
 } from "@yoplai/shared";
 import {
   dashboardBaseUrl,
-  listDashboardSlugs,
+  deleteDashboardFile,
   normalizeDashboardSlug,
   openDashboardFile,
 } from "./dashboard-files.js";
-import { recordDashboardVersion } from "./index.js";
+import { dashboardHtml, listAgentDashboards } from "./list.js";
+import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
 import { DashboardRegistry } from "./store.js";
 import { executeDashboardQueries } from "./sql.js";
 
@@ -73,6 +75,9 @@ export type DashboardRouteDependencies = {
   registry: DashboardRegistry;
   authenticate(request: Request): Promise<unknown | null>;
   hasAgentAccess(auth: unknown, agentId: string): Promise<boolean>;
+  resolveActor?(auth: unknown, agentId?: string): Promise<DashboardActor>;
+  listRecipients?(): Promise<Array<{ id: string; name: string; email: string }>>;
+  getOwnerName?(id: string): Promise<string>;
 };
 
 export function dashboardCsp(
@@ -139,7 +144,8 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       login.searchParams.set("returnTo", target.pathname + target.search);
       return c.redirect(login.toString(), 302);
     }
-    if (!(await deps.hasAgentAccess(auth, entry.agentId))) return c.notFound();
+    const actor = await routeActor(deps, auth, entry.agentId);
+    if (!dashboardAccessPolicy.canRead(entry, actor)) return c.notFound();
 
     const agent = deps.getAgent(entry.agentId);
     if (!agent) return c.notFound();
@@ -150,25 +156,14 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
       return c.notFound();
     }
     try {
-      const file = await openDashboardFile(agent, slug);
-      let html: string;
-      try {
-        html = await file.readFile("utf8");
-      } finally {
-        await file.close();
-      }
-      await recordDashboardVersion(agent, entry, html, deps.registry);
+      let { html } = await dashboardHtml(agent, deps.registry, { ...entry, slug }, actor);
       const viewer =
         typeof auth === "object" && auth && "user" in auth
           ? ((auth as { user?: Viewer }).user ?? {})
           : {};
       const url = new URL(c.req.url);
       const params = Object.fromEntries(url.searchParams.entries());
-      const dashboards = await Promise.all(
-        (await listDashboardSlugs(agent)).map((slug) =>
-          deps.registry.link(agent.id, slug)
-        )
-      );
+      const dashboards = dashboardAccessPolicy.filterVisible(await deps.registry.list(agent.id), actor);
       const links = Object.fromEntries(
         dashboards.map((dashboard) => [dashboard.slug, `/d/${dashboard.id}`])
       );
@@ -186,6 +181,126 @@ export function createDashboardRoutes(deps: DashboardRouteDependencies): Hono {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
         return c.notFound();
+      throw error;
+    }
+  });
+  return routes;
+}
+
+async function routeActor(deps: DashboardRouteDependencies, auth: unknown, agentId?: string): Promise<DashboardActor> {
+  if (deps.resolveActor) return deps.resolveActor(auth, agentId);
+  return { eligible: true, hasAgentAccess: !!agentId && await deps.hasAgentAccess(auth, agentId) };
+}
+
+export function createDashboardResourceRoutes(deps: DashboardRouteDependencies): Hono {
+  const routes = new Hono();
+  routes.use("*", async (c, next) => {
+    if (deps.getConfig().canvas?.enabled === false) return c.notFound();
+    await next();
+  });
+  routes.get("/", async (c) => {
+    if (deps.getConfig().canvas?.enabled === false) return c.notFound();
+    const auth = await deps.authenticate(c.req.raw);
+    if (!auth) return c.json({ error: "unauthorized" }, 401);
+    const actor = await routeActor(deps, auth);
+    if (!actor.eligible) return c.json({ error: "account_ineligible" }, 403);
+    const owned = [];
+    const shared = [];
+    const entries = (await deps.registry.all()).filter((entry) => entry.ownerUserId &&
+      (entry.ownerUserId === actor.userId || entry.shares?.some((share) => share.kind === "all" || share.id === actor.userId)));
+    const listedIds = new Set(entries.map((entry) => entry.id));
+    const agentIds = new Set(entries.map((entry) => entry.agentId));
+    for (const agentId of agentIds) {
+      const agent = deps.getAgent(agentId);
+      if (!agent) continue;
+      const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor: await routeActor(deps, auth, agentId), ownerName: deps.getOwnerName });
+      for (const row of rows) {
+        if (row.legacy || !listedIds.has(row.id)) continue;
+        if (row.isOwner) owned.push(row);
+        else shared.push(row);
+      }
+    }
+    return c.json({ owned, shared });
+  });
+  routes.get("/recipients", async (c) => {
+    const auth = await deps.authenticate(c.req.raw);
+    if (!auth) return c.json({ error: "unauthorized" }, 401);
+    if (!(await routeActor(deps, auth)).eligible) return c.json({ error: "account_ineligible" }, 403);
+    return c.json({ users: await deps.listRecipients?.() ?? [] });
+  });
+  routes.patch("/:id/sharing", async (c) => {
+    const auth = await deps.authenticate(c.req.raw);
+    if (!auth) return c.json({ error: "unauthorized" }, 401);
+    const entry = await deps.registry.get(c.req.param("id"));
+    if (!entry?.ownerUserId) return c.notFound();
+    const actor = await routeActor(deps, auth, entry.agentId);
+    if (!dashboardAccessPolicy.canManage(entry, actor)) return c.notFound();
+    const schema = z.object({ shares: z.array(z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("user"), id: z.string().min(1), mode: z.enum(["read", "write"]) }).strict(),
+      z.object({ kind: z.literal("all"), mode: z.enum(["read", "write"]) }).strict(),
+    ])) }).strict();
+    const parsed = schema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_shares" }, 400);
+    const recipients = new Set((await deps.listRecipients?.() ?? []).map((user) => user.id));
+    const keys = new Set<string>();
+    for (const share of parsed.data.shares) {
+      const key = share.kind === "all" ? "all" : `user:${share.id}`;
+      if (keys.has(key) || (share.kind === "user" && !recipients.has(share.id))) return c.json({ error: "invalid_shares" }, 400);
+      keys.add(key);
+    }
+    try {
+      return await deps.registry.withRegistration(entry.id, async (current) => {
+        if (!dashboardAccessPolicy.canManage(current, await routeActor(deps, auth, current.agentId))) return c.notFound();
+        await deps.registry.replaceShares(current.id, parsed.data.shares);
+        const agent = deps.getAgent(current.agentId);
+        if (!agent) return c.notFound();
+        const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor: await routeActor(deps, auth, current.agentId), ownerName: deps.getOwnerName });
+        return c.json({ dashboard: rows.find((row) => row.id === current.id) });
+      });
+    } catch (error) {
+      if ((error as Error).message === "Dashboard not found") return c.notFound();
+      throw error;
+    }
+  });
+  routes.post("/:id/claim", async (c) => {
+    const auth = await deps.authenticate(c.req.raw);
+    if (!auth) return c.json({ error: "unauthorized" }, 401);
+    const entry = await deps.registry.get(c.req.param("id"));
+    if (!entry) return c.notFound();
+    try {
+      return await deps.registry.withRegistration(entry.id, async (current) => {
+        const actor = await routeActor(deps, auth, current.agentId);
+        if (!actor.eligible || !actor.userId || !actor.hasAgentAccess) return c.notFound();
+        if (current.ownerUserId) return c.notFound();
+        const agent = deps.getAgent(current.agentId);
+        if (!agent) return c.notFound();
+        const file = await openDashboardFile(agent, normalizeDashboardSlug(current.slug));
+        let html: string;
+        try { html = await file.readFile("utf8"); } finally { await file.close(); }
+        await deps.registry.claim(current.id, actor.userId, html);
+        const rows = await listAgentDashboards(agent, deps.registry, deps.getConfig(), { actor, ownerName: deps.getOwnerName });
+        return c.json({ dashboard: rows.find((row) => row.id === current.id) });
+      });
+    } catch (error) {
+      if ((error as Error).message === "Dashboard not found" || (error as NodeJS.ErrnoException).code === "ENOENT") return c.notFound();
+      throw error;
+    }
+  });
+  routes.delete("/:id", async (c) => {
+    const auth = await deps.authenticate(c.req.raw);
+    if (!auth) return c.json({ error: "unauthorized" }, 401);
+    const entry = await deps.registry.get(c.req.param("id"));
+    if (!entry?.ownerUserId) return c.notFound();
+    try {
+      return await deps.registry.withRegistration(entry.id, async (current) => {
+        if (!dashboardAccessPolicy.canManage(current, await routeActor(deps, auth, current.agentId))) return c.notFound();
+        const agent = deps.getAgent(current.agentId);
+        if (agent) await deleteDashboardFile(agent, normalizeDashboardSlug(current.slug));
+        await deps.registry.deleteId(current.id);
+        return c.json({ ok: true });
+      });
+    } catch (error) {
+      if ((error as Error).message === "Dashboard not found") return c.notFound();
       throw error;
     }
   });

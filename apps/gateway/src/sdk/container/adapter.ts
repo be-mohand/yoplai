@@ -341,6 +341,8 @@ export function getContainerAdapter(): SdkAdapter {
           conversationFiles: launchSpec.conversationFiles,
           oauthProviders: Object.keys(oauthTokens ?? {}),
           userId: params.userId,
+          actorUserId: params.actorUserId,
+          actorKind: params.actorKind,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
           registerFileOutput: (event, signal) =>

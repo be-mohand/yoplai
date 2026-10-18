@@ -417,6 +417,16 @@ describe("runAgent control commands", () => {
     getTask.mockResolvedValue(undefined);
   });
 
+  it("refuses a saved multi-user actor when current account authorization is unavailable", async () => {
+    const adapter = createAdapter();
+    getSdkAdapter.mockReturnValue(adapter);
+    getAgent.mockReturnValue(createAgent({}));
+    loadConfig.mockReturnValueOnce({ agents: [], extensions: { multiUser: { enabled: true } }, sessions: {} });
+    const { runAgent } = await import("./runner.js");
+    await expect(runAgent({ agentId: "alpha", userId: "removed", actorUserId: "removed", actorKind: "user", message: "publish", sessionId: "removed-owner-job" })).rejects.toThrow("Agent access denied");
+    expect(adapter.run).not.toHaveBeenCalled();
+  });
+
   it("pauses the active durable task for an explicit abort command", async () => {
     const adapter = createAdapter();
     getSdkAdapter.mockReturnValue(adapter);

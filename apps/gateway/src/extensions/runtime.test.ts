@@ -45,6 +45,16 @@ const config = GatewayConfigSchema.parse({
 });
 
 describe("ExtensionRuntime", () => {
+  it("carries explicit eval authority through dispatch without selecting synthetic user credentials", async () => {
+    const runtime = new ExtensionRuntime();
+    runtime.load([extension({ id: "identity", getAgentTools: () => [{
+      name: "identity", description: "Identity", parameters: {},
+      execute: (_args, context) => ({ actorUserId: context.actorUserId, actorKind: context.actorKind, credentialUserId: context.userId }),
+    }] })]);
+    expect(await runtime.executeTool(agent, "identity", {}, config, "eval", undefined, undefined, undefined, { actorKind: "eval", actorUserId: "eval:fixture" })).toEqual({
+      found: true, result: { actorUserId: "eval:fixture", actorKind: "eval", credentialUserId: undefined },
+    });
+  });
   it("retains server namespace metadata and extension capabilities when loading tools", async () => {
     const runtime = new ExtensionRuntime();
     runtime.load([extension({

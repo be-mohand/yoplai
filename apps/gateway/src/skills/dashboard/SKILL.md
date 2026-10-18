@@ -17,17 +17,25 @@ Create a dashboard when the answer is recurring, data-heavy, or will be revisite
 
 These hold on every page; the platform, sharing, and data safety depend on them.
 
-1. Inspect `data/dashboards/`, `data/`, and `data/migrations/` first. Update existing files in place instead of rewriting.
+1. Discover readable pages with `dashboard_link` without a slug. Never reveal unavailable dashboards, their titles or links. Inspect the relevant `data/` and `data/migrations/`; update accessible existing files in place.
 2. Pages live at `data/dashboards/<slug>.html`. Load only platform assets (`/d-assets/v2/…`); Canvas CSP blocks everything else. Follow [canvas.md](references/canvas.md) for SQL blocks and the runtime. Link only to pages that exist in `data/dashboards/`: `YOPLAI.link` throws on an unknown slug and breaks the page, so create the drill-down page (e.g. copy the template's `client.html`) or leave the link out.
-3. Put all page code in one `<script type="module">`; a classic script breaks on names like `top` or `location`. Use `addEventListener`, not inline `on*=` handlers. Use `dashboard_link` for static/query validation and the visual recipe below for browser checks.
+3. Put all page code in one `<script type="module">`; a classic script breaks on names like `top` or `location`. Use `addEventListener`, not inline `on*=` handlers. Publication tools return static/query validation; use the visual recipe below for browser checks.
 4. Keep derived SQLite databases under `data/`, schema in `data/migrations/`, every mutable table with `updated_at`. If markdown or another source is authoritative, keep the database rebuildable from it. See [data.md](references/data.md).
 5. Aggregate in SQL; precompute rollups with scheduled jobs for large sources.
 6. Personalize with `:viewer_email`; use URL parameters for drill-downs. Put no credentials, tokens, keys, or other secrets in HTML, SQL, URLs, or browser data.
-7. Validate every query before sharing. `dashboard_link` runs without a viewer or URL parameters, so personalized queries may look empty. Substitute real values, run each query with `sqlite3`, and confirm it returns the expected rows and scope.
-8. Call `dashboard_link` after every create or update, and every time you share a link. Fix every `problems` and `queryErrors` entry. Reply with the returned `link` copied exactly; do not rebuild host or path from memory. For pages needing URL parameters, share the entry page or append the real query string to the link.
+7. Validate every query before sharing. Publication diagnostics run without a viewer or URL parameters, so personalized queries may look empty. Substitute real values, run each query with `sqlite3`, and confirm expected rows and scope.
+8. Call `dashboard_create {slug}` once to register an unregistered page privately as the requester and publish initial HTML. Call `dashboard_update {slug}` to publish later edits. Fix every `problems` and `queryErrors` entry. `dashboard_link {slug?}` returns readable URLs only: no registration, publication, history or diagnostics. Copy the returned `link` exactly. For parameterized pages, share the entry page or append real parameters.
 9. When summarizing in chat, quote only numbers from query results you ran; do not compute or estimate figures in prose.
 10. To remove a dashboard, call `dashboard_delete` with its slug (keeps shared `.db` files).
-11. Maintenance is surgical: update rows and `updated_at` for data corrections, make the smallest edit to existing HTML for presentation changes, re-run affected SQL with real bindings, call `dashboard_link` again.
+11. Maintenance is surgical: update rows and `updated_at` for data corrections, make the smallest HTML edit, re-run affected SQL with real bindings, explicitly publish with `dashboard_update`. Writers may iterate on live files before publishing.
+
+## Ownership and sharing
+
+New dashboards belong to the requesting user and are private. Owners manage selected-user or platform-wide read/write grants on **Dashboards** in the sidebar, independently of agent/team membership. Platform-wide means eligible signed-in accounts, never anonymous internet access. Readers see durable published HTML; owners/writers see live drafts. Publishing also requires current agent access. Only owners manage sharing/delete; superadmins can read without gaining write/manage rights. Each detail page has independent permissions; parent access never grants child access. Sharing delegates HTML and live query results, including URL-parameter variations. Workspace drafts and SQLite remain shared and are not isolated by publication permissions.
+
+Legacy dashboards stay live and agent-gated until **Claim dashboard** on the agent tab publishes them and makes them private under the claimant. Sharing/claiming are UI actions, not tools. Delete/recreate gets a fresh private registration; rename requires create-new/delete-old. Missing working HTML does not remove registration/publication; restoring retained history republishes without changing grants. Owned publication remains durable when Git manages history; readers never fall back to drafts.
+
+Owner-mode jobs use the saved eligible owner and require current agent execution access. Team-mode jobs have no individual identity: they publish only platform-wide write or legacy dashboards. Single-user channels/jobs share one local owner; isolated evals share their synthetic owner, without changing credentials. Unpaired multi-user Slack requesters must use the existing pairing flow and re-ask; register nothing before pairing. Userless Discord/Telegram/anonymous creation is refused in multi-user mode.
 
 ## Check it visually
 

@@ -23,6 +23,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Private-by-default owned dashboards, selected-user/platform-wide read/write sharing, a Dashboards home, private legacy claiming, and durable published HTML separate from live drafts/history. Viewing/management is independent of agent access; publication still requires agent execution. Create/update publish explicitly; `dashboard_link` only returns readable links.
 - Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
 - Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.
 - Per-agent Pi codemode for host and container runs, with nested tool calls grouped in chat and parented tracing spans.

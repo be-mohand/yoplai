@@ -34,6 +34,9 @@ import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensi
 import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
 import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
 import { onOAuthReturn, reserveOAuthPopup } from "../lib/oauth-popup";
+import { claimDashboard } from "../api/dashboards";
+import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -221,9 +224,20 @@ export function EditAgent() {
       : params.agentId
   );
   const [tab, setTab] = createSignal<"extensions" | "connections" | "dashboards" | "schedules">("extensions");
-  const [dashboards] = createResource(
+  const [dashboards, { refetch: refetchDashboards }] = createResource(
     () => tab() === "dashboards" ? dashboardAgentId() : null,
     fetchAgentDashboards
+  );
+  const [accessDashboard, setAccessDashboard] = createSignal<AgentDashboard>();
+  const [claimTarget, setClaimTarget] = createSignal<AgentDashboard>();
+  const [claimError, setClaimError] = createSignal<string>();
+  const DashboardAccess = (props: { dashboard: AgentDashboard }) => (
+    <>
+      <Show when={props.dashboard.legacy} fallback={<span>{props.dashboard.isOwner ? "Owned by you" : `Shared by ${props.dashboard.ownerName ?? "Unknown user"}`}</span>}>
+        <button type="button" onClick={() => { setClaimError(undefined); setClaimTarget(props.dashboard); }}>Claim dashboard</button>
+      </Show>
+      <Show when={props.dashboard.isOwner}><button type="button" onClick={() => setAccessDashboard(props.dashboard)}>Manage access</button></Show>
+    </>
   );
   const [copiedSlug, setCopiedSlug] = createSignal<string | null>(null);
   const sections = createMemo(() => dashboardSections(dashboards.loading || dashboards.error ? [] : dashboards() ?? []));
@@ -239,13 +253,14 @@ export function EditAgent() {
     <div class="edit-agent-dashboard-row">
       <div>
         <strong>{props.dashboard.title}</strong>
-        <span>Updated {new Date(props.dashboard.updatedAt).toLocaleString()}</span>
+        <span>Updated {props.dashboard.updatedAt ? new Date(props.dashboard.updatedAt).toLocaleString() : "—"}</span>
       </div>
       <div class="edit-agent-dashboard-actions">
         <a href={props.dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
         <button type="button" onClick={() => void copyDashboardLink(props.dashboard.slug, props.dashboard.link)}>
           {copiedSlug() === props.dashboard.slug ? "Copied" : "Copy link"}
         </button>
+        <DashboardAccess dashboard={props.dashboard} />
       </div>
     </div>
   );
@@ -488,6 +503,7 @@ export function EditAgent() {
                             <>{i() > 0 ? ", " : ""}<a href={parent.link} target="_blank" rel="noopener noreferrer">{parent.title}</a></>
                           )}</For>
                         </Show>
+                        <DashboardAccess dashboard={item.dashboard} />
                       </li>
                     )}</For>
                   </ul>
@@ -495,6 +511,11 @@ export function EditAgent() {
               </Show>
             </Show>
           </section>
+          <Show when={accessDashboard()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} onClose={() => setAccessDashboard(undefined)} onSaved={async () => { await refetchDashboards(); }} />}</Show>
+          <Show when={claimTarget()}>{(dashboard) => <ConfirmDialog title="Claim dashboard" description="This publishes the current HTML and makes the dashboard private to you. Previous viewers lose access until you share it." confirmLabel="Claim dashboard" error={claimError()} onCancel={() => setClaimTarget(undefined)} onConfirm={async () => {
+            try { await claimDashboard(dashboard().id); await refetchDashboards(); setClaimTarget(undefined); }
+            catch (cause) { setClaimError(cause instanceof Error ? cause.message : "Unable to claim dashboard."); }
+          }} />}</Show>
         </Show>
 
         <Show when={agent() && tab() === "extensions"}>

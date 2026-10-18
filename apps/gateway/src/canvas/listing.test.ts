@@ -36,7 +36,9 @@ afterEach(async () => {
 });
 
 describe("dashboard file enumeration", () => {
-  it("list API: sorted regular .html files only", async () => {
+  it("list API: sorted registrations exclude unregistered drafts", async () => {
+    await registry.link("agent-1", "a.html");
+    await registry.link("agent-1", "b.html");
     const list = await listAgentDashboards(agent(), registry, config);
     expect(list.map((d) => d.slug)).toEqual(["a.html", "b.html"]);
   });
@@ -46,11 +48,11 @@ describe("dashboard file enumeration", () => {
     expect(await listAgentDashboards(agent(), registry, config)).toEqual([]);
   });
 
-  it("dashboard_link discovery: sorted regular .html files only", async () => {
+  it("dashboard_link does not discover or register drafts", async () => {
     await canvasExtension.start({ getDataDir: () => root } as never);
     const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
     const result = (await tool.execute({}, {} as never)) as { slug: string }[];
-    expect(result.map((d) => d.slug)).toEqual(["a.html", "b.html"]);
+    expect(result.map((d) => d.slug)).toEqual([]);
   });
 
   it("dashboard_link discovery: missing directory yields empty list", async () => {
@@ -62,6 +64,7 @@ describe("dashboard file enumeration", () => {
 
   it("viewer link map: only regular .html files, not directories", async () => {
     const entry = await registry.link("agent-1", "a.html");
+    await registry.link("agent-1", "b.html");
     const routes = createDashboardRoutes({
       getConfig: () => config,
       getAgent: () => agent(),

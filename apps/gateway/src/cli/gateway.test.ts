@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+let home: string;
 
 const loadConfig = vi.fn();
 const getAgent = vi.fn();
@@ -16,6 +21,7 @@ const resolveStartupConfig = vi.fn();
 const startGatewayHotReload = vi.fn();
 
 vi.mock("../config/index.js", () => ({
+  get CONFIG_DIR() { return home; },
   loadConfig,
   getAgent,
   setSingleAgentMode,
@@ -52,12 +58,15 @@ vi.mock("../config/hot-reload.js", () => ({
 }));
 
 describe("startGatewayCommand", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    home = await fs.mkdtemp(path.join(os.tmpdir(), "gateway-startup-"));
     vi.clearAllMocks();
     delete process.env.YOPLAI_UI_PORT;
   });
 
-  it("starts extensions before opening the HTTP server", async () => {
+  afterEach(async () => { await fs.rm(home, { recursive: true, force: true }); });
+
+  it("initializes dashboard storage before extensions and opens the HTTP server last", async () => {
     const order: string[] = [];
     const rawConfig = { agents: [{ id: "alpha" }] };
     const config = {
@@ -72,6 +81,7 @@ describe("startGatewayCommand", () => {
           order.push("register:multiUser");
         }),
         start: vi.fn(async () => {
+          expect(JSON.parse(await fs.readFile(path.join(home, "canvas", "schema.json"), "utf8"))).toEqual({ version: 1, migrationComplete: true });
           order.push("start:multiUser");
         }),
       },
@@ -139,6 +149,7 @@ describe("startGatewayCommand", () => {
         id: "multiUser",
         registerRoutes: vi.fn(),
         start: vi.fn(async () => {
+          expect(JSON.parse(await fs.readFile(path.join(home, "canvas", "schema.json"), "utf8"))).toEqual({ version: 1, migrationComplete: true });
           order.push("start:multiUser");
         }),
       },

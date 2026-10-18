@@ -6,6 +6,8 @@ import {
   setLoadedConfig,
 } from "../config/index.js";
 import { startServer } from "../server/index.js";
+import { initializeDashboardRegistry } from "../canvas/migration.js";
+import { CONFIG_DIR } from "../config/index.js";
 import { api } from "../server/api.core.js";
 import {
   getExtensionRuntime,
@@ -81,6 +83,7 @@ export async function startGatewayCommand(
     gateway: { ...config.gateway, port: actualPort },
     ui: { ...config.ui, port: uiPort },
   };
+  await initializeDashboardRegistry(runtimeConfig, CONFIG_DIR);
   const extensionContext = createExtensionContext(runtimeConfig);
   for (const extension of extensions) {
     await extension.start(bindExtensionContext(extensionContext, extension.id));

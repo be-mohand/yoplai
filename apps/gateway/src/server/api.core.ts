@@ -85,6 +85,8 @@ import { readToolLabels } from "../maintenance/tool-labels.js";
 import { loadSuggestions } from "../suggestions/loader.js";
 import { listAgentDashboards } from "../canvas/list.js";
 import { getDashboardRegistry } from "../canvas/store.js";
+import { createDashboardResourceRoutes } from "../canvas/routes.js";
+import { resolveDashboardHttpActor, listDashboardRecipients, dashboardOwnerName } from "../canvas/http-auth.js";
 import { getAuditActor, listSettingsChanges, recordSettingsChange } from "../audit/store.js";
 import { diffSettings } from "../audit/diff.js";
 
@@ -753,7 +755,9 @@ api.get("/agents/:id/dashboards", async (c) => {
   const config = loadConfig();
   if (config.canvas?.enabled === false) return c.json([]);
   const registry = getDashboardRegistry(path.join(CONFIG_DIR, "canvas", "registry.json"));
-  return c.json(await listAgentDashboards(agent, registry, config));
+  const auth = await getRequestAuthContext(c);
+  const actor = await resolveDashboardHttpActor(auth, agentId);
+  return c.json(await listAgentDashboards(agent, registry, config, { actor, ownerName: dashboardOwnerName }));
 });
 
 // GET /api/agents/:id/suggestions - workspace-authored starting prompts.
@@ -1438,3 +1442,19 @@ api.get("/media/allowed-types", (c) => {
 });
 
 export { api };
+
+api.route("/dashboards", createDashboardResourceRoutes({
+  getConfig: loadConfig, getAgent,
+  registry: getDashboardRegistry(path.join(CONFIG_DIR, "canvas", "registry.json")),
+  async authenticate(request) {
+    if (!loadConfig().extensions?.multiUser?.enabled) return {};
+    const { validateWebSocketRequest } = await import("@yoplai/extension-multi-user");
+    return validateWebSocketRequest(request);
+  },
+  async hasAgentAccess(auth, agentId) {
+    return (await resolveDashboardHttpActor(auth, agentId)).hasAgentAccess === true;
+  },
+  resolveActor: resolveDashboardHttpActor,
+  listRecipients: listDashboardRecipients,
+  getOwnerName: dashboardOwnerName,
+}));

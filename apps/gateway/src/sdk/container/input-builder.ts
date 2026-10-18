@@ -69,6 +69,8 @@ export class ContainerInputBuilder {
       sessionId: params.sessionId,
       runId,
       userId: params.userId,
+      actorUserId: params.actorUserId,
+      actorKind: params.actorKind,
       message: params.message,
       attachments: remapAttachmentsToContainer(params.attachments),
       imageInputSupported,

@@ -29,7 +29,7 @@ import {
 import { getSlackPairingService, setSlackPairingService, SlackPairingService } from "./pairing.js";
 import { registerCredentialConnectRoutes } from "./credential-connect-routes.js";
 import { createCredentialConnectLink, clearCredentialConnectRequests } from "./credential-connect.js";
-import { registerCredentialConnectLinkProvider } from "@yoplai/shared";
+import { registerCredentialConnectLinkProvider, registerSlackPairingLinkProvider } from "@yoplai/shared";
 import { registerSlackPairingRoutes } from "./pairing-routes.js";
 
 export { getSlackPairingService, SlackPairingService } from "./pairing.js";
@@ -102,6 +102,7 @@ export {
 } from "./thread-session-bindings.js";
 
 let unregisterConnectLinks: (() => void) | undefined;
+let unregisterPairingLinks: (() => void) | undefined;
 let unregisterDeliverySink: (() => void) | undefined;
 
 const slackExtension: Extension = {
@@ -136,6 +137,11 @@ const slackExtension: Extension = {
   },
   async start(ctx) {
     unregisterConnectLinks = registerCredentialConnectLinkProvider(createCredentialConnectLink);
+    unregisterPairingLinks = registerSlackPairingLinkProvider(async (context) => {
+      const pair = slackAgentTools().find((tool) => tool.name === "slack.pair")!;
+      const result = await pair.execute({}, context) as { ok?: boolean; link?: string };
+      return result.ok ? result.link : undefined;
+    });
     const config = ctx.getConfig();
     if (config.extensions?.multiUser?.enabled) {
       const baseUrl = config.server?.baseUrl ?? config.web?.baseUrl ?? `http://localhost:${config.ui?.port ?? 3000}`;
@@ -160,6 +166,8 @@ const slackExtension: Extension = {
     );
   },
   async stop() {
+    unregisterPairingLinks?.();
+    unregisterPairingLinks = undefined;
     unregisterConnectLinks?.();
     unregisterConnectLinks = undefined;
     clearCredentialConnectRequests();

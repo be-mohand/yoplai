@@ -14,6 +14,8 @@ export type ContainerTokenContext = {
   conversationFiles?: ExtensionAgentToolContext["conversationFiles"];
   oauthProviders?: string[];
   userId?: string;
+  actorUserId?: string;
+  actorKind?: "user" | "service" | "local" | "eval";
   sessionOwnerId?: string | null;
   requesterId?: string;
   projectId?: string;
