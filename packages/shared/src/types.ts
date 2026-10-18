@@ -1481,6 +1481,8 @@ export type ExtensionAgentToolContext = {
   sessionOwnerId?: string | null;
   requesterId?: string;
   signal?: AbortSignal;
+  /** Host-owned writable folder for this requester and conversation. */
+  conversationFiles?: { hostPath: string; runtimePath: string };
   emitProgress?: (event: {
     label: string;
     current?: number;

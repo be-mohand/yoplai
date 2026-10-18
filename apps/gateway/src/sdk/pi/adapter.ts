@@ -56,6 +56,8 @@ import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
 import { getBuiltInSkillsDir } from "./skills.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
+import { getConversationFiles } from "../../media/conversation-files.js";
+import { ContainerFileOutputAdapter } from "../container/file-output.js";
 
 type SignatureSchema = Parameters<typeof renderToolSignature>[0]["inputSchema"];
 
@@ -121,6 +123,7 @@ async function createPiExtensionTools(
 ) {
   const config = loadConfig();
   const env = resolveAgentEnv(agent, config);
+  const conversationFiles = getConversationFiles(agent.id, params.sessionId, params.userId);
   const tools = await getExtensionAgentTools(
     agent,
     config,
@@ -149,7 +152,8 @@ async function createPiExtensionTools(
           userId: params.userId,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
-          signal,
+          signal: signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal,
+          conversationFiles,
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
         });
@@ -163,6 +167,25 @@ async function createPiExtensionTools(
         };
       },
     };
+  });
+  const sendFileName = claimAgentToolName("send_file", usedToolNames);
+  descriptors.push({ name: sendFileName, extensionId: "core", core: true });
+  piTools.push({
+    name: sendFileName,
+    label: "Send file to user",
+    description: "Send a regular file directly in this conversation's files directory as a downloadable card in chat. Nested paths and symlinks are not supported. Finish writing the file first.",
+    parameters: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path to the conversation file" } },
+      required: ["path"],
+    } as ToolDefinition["parameters"],
+    execute: async (_toolCallId, args, signal) => {
+      const input = args as { path?: unknown };
+      if (typeof input.path !== "string") throw new Error("send_file requires a path");
+      await new ContainerFileOutputAdapter().handle(params, { type: "file_output", path: input.path }, undefined,
+        signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal, conversationFiles);
+      return { content: [{ type: "text", text: "File sent to user" }], details: {} };
+    },
   });
   if (params.context?.project?.id) {
     for (const tool of projectTools) {
@@ -493,6 +516,7 @@ export const piAdapter: SdkAdapter = {
         isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined,
         ...extensionPrompts,
         renderedContext || undefined,
+        `Conversation files: ${getConversationFiles(agent.id, params.sessionId, params.userId).runtimePath}. Download and edit files here; use send_file to share the result with the user.`,
       ].filter((prompt): prompt is string => Boolean(prompt));
 
       const sessionManager = SessionManager.open(sessionFile, SESSIONS_DIR);

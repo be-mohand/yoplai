@@ -639,9 +639,9 @@ describe("Pi gateway deferred tools", () => {
     };
     const before = await measure({ enabled: false });
     const after = await measure({});
-    expect(before.names).toHaveLength(254);
+    expect(before.names).toHaveLength(255);
     expect(before.names).not.toContain("tool_search");
-    expect(after.names).toHaveLength(17);
+    expect(after.names).toHaveLength(18);
     expect(after.schemas / before.schemas).toBeLessThanOrEqual(0.2);
     console.info(
       "ALG-493 gateway UTF-8 bytes",
@@ -700,6 +700,7 @@ describe("Pi gateway deferred tools", () => {
         "bash",
         "edit",
         "write",
+        "send_file",
         "tool_search",
         ...["adopt", "get", "checkpoint", "pause", "resume", "complete"].map(
           (n) => `task_${n}`
