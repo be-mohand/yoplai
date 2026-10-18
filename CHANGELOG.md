@@ -12,7 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").
-- With codemode and deferred tools on, the prompt tells the model to read a deferred tool's signature before it calls the tool. A call to a deferred tool that is not loaded now tells the model to use `tool_search`.
+- With codemode on, a script call with wrong arguments now adds the tool's signature to the codemode result. The model then uses the correct parameter names on the next try. A call to a deferred tool that is not loaded now tells the model to use `tool_search`.
 - Langfuse traces now show the system prompt that the model got, including the `deferred-tools` section and later changes from loaded tools.
 
 ### Changed

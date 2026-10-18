@@ -89,7 +89,8 @@ function fixture(
     sentinel: "RAW_CHILD_SENTINEL_506",
   }),
   extensionId = "fixture",
-  outputSchema?: Record<string, unknown>
+  outputSchema?: Record<string, unknown>,
+  parameters: Record<string, unknown> = { type: "object", properties: {} }
 ) {
   const agent = AgentConfigSchema.parse({
     id: "codemode",
@@ -120,7 +121,7 @@ function fixture(
         {
           name: "fixture_count",
           description: "Count deterministic records",
-          parameters: { type: "object", properties: {} },
+          parameters,
           ...(outputSchema ? { outputSchema } : {}),
           execute,
         },
@@ -184,6 +185,22 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 describe("Pi adapter codemode", () => {
+  it("appends the tool signature to the codemode result when a script hides a validation error", async () => {
+    const run = fixture(true, async () => ({ count: 1 }), "fixture", undefined, {
+      type: "object",
+      properties: { record_id: { type: "number" } },
+      required: ["record_id"],
+    });
+    let nextRequest = "";
+    setup.faux.setResponses([
+      script("try { await tools.fixture_count({ id: 1 }); } catch (e) { text(e.message.slice(0, 5)); }"),
+      context => { nextRequest = JSON.stringify(context.messages); return fauxAssistantMessage("Hinted"); },
+    ]);
+    await expect(piAdapter.run(run.params)).resolves.toMatchObject({ text: "Hinted" });
+    expect(nextRequest).toContain("fixture_count(");
+    expect(nextRequest).toContain("record_id");
+  });
+
   // ALG-507 seam 4 approved by Thinh (c404cd21): real Pi/faux and public
   // callbacks catch script values/declarations/history; live UI is separate.
   it("reads nested structured results before discovery and retains the same direct text and details", async () => {

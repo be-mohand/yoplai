@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { renderToolSignature } from "@earendil-works/pi-codemode";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getCurrentTools } from "@earendil-works/pi-ai";
 import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
@@ -55,6 +56,8 @@ import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
 import { getBuiltInSkillsDir } from "./skills.js";
 import { executeProjectTool, projectTools } from "../../chat-projects/tools.js";
+
+type SignatureSchema = Parameters<typeof renderToolSignature>[0]["inputSchema"];
 
 function runFailureError(message: string): Error {
   return Object.assign(new Error(message), {
@@ -466,6 +469,16 @@ export const piAdapter: SdkAdapter = {
       );
       for (const tool of extensionTools)
         Object.assign(tool, catalog.tools.get(tool.name));
+      const signatureOf = (name: string) => {
+        const tool = extensionTools.find((candidate) => candidate.name === name);
+        return tool
+          ? renderToolSignature({
+              name: tool.name,
+              inputSchema: tool.parameters as SignatureSchema,
+              outputSchema: tool.outputSchema as SignatureSchema,
+            })
+          : undefined;
+      };
       const extensionPrompts = await getExtensionSystemPromptContributions(
         agent,
         loadConfig(),
@@ -510,7 +523,11 @@ export const piAdapter: SdkAdapter = {
               else delete event.systemPromptOptions.sections["deferred-tools"];
             });
             pi.on("message_end", (event) => {
-              const message = catalog.hintUnloadedToolResult(event.message);
+              const unloaded = catalog.hintUnloadedToolResult(event.message);
+              const message =
+                agent.codemode === true
+                  ? (catalog.hintCodemodeSignatures(unloaded ?? event.message, signatureOf) ?? unloaded)
+                  : unloaded;
               return message ? { message } : undefined;
             });
           },

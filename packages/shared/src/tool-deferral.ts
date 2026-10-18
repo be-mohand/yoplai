@@ -22,10 +22,9 @@ type ToolMetadata = {
   namespace?: { name: string; aliases?: string[]; description?: string };
 };
 
-// Pi does not list deferred tools in the codemode description, so a script
-// must read a signature before it calls the tool.
+// Pi does not list deferred tools in the codemode description. A script
+// that passes wrong arguments gets the signature from hintCodemodeSignatures.
 const CODEMODE_DEFERRED_RULES = [
-  "In a codemode script, call `await describeTool(name)` before the first call to one of these tools. Use the parameter names that it shows.",
   "A tool with an output schema resolves to an object. Do not use JSON.parse on it.",
 ].join("\n");
 
@@ -35,6 +34,7 @@ type ToolResultMessage = {
   toolName?: string;
   isError?: boolean;
   content?: unknown;
+  details?: unknown;
 };
 
 /** One policy for registration metadata, discoverability and branch activation. */
@@ -148,6 +148,53 @@ export function createToolDeferralCatalog(
             type: "text",
             text: `Tool ${name} is not loaded. Call tool_search to load it, then call it again.`,
           },
+        ],
+      };
+    },
+    /**
+     * A codemode script often catches a validation error and drops its text.
+     * Append the signatures of the rejecting tools to the codemode result.
+     */
+    hintCodemodeSignatures<M extends ToolResultMessage>(
+      message: M,
+      signatureOf: (name: string) => string | undefined
+    ): M | undefined {
+      if (message.role !== "toolResult" || message.toolName !== "codemode")
+        return undefined;
+      const calls = (message.details as { calls?: unknown } | undefined)?.calls;
+      if (!Array.isArray(calls)) return undefined;
+      const names = new Set<string>();
+      for (const call of calls as {
+        name?: unknown;
+        status?: unknown;
+        error?: unknown;
+      }[]) {
+        if (
+          call?.status === "error" &&
+          typeof call.error === "string" &&
+          call.error.startsWith('Validation failed for tool "') &&
+          typeof call.name === "string"
+        )
+          names.add(call.name);
+      }
+      const signatures = [...names]
+        .map((name) => signatureOf(name))
+        .filter((signature): signature is string => Boolean(signature));
+      if (signatures.length === 0) return undefined;
+      const body = signatures
+        .map((signature) =>
+          signature
+            .split("\n")
+            .map((line) => `  ${line}`)
+            .join("\n")
+        )
+        .join("\n");
+      const text = `Signatures of the tools that rejected their arguments. Use these parameter names:\n\`\`\`ts\ndeclare const tools: {\n${body}\n};\n\`\`\``;
+      return {
+        ...message,
+        content: [
+          ...(Array.isArray(message.content) ? message.content : []),
+          { type: "text", text },
         ],
       };
     },

@@ -107,6 +107,21 @@ async function fixture(bridge?: (response: http.ServerResponse) => Promise<unkno
 }
 
 describe("Container Pi codemode", () => {
+  it("appends the tool signature to the codemode result when a script hides a validation error", async () => {
+    const { input, run, respond } = await fixture();
+    let nextRequest = "";
+    respond([
+      script("try { await tools.fixture_count({ id: 1 }); } catch (e) { text(e.message.slice(0, 5)); }"),
+      (context: TranscriptContext) => { nextRequest = JSON.stringify(context.messages); return fauxAssistantMessage("hinted"); },
+    ]);
+    await expect(run({ extensionTools: [{
+      ...input.extensionTools![0],
+      parameters: { type: "object", properties: { record_id: { type: "number" } }, required: ["record_id"] },
+    }] })).resolves.toMatchObject({ text: "hinted" });
+    expect(nextRequest).toContain("fixture_count(");
+    expect(nextRequest).toContain("record_id");
+  });
+
   // ALG-507 approved seam c404cd21: real runner/Pi/bridge observes script
   // values and declarations; browser rendering and external APIs are separate.
   it("reads nested gateway result fields and their declaration without parsing text", async () => {

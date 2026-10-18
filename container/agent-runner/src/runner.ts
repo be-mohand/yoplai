@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { renderToolSignature } from "@earendil-works/pi-codemode";
 import {
   InMemoryCredentialStore,
   ModelsError,
@@ -44,6 +45,8 @@ import {
 import { createRuntimeSessionFile } from "@yoplai/shared/node/sanitize-session";
 import { createToolDeferralCatalog, resolveToolDeferralConfig } from "@yoplai/shared/tool-deferral";
 import { fetchOAuthToken, type OAuthTokenInput } from "./gateway-client.js";
+
+type SignatureSchema = Parameters<typeof renderToolSignature>[0]["inputSchema"];
 
 // The Pi SDK itself tries `oauth.refresh()` once a stored credential has
 // under 5 minutes of validity left, and throws because our credentials carry
@@ -441,6 +444,16 @@ export async function runAgent(
       })),
     ], toolDeferral, { codemode: input.codemode === true });
     for (const tool of customTools) Object.assign(tool, catalog.tools.get(tool.name));
+    const signatureOf = (name: string) => {
+      const tool = extensionTools.find((candidate) => candidate.name === name);
+      return tool
+        ? renderToolSignature({
+            name: tool.name,
+            inputSchema: tool.parameters as SignatureSchema,
+            outputSchema: tool.outputSchema as SignatureSchema,
+          })
+        : undefined;
+    };
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.workspaceDir,
       agentDir: input.sessionDir,
@@ -456,7 +469,11 @@ export async function runAgent(
             else delete event.systemPromptOptions.sections["deferred-tools"];
           });
           pi.on("message_end", (event) => {
-            const message = catalog.hintUnloadedToolResult(event.message);
+            const unloaded = catalog.hintUnloadedToolResult(event.message);
+            const message =
+              input.codemode === true
+                ? (catalog.hintCodemodeSignatures(unloaded ?? event.message, signatureOf) ?? unloaded)
+                : unloaded;
             return message ? { message } : undefined;
           });
         },

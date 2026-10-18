@@ -246,8 +246,9 @@ describe("Container Pi deferred tools", () => {
       text: getCurrentSystemPrompt(contexts[0].messages),
     });
     expect(finalPrompt).toMatchObject({
-      text: expect.stringContaining("call `await describeTool(name)`"),
+      text: expect.stringContaining("Do not use JSON.parse"),
     });
+    expect((finalPrompt as { text: string }).text).not.toContain("describeTool");
     expect(finalPrompt).toMatchObject({
       text: expect.stringContaining("<deferred-tools>"),
     });
