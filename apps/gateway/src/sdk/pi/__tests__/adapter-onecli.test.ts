@@ -50,6 +50,7 @@ vi.mock("@earendil-works/pi-ai", () => ({
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
+  createCodemodeExtension: vi.fn(),
   createAgentSession: mockCreateAgentSession,
   SessionManager: {
     open: vi.fn(() => ({ close: vi.fn() })),

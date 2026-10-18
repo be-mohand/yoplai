@@ -2,11 +2,27 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { GatewayConfig } from "@yoplai/shared";
+import { ContainerInputSchema, type GatewayConfig } from "@yoplai/shared";
 import { ContainerInputBuilder } from "./input-builder.js";
 import type { SdkRunParams } from "../types.js";
 
 describe("container input builder", () => {
+  it.each([true, false, undefined])("transports codemode %s to the runner", async (codemode) => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-codemode-input-"));
+    try {
+      await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "test soul");
+      const builder = new ContainerInputBuilder({ buildSystemPrompts: async () => [], buildTools: async () => [] });
+      const params = {
+        agentId: "test", sessionId: "session", message: "hello", workspaceDir,
+        agent: { id: "test", codemode, model: { provider: "anthropic", model: "test" } },
+      } as SdkRunParams;
+      const input = await builder.build(params, { agents: [params.agent], extensions: {} } as GatewayConfig, "test-token");
+      expect(ContainerInputSchema.parse(JSON.parse(JSON.stringify(input))).codemode).toBe(codemode);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("builds container input without leaking model auth tokens", async () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")

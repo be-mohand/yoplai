@@ -230,13 +230,16 @@ export class LangfuseTracer {
         break;
       case "tool_call": {
         const generation = this.getGeneration(trace, event);
+        const parent = event.parentToolCallId
+          ? generation.openSpans.get(event.parentToolCallId)?.span
+          : undefined;
         const span = this.startObservationFor(trace, () =>
           startObservation(
             event.name,
             { input: event.args, metadata: { toolCallId: event.id } },
             {
               asType: "tool",
-              parentSpanContext: generation.generation.otelSpan.spanContext(),
+              parentSpanContext: (parent ?? generation.generation).otelSpan.spanContext(),
             }
           )
         );

@@ -244,6 +244,30 @@ describe("LangfuseTracer", () => {
     );
   });
 
+  it("parents nested tool spans to their open tool while ordinary tools stay under the generation", async () => {
+    const t = startTracer();
+    for (const call of [
+      { id: "code", name: "codemode" },
+      { id: "code/0", name: "lookup", parentToolCallId: "code" },
+      { id: "ordinary", name: "read" },
+    ]) {
+      t.handleHistoryEvent(historyEvent({ type: "tool_call", ...call, args: {}, timestamp: 1 }));
+    }
+    for (const id of ["code/0", "code", "ordinary"]) {
+      t.handleHistoryEvent(historyEvent({ type: "tool_result", id, name: "tool", content: "ok", isError: false, timestamp: 2 }));
+    }
+    await t.handleStreamEvent(streamEvent({ type: "done" }));
+
+    const parent = byType("tool").find((span) => span.name === "codemode");
+    const child = byType("tool").find((span) => span.name === "lookup");
+    const ordinary = byType("tool").find((span) => span.name === "read");
+    const [generation] = byType("generation");
+    expect(parent).toBeDefined();
+    expect(child?.parentSpanId).toBe(parent?.spanId);
+    expect(parent?.parentSpanId).toBe(generation?.spanId);
+    expect(ordinary?.parentSpanId).toBe(generation?.spanId);
+  });
+
   it("closes tools without results with a warning", async () => {
     const t = startTracer();
 

@@ -36,6 +36,7 @@ export type ChatRuntimeBlock =
   | {
       type: "tool";
       id: string;
+      parentToolCallId?: string;
       toolName: string;
       args: unknown;
       body?: string;
@@ -130,11 +131,13 @@ function attachToolResult(
   name: string,
   content: string,
   isError: boolean,
-  details?: { diff?: string }
+  details?: { diff?: string },
+  parentToolCallId?: string
 ): ChatRuntimeBlock[] {
   const result: FullToolResultMessage = {
     role: "toolResult",
     toolCallId: id,
+    parentToolCallId,
     toolName: name,
     content: [{ type: "text", text: content }],
     isError,
@@ -273,6 +276,9 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
       Awaited<ReturnType<typeof fetchFullHistory>>["activeTurn"]
     >
   ) => {
+    const knownTools = new Map(streamingBlocks().flatMap((block) =>
+      block.type === "tool" ? [[block.id, block] as const] : []
+    ));
     setIsStreaming(true);
     setWaitingForFirstText(!turn.text?.trim() && !turn.thinking?.trim());
     const blocks: ChatRuntimeBlock[] = [];
@@ -285,12 +291,19 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
       blocks.push({
         type: "tool",
         id: toolCall.id,
+        parentToolCallId: toolCall.parentToolCallId,
+        body: knownTools.get(toolCall.id)?.body,
+        result: knownTools.get(toolCall.id)?.result,
         toolName: toolCall.name,
         args: toolCall.arguments,
         status: toolCall.status,
       });
     }
-    setStreamingBlocks(blocks);
+    let nextBlocks = blocks;
+    for (const result of turn.toolResults ?? []) {
+      nextBlocks = attachToolResult(nextBlocks, result.id, result.name, result.content, result.isError, result.details, result.parentToolCallId);
+    }
+    setStreamingBlocks(nextBlocks);
   };
 
   const callbacks = (
@@ -311,13 +324,13 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
     onProgress() {
       setWaitingForFirstText(false);
     },
-    onToolCall(id, name, args) {
+    onToolCall(id, name, args, parentToolCallId) {
       setStreamingBlocks((prev) =>
         prev.some((block) => block.type === "tool" && block.id === id)
           ? prev
           : [
               ...prev,
-              { type: "tool", id, toolName: name, args, status: "running" },
+              { type: "tool", id, parentToolCallId, toolName: name, args, status: "running" },
             ]
       );
     },
@@ -326,9 +339,9 @@ export function createChatRuntime(deps: Partial<ChatRuntimeDeps> = {}) {
         updateToolStatus(prev, name, isError ? "error" : "done")
       );
     },
-    onToolResult(id, name, content, isError, details) {
+    onToolResult(id, name, content, isError, details, parentToolCallId) {
       setStreamingBlocks((prev) =>
-        attachToolResult(prev, id, name, content, isError, details)
+        attachToolResult(prev, id, name, content, isError, details, parentToolCallId)
       );
     },
     onFileOutput(file) {

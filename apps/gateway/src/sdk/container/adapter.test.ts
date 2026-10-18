@@ -663,6 +663,34 @@ describe("container adapter", () => {
     );
   });
 
+  it.each(["streaming", "final"])("preserves nested tool parents in %s container output", async (mode) => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = path.join(root, "yoplai");
+    const agent = createAgent(root);
+    setConfig(agent, root);
+    const { processes } = mockSpawn();
+    mockExecFile();
+    const params = createParams(agent);
+    const run = getContainerAdapter().run(params);
+    await tick();
+    const history = [
+      { type: "tool_call", id: "batch/0", parentToolCallId: "batch", name: "read", args: { path: "a" }, timestamp: 1 },
+      { type: "tool_result", id: "batch/0", parentToolCallId: "batch", name: "read", content: "child", isError: false, timestamp: 2 },
+    ];
+    if (mode === "streaming") {
+      for (const event of history) processes[0].emitStreamEvent(event, true);
+    }
+    processes[0].emitOutput({ text: "done", history });
+    processes[0].finish(0);
+    await run;
+    for (const type of ["tool_call", "tool_result"]) {
+      expect(params.onHistoryEvent).toHaveBeenCalledWith(expect.objectContaining({ type, id: "batch/0", parentToolCallId: "batch" }));
+      if (mode === "streaming") {
+        expect(params.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type, id: "batch/0", parentToolCallId: "batch" }));
+      }
+    }
+  });
+
   it("emits system_context from gateway for container runs", async () => {
     const root = tempDir();
     process.env.YOPLAI_HOME = path.join(root, "yoplai");

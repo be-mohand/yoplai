@@ -273,6 +273,7 @@ const AgentConfigBaseSchema = z.object({
   introMessage: z.string().optional(), // Custom intro for /new (default: "New conversation started.")
   extensions: z.record(z.string(), ExtensionBaseConfigSchema).optional(),
   globalSkills: z.boolean().optional(), // Include ~/.agents/skills/ (default: false)
+  codemode: z.boolean().optional(),
   onecliToken: z.string().optional(), // Per-agent OneCLI proxy token
   sandbox: AgentSandboxConfigSchema.optional(),
 });
@@ -1947,12 +1948,14 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("tool_call"),
     id: z.string(),
+    parentToolCallId: z.string().optional(),
     name: z.string(),
     arguments: z.unknown(),
   }),
   z.object({
     type: z.literal("tool_result"),
     id: z.string(),
+    parentToolCallId: z.string().optional(),
     name: z.string(),
     content: z.string(),
     isError: z.boolean(),
@@ -2082,9 +2085,18 @@ export type WsActiveTurnSnapshot = {
   text: string;
   toolCalls: Array<{
     id: string;
+    parentToolCallId?: string;
     name: string;
     arguments: unknown;
     status: "running" | "done" | "error";
+  }>;
+  toolResults?: Array<{
+    id: string;
+    parentToolCallId?: string;
+    name: string;
+    content: string;
+    isError: boolean;
+    details?: { diff?: string };
   }>;
 };
 
@@ -2128,6 +2140,7 @@ export type TextBlock = {
 export type ToolCallBlock = {
   type: "toolCall";
   id: string;
+  parentToolCallId?: string;
   name: string;
   arguments: unknown;
 };
@@ -2206,6 +2219,7 @@ export type FullHistoryMessage =
   | {
       role: "toolResult";
       toolCallId: string;
+      parentToolCallId?: string;
       toolName: string;
       content: ContentBlock[];
       isError: boolean;
@@ -2461,6 +2475,7 @@ export const HistoryEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("tool_call"),
     id: z.string(),
+    parentToolCallId: z.string().optional(),
     name: z.string(),
     args: z.unknown(),
     timestamp: z.number(),
@@ -2468,6 +2483,7 @@ export const HistoryEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("tool_result"),
     id: z.string(),
+    parentToolCallId: z.string().optional(),
     name: z.string(),
     content: z.string(),
     isError: z.boolean(),
@@ -2537,6 +2553,7 @@ export type ContainerSystemFile = z.infer<typeof ContainerSystemFileSchema>;
 
 export const ContainerInputSchema = z.object({
   agentId: z.string(),
+  codemode: z.boolean().optional(),
   sessionId: z.string(),
   // Optional for back-compat with containers launched before per-run IPC
   // namespaces existed.

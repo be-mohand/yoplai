@@ -141,6 +141,7 @@ function forwardStreamEvent(
     params.onEvent({
       type: "tool_call",
       id: event.id,
+      parentToolCallId: event.parentToolCallId,
       name: event.name,
       arguments: event.args,
     });
@@ -156,6 +157,7 @@ function forwardStreamEvent(
     params.onEvent({
       type: "tool_result",
       id: event.id,
+      parentToolCallId: event.parentToolCallId,
       name: event.name,
       content: event.content,
       isError: event.isError,

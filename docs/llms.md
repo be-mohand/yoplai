@@ -238,6 +238,14 @@ Workspace bootstrap creates missing `AGENTS.md`, `SOUL.md`, and `USER.md` from `
 
 Pi discovers skills and commands from workspace and user Pi directories. Extension tool names are provider-sanitized for the model while gateway dispatch retains original extension/tool identity.
 
+Pi agents can opt into the built-in JavaScript `codemode` tool with `codemode: true` in `agent.yaml`, on the host or in a container. An absent or false flag leaves it off; existing agents are not enabled automatically. The resource loader registers `createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })` before reload/session creation, and the session's explicit tool allowlist includes `codemode` only when enabled. Non-Pi adapters are unchanged.
+
+Scripts call existing declared tools as `await tools.<sanitized_name>(args)` and print only the final selection with `text(...)`. Our extension/MCP bridge tools return text: parse a known JSON text response with `JSON.parse` before accessing its fields. Raw child results remain inspectable in display history, but Pi keeps them out of the next model request. Script calls retain tool validation, handlers, cancellation and the existing invisible-tool policy. Classifier/image models and deferred tool loading are not enabled.
+
+Nested tool start/end events carry optional `parentToolCallId` through runtime, stream/history, persisted tool blocks/results and active-turn snapshots. Chat renders these normal tool calls under their parent, with the child group collapsed by default, including after reload/reconnect. Active-turn snapshots include completed display results so reconnect keeps child output inspectable; these snapshots do not enter the model transcript. This field is separate from subagent `parentToolUseId`. Langfuse parents nested tool spans to the open parent tool span; ordinary tools remain children of the generation. Partial tool updates remain ignored.
+
+Pi 1.3 limits each process to two live codemode workers across sessions. A third script returns a tool error rather than queuing; retry after a worker exits (exit can lag abort). Each container has its own limit. The inline budget caps declarations inside the codemode description only: declared callable tools also receive per-tool codemode notes, so agents with large tool sets still incur fixed description overhead. Enabling this flag on CloudiHub agents is a separate rollout decision after ALG-493.
+
 Yoplai also ships a built-in `dashboard` skill to host and sandboxed Pi agents. It teaches the Canvas file/data/maintenance contract and includes cloneable HR, OKR, and customer-success templates backed by seeded SQLite data; workspace skills can complement it without requiring a global-skills opt-in.
 
 ### Sessions and concurrency

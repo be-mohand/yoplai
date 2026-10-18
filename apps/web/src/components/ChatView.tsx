@@ -154,6 +154,8 @@ type DropZone = "history" | "composer" | "attach";
 
 type SimpleToolMessage = {
   id: string;
+  parentToolCallId?: string;
+  result?: FullToolResultMessage;
   role: "tool";
   toolName: string;
   arguments?: unknown;
@@ -216,6 +218,7 @@ type StreamingBlock =
   | {
       type: "toolCall";
       id: string;
+      parentToolCallId?: string;
       name: string;
       arguments: unknown;
       status: "running" | "done" | "error";
@@ -408,19 +411,41 @@ function ToolRunSection(props: {
       </button>
       <Show when={expanded()}>
         <div class="activity-tool-run">
-          <Index each={props.tools}>
-            {(tool) =>
-              props.simple ? (
-                <SimpleToolBlock name={tool().name} arguments={tool().arguments} />
-              ) : (
-                <ToolBlock
-                  name={tool().name}
-                  arguments={tool().arguments}
-                  result={tool().result}
-                  status={tool().status}
-                />
-              )
-            }
+          <Index each={props.tools.filter((tool) => !tool.parentToolCallId)}>
+            {(tool) => {
+              const children = () => props.tools.filter(
+                (child) => child.parentToolCallId === tool().id && tool().id
+              );
+              return (
+                <div class="tool-call-group">
+                  {props.simple ? (
+                    <SimpleToolBlock name={tool().name} arguments={tool().arguments} />
+                  ) : (
+                    <ToolBlock
+                      name={tool().name}
+                      arguments={tool().arguments}
+                      result={tool().result}
+                      status={tool().status}
+                    />
+                  )}
+                  <Show when={children().length}>
+                    <details class="nested-tool-calls">
+                      <summary>{children().length} nested tool call{children().length === 1 ? "" : "s"}</summary>
+                      <Index each={children()}>
+                        {(child) => (
+                          <ToolBlock
+                            name={child().name}
+                            arguments={child().arguments}
+                            result={child().result}
+                            status={child().status}
+                          />
+                        )}
+                      </Index>
+                    </details>
+                  </Show>
+                </div>
+              );
+            }}
           </Index>
         </div>
       </Show>
@@ -438,6 +463,8 @@ type ActivityItem =
     }
   | {
       type: "tool";
+      id?: string;
+      parentToolCallId?: string;
       name: string;
       arguments?: unknown;
       result?: FullToolResultMessage;
@@ -665,6 +692,8 @@ function fullHistoryDisplayRows(
           historyIndex,
           item: {
             type: "tool",
+            id: block.id,
+            parentToolCallId: block.parentToolCallId,
             name: block.name,
             arguments: block.arguments,
             result: toolResults.get(block.id),
@@ -691,6 +720,10 @@ function fullMessagesToSimpleView(
   messages: FullHistoryMessage[]
 ): SimpleViewMessage[] {
   const simple: SimpleViewMessage[] = [];
+  const results = new Map(
+    messages.filter((message): message is FullToolResultMessage => message.role === "toolResult")
+      .map((message) => [message.toolCallId, message])
+  );
   for (const message of messages) {
     const summary = compactSummary(message);
     if (summary !== undefined) {
@@ -737,7 +770,9 @@ function fullMessagesToSimpleView(
         });
       } else if (block.type === "toolCall") {
         simple.push({
-          id: crypto.randomUUID(),
+          id: block.id,
+          parentToolCallId: block.parentToolCallId,
+          result: results.get(block.id),
           role: "tool",
           toolName: block.name,
           arguments: block.arguments,
@@ -785,6 +820,8 @@ function ContentBlocks(props: {
                         >;
                         return {
                           type: "tool" as const,
+                          id: tool.id,
+                          parentToolCallId: tool.parentToolCallId,
                           name: tool.name,
                           arguments: tool.arguments,
                           result: props.toolResultsMap?.get(tool.id),
@@ -954,6 +991,7 @@ export function ChatView() {
   const [streamingToolCalls, setStreamingToolCalls] = createSignal<
     Array<{
       id: string;
+      parentToolCallId?: string;
       name: string;
       arguments: unknown;
       status: "running" | "done" | "error";
@@ -1492,6 +1530,9 @@ export function ChatView() {
   };
 
   const applyActiveTurnSnapshot = (turn: import("../api").ActiveTurn) => {
+    const knownResults = new Map(streamingBlocks().flatMap((block) =>
+      block.type === "toolCall" && block.result ? [[block.id, block.result] as const] : []
+    ));
     setIsStreaming(true);
     setStreamingStartedAt(turn.startedAt ?? Date.now());
     setStreamingThinking(turn.thinking ?? "");
@@ -1501,6 +1542,7 @@ export function ChatView() {
     setStreamingToolCalls(
       (turn.toolCalls ?? []).map((tc) => ({
         id: tc.id,
+        parentToolCallId: tc.parentToolCallId,
         name: tc.name,
         arguments: tc.arguments,
         status: tc.status,
@@ -1530,6 +1572,8 @@ export function ChatView() {
         (tc): StreamingBlock => ({
           type: "toolCall",
           id: tc.id,
+          parentToolCallId: tc.parentToolCallId,
+          result: knownResults.get(tc.id),
           name: tc.name,
           arguments: tc.arguments,
           status: tc.status,
@@ -1544,6 +1588,9 @@ export function ChatView() {
         status: tc.status,
       }))
     );
+    for (const result of turn.toolResults ?? []) {
+      attachStreamingToolResult(result.id, result.name, result.content, result.isError, result.details, result.parentToolCallId);
+    }
     // Ensure the user message that triggered the active run is visible
     // even before the persisted history is re-fetched.
     if (turn.userText) {
@@ -1625,6 +1672,7 @@ export function ChatView() {
     id: string,
     name: string,
     args: unknown,
+    parentToolCallId?: string,
     timestamp = Date.now()
   ) => {
     setStreamingBlocks((blocks) => {
@@ -1635,6 +1683,7 @@ export function ChatView() {
         {
           type: "toolCall",
           id,
+          parentToolCallId,
           name,
           arguments: args,
           status: "running",
@@ -1662,11 +1711,13 @@ export function ChatView() {
     name: string,
     content: string,
     isError: boolean,
-    details?: { diff?: string }
+    details?: { diff?: string },
+    parentToolCallId?: string
   ) => {
     const result: FullToolResultMessage = {
       role: "toolResult",
       toolCallId: id,
+      parentToolCallId,
       toolName: name,
       content: [{ type: "text", text: content }],
       isError,
@@ -1757,17 +1808,18 @@ export function ChatView() {
           if (ownsDisplayedDirectStream()) return;
           setIsStreaming(true);
         },
-        onToolCall: (id, name, args) => {
+        onToolCall: (id, name, args, parentToolCallId) => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
-          appendStreamingToolCallBlock(id, name, args);
+          appendStreamingToolCallBlock(id, name, args, parentToolCallId);
           setStreamingToolCalls((prev) => {
             if (prev.some((tc) => tc.id === id)) return prev;
             return [
               ...prev,
               {
                 id,
+                parentToolCallId,
                 name,
                 arguments: args,
                 status: "running",
@@ -1809,10 +1861,10 @@ export function ChatView() {
           );
           updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
         },
-        onToolResult: (id, name, content, isError, details) => {
+        onToolResult: (id, name, content, isError, details, parentToolCallId) => {
           if (!isCurrentSubscription()) return;
           if (ownsDisplayedDirectStream()) return;
-          attachStreamingToolResult(id, name, content, isError, details);
+          attachStreamingToolResult(id, name, content, isError, details, parentToolCallId);
         },
         onFileOutput: (file) => {
           if (!isCurrentSubscription()) return;
@@ -2051,6 +2103,7 @@ export function ChatView() {
               return {
                 type: "toolCall",
                 id: block.id,
+                parentToolCallId: block.parentToolCallId,
                 name: block.name,
                 arguments: block.arguments,
               };
@@ -2106,7 +2159,9 @@ export function ChatView() {
             if (block.type === "toolCall") {
               return [
                 {
-                  id: crypto.randomUUID(),
+                  id: block.id,
+                  parentToolCallId: block.parentToolCallId,
+                  result: block.result,
                   role: "tool",
                   toolName: block.name,
                   arguments: block.arguments,
@@ -2357,6 +2412,7 @@ export function ChatView() {
       const queuedToolResults: FullToolResultMessage[] = [];
       const queuedToolCalls: Array<{
         id: string;
+        parentToolCallId?: string;
         name: string;
         arguments: unknown;
         status: "running" | "done" | "error";
@@ -2409,6 +2465,7 @@ export function ChatView() {
                 ...queuedToolCalls.map((tc) => ({
                   type: "toolCall" as const,
                   id: tc.id,
+                  parentToolCallId: tc.parentToolCallId,
                   name: tc.name,
                   arguments: tc.arguments,
                 })),
@@ -2452,7 +2509,9 @@ export function ChatView() {
                 if (block.type === "toolCall") {
                   return [
                     {
-                      id: crypto.randomUUID(),
+                      id: block.id,
+                      parentToolCallId: block.parentToolCallId,
+                      result: queuedToolResults.find((result) => result.toolCallId === block.id),
                       role: "tool",
                       toolName: block.name,
                       arguments: block.arguments,
@@ -2524,10 +2583,11 @@ export function ChatView() {
               queuedBlocks.push({ type: "thinking", thinking: chunk });
             }
           },
-          onToolCall: (id, name, args) => {
+          onToolCall: (id, name, args, parentToolCallId) => {
             if (!isCurrentQueuedStream()) return;
             queuedToolCalls.push({
               id,
+              parentToolCallId,
               name,
               arguments: args,
               status: "running",
@@ -2536,6 +2596,7 @@ export function ChatView() {
             queuedBlocks.push({
               type: "toolCall",
               id,
+              parentToolCallId,
               name,
               arguments: args,
             });
@@ -2548,11 +2609,12 @@ export function ChatView() {
               }
             }
           },
-          onToolResult: (id, name, content, isError, details) => {
+          onToolResult: (id, name, content, isError, details, parentToolCallId) => {
             if (!isCurrentQueuedStream()) return;
             queuedToolResults.push({
               role: "toolResult",
               toolCallId: id,
+              parentToolCallId,
               toolName: name,
               content: [{ type: "text", text: content }],
               isError,
@@ -2729,14 +2791,15 @@ export function ChatView() {
           if (!isCurrentDirectStream()) return;
           setIsStreaming(true);
         },
-        onToolCall: (id, name, args) => {
+        onToolCall: (id, name, args, parentToolCallId) => {
           if (!isCurrentDirectStream()) return;
           setStreamingFinished(false);
-          appendStreamingToolCallBlock(id, name, args);
+          appendStreamingToolCallBlock(id, name, args, parentToolCallId);
           setStreamingToolCalls((prev) => [
             ...prev,
             {
               id,
+              parentToolCallId,
               name,
               arguments: args,
               status: "running",
@@ -2771,9 +2834,9 @@ export function ChatView() {
           );
           updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
         },
-        onToolResult: (id, name, content, isError, details) => {
+        onToolResult: (id, name, content, isError, details, parentToolCallId) => {
           if (!isCurrentDirectStream()) return;
-          attachStreamingToolResult(id, name, content, isError, details);
+          attachStreamingToolResult(id, name, content, isError, details, parentToolCallId);
         },
         onFileOutput: (file) => {
           if (!isCurrentDirectStream()) return;
@@ -3106,6 +3169,9 @@ export function ChatView() {
                               }
                             : {
                                 type: "tool" as const,
+                                id: msg.id,
+                                parentToolCallId: (msg as SimpleToolMessage).parentToolCallId,
+                                result: (msg as SimpleToolMessage).result,
                                 name: (msg as SimpleToolMessage).toolName,
                                 arguments: (msg as SimpleToolMessage).arguments,
                                 at: msg.timestamp,
@@ -4476,6 +4542,14 @@ export function ChatView() {
           flex-direction: column;
           gap: 16px;
         }
+
+        .nested-tool-calls {
+          margin: 4px 0 4px 14px;
+          padding-left: 12px;
+          border-left: 1px solid var(--border-default);
+          color: var(--text-muted);
+        }
+        .nested-tool-calls > summary { cursor: pointer; }
 
         .tool-block { color: var(--text-muted); }
 

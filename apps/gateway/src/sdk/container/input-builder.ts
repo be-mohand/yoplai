@@ -63,6 +63,7 @@ export class ContainerInputBuilder {
     const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
     return {
       agentId: params.agentId,
+      codemode: params.agent.codemode,
       sessionId: params.sessionId,
       runId,
       userId: params.userId,

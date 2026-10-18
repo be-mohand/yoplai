@@ -132,7 +132,7 @@ async function createPiExtensionTools(
       label: tool.description,
       description: tool.description,
       parameters: tool.parameters as unknown as AgentTool["parameters"],
-      execute: async (_toolCallId, toolParams) => {
+      execute: async (_toolCallId, toolParams, signal) => {
         const result = await tool.execute(toolParams, {
           agent,
           config,
@@ -141,6 +141,7 @@ async function createPiExtensionTools(
           userId: params.userId,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
+          signal,
           emitProgress: (event) =>
             params.onEvent({ type: "progress", ...event }),
         });
@@ -312,6 +313,7 @@ export const piAdapter: SdkAdapter = {
       // Dynamically import pi-coding-agent
       const {
         createAgentSession,
+        createCodemodeExtension,
         SessionManager,
         SettingsManager,
         ModelRuntime,
@@ -430,6 +432,7 @@ export const piAdapter: SdkAdapter = {
       const tools = [
         ...builtInTools,
         ...extensionTools.map((tool) => tool.name),
+        ...(agent.codemode === true ? ["codemode"] : []),
       ];
       const extensionPrompts = await getExtensionSystemPromptContributions(
         agent,
@@ -461,6 +464,9 @@ export const piAdapter: SdkAdapter = {
         cwd: params.workspaceDir,
         agentDir: CONFIG_DIR,
         settingsManager,
+        extensionFactories: agent.codemode === true
+          ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
+          : [],
         systemPromptOverride: () => PI_SYSTEM_PROMPT,
         appendSystemPrompt:
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
@@ -634,6 +640,7 @@ export const piAdapter: SdkAdapter = {
           const toolCallId =
             (evt as { toolCallId?: string }).toolCallId ?? `call_${Date.now()}`;
           const args = (evt as { args?: unknown }).args;
+          const parentToolCallId = evt.parentToolCallId;
 
           if (invisibleToolNames.has(toolName)) return;
           params.onEvent({ type: "tool_start", toolName });
@@ -642,12 +649,14 @@ export const piAdapter: SdkAdapter = {
             id: toolCallId,
             name: toolName,
             arguments: args,
+            parentToolCallId,
           });
           params.onHistoryEvent({
             type: "tool_call",
             id: toolCallId,
             name: toolName,
             args,
+            parentToolCallId,
             timestamp: Date.now(),
           });
         }
@@ -657,6 +666,7 @@ export const piAdapter: SdkAdapter = {
           const toolCallId = (evt as { toolCallId?: string }).toolCallId ?? "";
           const isError = (evt as { isError?: boolean }).isError ?? false;
           const rawResult = (evt as { result?: unknown }).result;
+          const parentToolCallId = evt.parentToolCallId;
 
           if (invisibleToolNames.has(toolName)) return;
           // Extract text from result - handle both string and structured formats
@@ -681,6 +691,7 @@ export const piAdapter: SdkAdapter = {
             name: toolName,
             content,
             isError,
+            parentToolCallId,
           });
           params.onHistoryEvent({
             type: "tool_result",
@@ -688,6 +699,7 @@ export const piAdapter: SdkAdapter = {
             name: toolName,
             content,
             isError,
+            parentToolCallId,
             timestamp: Date.now(),
           });
         }

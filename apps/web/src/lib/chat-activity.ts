@@ -52,6 +52,8 @@ type StreamingThinkingBlock = {
 };
 type StreamingToolBlock<R> = {
   type: "toolCall";
+  id?: string;
+  parentToolCallId?: string;
   name: string;
   arguments: unknown;
   status: "running" | "done" | "error";
@@ -70,6 +72,8 @@ export type StreamingActivityItem<R> =
     }
   | {
       type: "tool";
+      id?: string;
+      parentToolCallId?: string;
       name: string;
       arguments: unknown;
       result?: R;
@@ -81,7 +85,8 @@ export type StreamingActivityItem<R> =
  * Projects an activity segment of streaming blocks to display items.
  * Thinking ends at the next block's timestamp; the last block of a still
  * streaming turn stays open (`endedAt` undefined) and its final thinking item
- * is active. Tool result/status are included only when `toolDetails` is set.
+ * is active. Tool result/status are included when `toolDetails` is set, and
+ * for nested calls so their outputs remain inspectable in simple mode.
  */
 export function streamingActivityItems<B extends StreamingBlockLike, R>(
   blocks: readonly B[],
@@ -103,9 +108,14 @@ export function streamingActivityItems<B extends StreamingBlockLike, R>(
       };
     }
     const tool = block as unknown as StreamingToolBlock<R>;
-    return toolDetails
+    const identity = {
+      ...(tool.id ? { id: tool.id } : {}),
+      ...(tool.parentToolCallId ? { parentToolCallId: tool.parentToolCallId } : {}),
+    };
+    return toolDetails || tool.parentToolCallId
       ? {
           type: "tool",
+          ...identity,
           name: tool.name,
           arguments: tool.arguments,
           result: tool.result,
@@ -114,6 +124,7 @@ export function streamingActivityItems<B extends StreamingBlockLike, R>(
         }
       : {
           type: "tool",
+          ...identity,
           name: tool.name,
           arguments: tool.arguments,
           at: tool.timestamp,

@@ -114,6 +114,7 @@ type ToolResultHistoryEntry = {
   timestamp: number;
   role: "toolResult";
   toolCallId: string;
+  parentToolCallId?: string;
   toolName: string;
   content: ContentBlock[];
   isError: boolean;
@@ -326,12 +327,14 @@ export type TurnBuffer = {
   fileBlocks: FileBlock[];
   toolCalls: Array<{
     id: string;
+    parentToolCallId?: string;
     name: string;
     args: unknown;
     status: "running" | "done" | "error";
   }>;
   toolResults: Array<{
     id: string;
+    parentToolCallId?: string;
     name: string;
     content: string;
     isError: boolean;
@@ -382,6 +385,7 @@ export function snapshotTurnBuffer(buffer: TurnBuffer): FullHistoryMessage[] {
   });
   for (const result of buffer.toolResults) messages.push({
     role: "toolResult", toolCallId: result.id, toolName: result.name,
+    parentToolCallId: result.parentToolCallId,
     content: [{ type: "text", text: result.content }], isError: result.isError,
     details: result.details, timestamp: result.timestamp,
   });
@@ -448,6 +452,7 @@ export async function flushTurnBuffer(
       content.push({
         type: "toolCall",
         id: tc.id,
+        parentToolCallId: tc.parentToolCallId,
         name: tc.name,
         arguments: tc.args,
       });
@@ -476,6 +481,7 @@ export async function flushTurnBuffer(
       {
         role: "toolResult",
         toolCallId: tr.id,
+        parentToolCallId: tr.parentToolCallId,
         toolName: tr.name,
         content: [{ type: "text", text: tr.content }],
         isError: tr.isError,
@@ -609,6 +615,7 @@ export function bufferHistoryEvent(
       }
       buffer.toolCalls.push({
         id: event.id,
+        parentToolCallId: event.parentToolCallId,
         name: event.name,
         args: event.args,
         status: "running",
@@ -616,6 +623,7 @@ export function bufferHistoryEvent(
       buffer.assistantContent.push({
         type: "toolCall",
         id: event.id,
+        parentToolCallId: event.parentToolCallId,
         name: event.name,
         arguments: event.args,
       });
@@ -635,6 +643,7 @@ export function bufferHistoryEvent(
       }
       buffer.toolResults.push({
         id: event.id,
+        parentToolCallId: event.parentToolCallId,
         name: event.name,
         content: event.content,
         isError: event.isError,
@@ -811,6 +820,7 @@ export async function getFullHistory(
           messages.push({
             role: "toolResult",
             toolCallId: entry.toolCallId,
+            parentToolCallId: entry.parentToolCallId,
             toolName: entry.toolName,
             content: entry.content,
             isError: entry.isError,

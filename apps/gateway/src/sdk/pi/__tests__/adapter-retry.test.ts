@@ -58,7 +58,8 @@ vi.mock("@earendil-works/pi-ai/compat", () => ({
   getEnvApiKey: mockGetEnvApiKey,
 }));
 
-vi.mock("@earendil-works/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
+  createCodemodeExtension: (await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()).createCodemodeExtension,
   createAgentSession: mockCreateAgentSession,
   SessionManager: {
     open: vi.fn(() => ({ close: vi.fn() })),

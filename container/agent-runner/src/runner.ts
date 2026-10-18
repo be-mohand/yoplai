@@ -14,6 +14,7 @@ import {
   SessionManager,
   SettingsManager,
   createAgentSession,
+  createCodemodeExtension,
   type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -408,6 +409,9 @@ export async function runAgent(
       cwd: input.workspaceDir,
       agentDir: input.sessionDir,
       settingsManager,
+      extensionFactories: input.codemode === true
+        ? [createCodemodeExtension({ mode: "on", inlineBudget: 1000, models: false })]
+        : [],
       additionalSkillPaths: [
         getBuiltInSkillsDir(),
         path.join(input.workspaceDir, "skills"),
@@ -433,7 +437,11 @@ export async function runAgent(
       createSendFileTool(input, usedToolNames),
     ];
     // Pi treats `tools` as an allowlist when provided, so custom tool names must be included.
-    const tools = [...builtInTools, ...customTools.map((tool) => tool.name)];
+    const tools = [
+      ...builtInTools,
+      ...customTools.map((tool) => tool.name),
+      ...(input.codemode === true ? ["codemode"] : []),
+    ];
 
     const { session } = await createAgentSession({
       cwd: input.workspaceDir,
@@ -812,6 +820,9 @@ function collectHistoryEvent(
     collected.push({
       type: "tool_call",
       id: typeof event.toolCallId === "string" ? event.toolCallId : "",
+      ...(typeof event.parentToolCallId === "string"
+        ? { parentToolCallId: event.parentToolCallId }
+        : {}),
       name: typeof event.toolName === "string" ? event.toolName : "unknown",
       args: event.args,
       timestamp: Date.now(),
@@ -822,6 +833,9 @@ function collectHistoryEvent(
     collected.push({
       type: "tool_result",
       id: typeof event.toolCallId === "string" ? event.toolCallId : "",
+      ...(typeof event.parentToolCallId === "string"
+        ? { parentToolCallId: event.parentToolCallId }
+        : {}),
       name: typeof event.toolName === "string" ? event.toolName : "unknown",
       content: extractToolResultText(event.result),
       isError: event.isError === true,

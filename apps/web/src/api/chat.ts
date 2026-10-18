@@ -20,13 +20,14 @@ export type DoneMeta = {
 export type StreamCallbacks = {
   onText: (text: string) => void;
   onThinking?: (text: string) => void;
-  onToolCall?: (id: string, name: string, args: unknown) => void;
+  onToolCall?: (id: string, name: string, args: unknown, parentToolCallId?: string) => void;
   onToolResult?: (
     id: string,
     name: string,
     content: string,
     isError: boolean,
-    details?: { diff?: string }
+    details?: { diff?: string },
+    parentToolCallId?: string
   ) => void;
   onToolStart?: (toolName: string) => void;
   onToolEnd?: (toolName: string, isError: boolean) => void;

@@ -5,7 +5,7 @@ import type {
   FullHistoryMessage,
   ThinkLevel,
 } from "./types";
-import type { Suggestion } from "@yoplai/shared/types";
+import type { Suggestion, WsActiveTurnSnapshot } from "@yoplai/shared/types";
 import { API_BASE, apiFetch as fetch } from "./core";
 
 export async function fetchAgents(): Promise<Agent[]> {
@@ -81,8 +81,10 @@ export type ActiveTurn = {
     id: string;
     name: string;
     arguments: unknown;
+    parentToolCallId?: string;
     status: "running" | "done" | "error";
   }>;
+  toolResults?: WsActiveTurnSnapshot["toolResults"];
 };
 
 export type HistoryResponse<T> = {

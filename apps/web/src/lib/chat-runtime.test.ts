@@ -3,8 +3,58 @@ import { createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import type { FullHistoryMessage } from "../api/types";
 import { createChatRuntime } from "./chat-runtime";
+import type { SubscriptionCallbacks } from "../api/realtime";
 
 describe("createChatRuntime", () => {
+  it.each(["live", "reconnect"])("preserves %s tool parent identity through results", (source) => {
+    createRoot((dispose) => {
+      let callbacks: SubscriptionCallbacks = {};
+      const runtime = createChatRuntime({
+        subscribeToSession: (_agentId, _sessionKey, next) => {
+          callbacks = next;
+          return () => {};
+        },
+      });
+      runtime.subscribe("agent-1", "main");
+      if (source === "live") {
+        callbacks.onToolCall?.("code-1/1", "deterministic_tool", {}, "code-1");
+      } else {
+        callbacks.onActiveTurn?.({ userText: null, userTimestamp: 1, startedAt: 1, thinking: "", text: "", toolCalls: [
+          { id: "code-1/1", name: "deterministic_tool", arguments: {}, status: "done", parentToolCallId: "code-1" },
+        ] });
+      }
+      callbacks.onToolResult?.("code-1/1", "deterministic_tool", "child result", false, undefined, "code-1");
+      expect(runtime.streamingBlocks()).toEqual([
+        expect.objectContaining({ type: "tool", id: "code-1/1", parentToolCallId: "code-1", status: "done", body: "child result", result: expect.objectContaining({ parentToolCallId: "code-1" }) }),
+      ]);
+      dispose();
+    });
+  });
+
+  it.each(["reconnect", "refresh"])("keeps completed child results on %s without future events", (source) => {
+    createRoot((dispose) => {
+      let callbacks: SubscriptionCallbacks = {};
+      const runtime = createChatRuntime({ subscribeToSession: (_id, _key, next) => {
+        callbacks = next;
+        return () => {};
+      } });
+      runtime.subscribe("agent-1", "main");
+      if (source === "refresh") {
+        callbacks.onToolCall?.("code-1/1", "deterministic_tool", {}, "code-1");
+        callbacks.onToolResult?.("code-1/1", "deterministic_tool", "completed child result", false, undefined, "code-1");
+      }
+      callbacks.onActiveTurn?.({ userText: null, userTimestamp: 1, startedAt: 1, thinking: "", text: "", toolCalls: [
+        { id: "code-1/1", name: "deterministic_tool", arguments: {}, status: "done", parentToolCallId: "code-1" },
+      ], ...(source === "reconnect" ? { toolResults: [
+        { id: "code-1/1", name: "deterministic_tool", content: "completed child result", isError: false, parentToolCallId: "code-1" },
+      ] } : {}) });
+      expect(runtime.streamingBlocks()).toEqual([
+        expect.objectContaining({ id: "code-1/1", parentToolCallId: "code-1", status: "done", body: "completed child result", result: expect.objectContaining({ parentToolCallId: "code-1" }) }),
+      ]);
+      dispose();
+    });
+  });
+
   it("stages supported files and rejects unsupported files", () => {
     createRoot((dispose) => {
       URL.createObjectURL = vi.fn(() => "blob:preview");
