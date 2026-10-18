@@ -330,30 +330,7 @@ describe("Mattermost bot", () => {
     expect((lastReaction?.body as { emoji_name: string }).emoji_name).toBe("x");
   });
 
-  it("delivers a queued turn's answer when it comes back", async () => {
-    let deferred:
-      | ((outcome: { result: RunAgentResult }) => Promise<void> | void)
-      | undefined;
-    const ctx = await startComponent(undefined, {}, (params) => {
-      deferred = params.onDeferredResult as typeof deferred;
-      return {
-        payloads: [{ text: "queued" }],
-        meta: { durationMs: 0, sessionId: "s", queued: true },
-      };
-    });
-    sockets.last().posted(userPost("@yoplai busy?"), 1);
-    await flush();
-    expect(ctx.runs).toHaveLength(1);
-    expect(server.created()).toHaveLength(0);
-    await deferred!({
-      result: {
-        payloads: [{ text: "late answer" }],
-        meta: { durationMs: 1, sessionId: "s" },
-      },
-    });
-    expect(server.created().map((p) => p.message)).toEqual(["late answer"]);
-  });
-
+  // v0.25 has no onDeferredResult: a queued turn's answer is not handed back.
   it("clears the thread's session on !new", async () => {
     const ctx = await startComponent();
     const root = userPost("@yoplai start");

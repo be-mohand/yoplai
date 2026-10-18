@@ -358,6 +358,7 @@ export function buildFakeContext(options: {
   const sessions = options.sessions ?? new Set<string>();
   const media = new Map<string, Uint8Array>();
   let sessionCounter = 0;
+  const byKey = new Map<string, string>();
   const run: FakeRun =
     options.run ??
     (() => ({
@@ -383,7 +384,16 @@ export function buildFakeContext(options: {
       return run(params);
     },
     getSubagentTemplates: () => [],
-    resolveSessionId: async () => undefined,
+    // v0.25: a session key resolves to its session, created on first use.
+    resolveSessionId: async (_agentId: string, sessionKey: string) => {
+      let sessionId = byKey.get(sessionKey);
+      if (!sessionId) {
+        sessionId = `session-${++sessionCounter}-${sessionKey}`;
+        byKey.set(sessionKey, sessionId);
+        sessions.add(sessionId);
+      }
+      return { sessionId, updatedAt: Date.now() };
+    },
     getSessionEntry: async () => undefined,
     hasSession: async (_agentId: string, sessionId: string) =>
       sessions.has(sessionId),

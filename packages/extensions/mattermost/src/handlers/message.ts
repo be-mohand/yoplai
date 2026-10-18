@@ -1,8 +1,6 @@
 import {
   DEFAULT_MAIN_KEY,
   buildMattermostContext,
-  classifyRunFailure,
-  runFailureMessage,
   type AgentConfig,
   type ChannelConversationType,
   type FileAttachment,
@@ -15,6 +13,7 @@ import type {
   MattermostRestClient,
 } from "../client.js";
 import { getMattermostContext } from "../context.js";
+import { classifyRunFailure, runFailureMessage } from "../run-failure.js";
 import { withThreadBindings } from "../thread-session-bindings.js";
 import { matchesUserAllowlist } from "../utils/allowlist.js";
 import { collectMattermostAttachments } from "../utils/attachments.js";
@@ -263,15 +262,15 @@ async function resolveThreadSession(
   channelId: string,
   rootId: string,
   sessionKey: string
-): Promise<string> {
+): Promise<string | undefined> {
   const ctx = getMattermostContext();
   const binding = withThreadBindings(ctx.getDataDir(), (store) =>
     store.getBinding(rootId, agentId)
   );
-  if (binding && (await ctx.hasSession(agentId, binding.sessionId))) {
-    return binding.sessionId;
-  }
-  const entry = await ctx.ensureSession(agentId, sessionKey);
+  // v0.25: no hasSession/ensureSession. The thread's session key is stable, so the
+  // runtime resolves (or creates) the session from it; the binding follows.
+  const entry = await ctx.resolveSessionId(agentId, sessionKey);
+  if (!entry) return binding?.sessionId;
   withThreadBindings(ctx.getDataDir(), (store) =>
     store.setBinding({
       channelId,
@@ -408,7 +407,9 @@ export async function handleMattermostPost(
   const ctx = getMattermostContext();
   const { post: p } = inbound;
   const agent = route.agent;
-  const language = agent.language ?? "en";
+  // v0.25 agents have no language setting yet.
+  const language: "en" | "fr" =
+    (agent as { language?: string }).language === "fr" ? "fr" : "en";
 
   if (isResetCommand(text) && (p.file_ids?.length ?? 0) === 0) {
     await handleReset(inbound, route, deps);
@@ -538,7 +539,6 @@ export async function handleMattermostPost(
       background: Boolean(sessionId),
       source: "mattermost",
       context,
-      requesterId: `mattermost:${p.user_id}`,
       ...(isBotPost(p)
         ? {
             sender: {
@@ -550,21 +550,13 @@ export async function handleMattermostPost(
       onEvent: (event) => {
         if (event.type === "file_output") uploadFile(event);
         if (event.type === "error")
-          failureKind = event.kind ?? classifyRunFailure(event.message);
-      },
-      // A post sent while the session is busy is queued behind the running
-      // turn; its own answer comes back here once that turn has finished.
-      onDeferredResult: async (outcome) => {
-        if ("error" in outcome) {
-          await fail(outcome.error, failureKind);
-          return;
-        }
-        await deliver(outcome.result);
+          failureKind = classifyRunFailure(event.message);
       },
     });
 
     if (result.meta.queued) {
-      // Keep 👀 and typing off until the deferred answer arrives.
+      // v0.25 does not hand the queued turn's answer back to the channel
+      // (no onDeferredResult): stop typing and leave 👀, as Discord does.
       typing.stop();
       return;
     }
