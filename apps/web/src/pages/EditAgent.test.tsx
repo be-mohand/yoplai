@@ -469,8 +469,20 @@ describe("EditAgent", () => {
     if (state === "disabled") {
       toggle!.click();
       expect(setForkVisibilityMock).not.toHaveBeenCalled();
-      expect(container.querySelector(".edit-agent-team")).toBeNull();
+      // A Public agent can still join the admin's own team.
+      const own = [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find((button) => button.textContent === "Writers");
+      expect(own?.getAttribute("aria-pressed")).toBe("false");
     }
+  });
+
+  it("hides team buttons from an admin outside a Private agent's teams", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchTeamsMock.mockResolvedValue([{ id: "own", name: "Writers", canManage: true } as Team]);
+    fetchForksMock.mockResolvedValue([fork({ sourcePoolId: "scribe", teamId: "foreign", public: false })]);
+    fetchPoolActionsMock.mockResolvedValue([{ poolId: "scribe", action: "none", chatAgentId: null, forked: true, reason: "other_team", teamName: null }]);
+    await mountEdit("scribe");
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Writers")).toBe(false);
   });
 
   it("shows visibility when staff open the runnable fork directly", async () => {

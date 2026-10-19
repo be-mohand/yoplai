@@ -248,7 +248,8 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     let assignment = parsed.data;
     if (!hasSuperadminRole(authContext)) {
       // Admins only (un)assign their own teams; links to other teams are kept.
-      if (existing && !canManageAgent(authContext, existing.forkAgentId)) return c.json({ error: "forbidden" }, 403);
+      // Any admin may add a Public agent to their team; Private agents need a shared team.
+      if (existing && !existing.public && !canManageAgent(authContext, existing.forkAgentId)) return c.json({ error: "forbidden" }, 403);
       const ownTeams = new Set(membership.listTeamsForUser(authContext.user.id));
       if (assignment.teamIds.some((teamId) => !ownTeams.has(teamId))) return c.json({ error: "forbidden" }, 403);
       const otherTeams = existing?.assignment.teamIds.filter((teamId) => !ownTeams.has(teamId)) ?? [];

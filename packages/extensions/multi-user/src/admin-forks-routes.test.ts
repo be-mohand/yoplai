@@ -237,7 +237,9 @@ describe("admin fork/assignment routes", () => {
     expect(notifyAgentListChanged).toHaveBeenCalledTimes(2);
     const foreignApp = await makeApp("admin");
     expect((await setVisibility(foreignApp, false)).status).toBe(403);
-    expect((await foreignApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"))).status).toBe(403);
+    // Public lets a foreign admin edit only their own team links: an empty list keeps the other teams.
+    const untouched = await foreignApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"));
+    expect(((await untouched.json()) as { fork: { assignment: { teamIds: string[] } } }).fork.assignment.teamIds).toEqual([teamId]);
     expect((await setVisibility(await makeApp("user"), false)).status).toBe(403);
     createMembershipStore(db).setMembers(teamId, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
     const ownedApp = await makeApp("admin");
@@ -289,6 +291,13 @@ describe("admin fork/assignment routes", () => {
     expect((await adminApp.request(req("/admin/teams/team-b/agents/scribe", undefined, "DELETE"))).status).toBe(403);
     // No longer sharing a team, the admin cannot re-claim the fork.
     expect((await adminApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"))).status).toBe(403);
+    // A Public fork can join the admin's team, and other teams' links stay.
+    expect((await (await makeApp("superadmin")).request(req("/admin/forks/scribe/visibility", { public: true }, "PATCH"))).status).toBe(200);
+    const publicAdminApp = await makeApp("admin");
+    const added = await publicAdminApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"));
+    expect(added.status).toBe(200);
+    expect(((await added.json()) as { fork: { assignment: { teamIds: string[] } } }).fork.assignment.teamIds.sort()).toEqual([teamId, "team-b"].sort());
+    expect((await publicAdminApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: ["team-b"] }, "PUT"))).status).toBe(403);
   });
 
   it("is guarded to admins/superadmins", async () => {

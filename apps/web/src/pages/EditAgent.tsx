@@ -466,7 +466,7 @@ export function EditAgent() {
           )}
         </Show>
 
-        <Show when={isAdmin() && capabilities.forkedAgents && poolAgent() && (isSuperadmin() || !fork() || canManageFork())}>
+        <Show when={isAdmin() && capabilities.forkedAgents && poolAgent() && (isSuperadmin() || !fork() || fork()!.public || canManageFork())}>
           <TeamAssignment
             poolId={params.agentId}
             agentName={agent()?.name ?? params.agentId}
