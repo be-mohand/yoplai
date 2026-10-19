@@ -29,6 +29,7 @@ import { fetchUsers, type AdminUser } from "../api/admin";
 import { fetchPool } from "../api/agents";
 import { UserPicker } from "../components/UserPicker";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { teamRemovalWarning } from "../lib/team-removal";
 import { useSession } from "../auth/client";
 import { hasStaffRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
 
@@ -397,6 +398,7 @@ function TeamDetail(props: {
   const [pool] = createResource(fetchPool);
   const poolAgent = (poolId: string) => (pool.error ? undefined : pool())?.find((agent) => agent.id === poolId);
   const [agentBusy, setAgentBusy] = createSignal(false);
+  const [removeTarget, setRemoveTarget] = createSignal<{ poolId: string; name: string; lastTeam: boolean } | null>(null);
 
   const handleUnassign = async (poolId: string) => {
     if (agentBusy()) return;
@@ -682,7 +684,7 @@ function TeamDetail(props: {
                             aria-label={`Remove ${name()} from team`}
                             title="Remove from team"
                             disabled={agentBusy()}
-                            onClick={() => void handleUnassign(fork.sourcePoolId)}
+                            onClick={() => setRemoveTarget({ poolId: fork.sourcePoolId, name: name(), lastTeam: fork.assignment.teamIds.length <= 1 })}
                           >
                             <i class="fa-solid fa-xmark" aria-hidden="true" />
                           </button>
@@ -697,7 +699,7 @@ function TeamDetail(props: {
             <Show when={props.isAdmin}>
               <p class="team-detail__note">
                 <i class="fa-solid fa-circle-info" aria-hidden="true" />
-                <span>Assign an agent to this team from the <A href="/agents">Agents page</A>. Agent removal applies at once.</span>
+                <span>Assign an agent to this team from the <A href="/agents">Agents page</A>. Agent removal applies at once, after you confirm it.</span>
               </p>
             </Show>
           </section>
@@ -717,6 +719,21 @@ function TeamDetail(props: {
           </Show>
         </footer>
       </section>
+      <Show when={removeTarget()}>
+        {(target) => (
+          <ConfirmDialog
+            title={`Remove ${target().name} from ${props.team.name}?`}
+            description={teamRemovalWarning(target().name, "this team", target().lastTeam)}
+            confirmLabel="Remove"
+            danger
+            onConfirm={async () => {
+              await handleUnassign(target().poolId);
+              setRemoveTarget(null);
+            }}
+            onCancel={() => setRemoveTarget(null)}
+          />
+        )}
+      </Show>
       <Show when={confirmClose()}>
         <ConfirmDialog
           title="Discard unsaved changes?"

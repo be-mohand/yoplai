@@ -590,7 +590,31 @@ describe("EditAgent", () => {
     button.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t2"] });
+    const confirm = container.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    expect(confirm.textContent).toContain("If you remove scribe from Red, members of Red can no longer chat with scribe");
+    expect(setForkTeamsMock).not.toHaveBeenCalled();
+    [...confirm.querySelectorAll("button")].find((item) => item.textContent === "Remove")!.click();
+    await vi.waitFor(() => expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t2"] }));
+    await vi.waitFor(() => expect(container.querySelector('[role="alertdialog"]')).toBeNull());
+  });
+
+  it("warns that only a superadmin can reassign an agent left with no team", async () => {
+    setSession("superadmin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe", name: "Scribe" })]);
+    fetchForksMock.mockResolvedValue([fork({ sourcePoolId: "scribe", teamId: "t1" })]);
+    fetchTeamsMock.mockResolvedValue([{ id: "t1", name: "Red", canManage: true } as Team]);
+    await mountEdit("scribe");
+
+    container.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    [...container.querySelectorAll("button")].find((item) => item.textContent === "Save")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container.querySelector('[role="alertdialog"]')?.textContent).toContain("If you remove Scribe from Red, Scribe has no team. Only a superadmin can assign Scribe to a team again.");
+    [...container.querySelectorAll("button")].find((item) => item.textContent === "Cancel" && item.closest('[role="alertdialog"]'))!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(setForkTeamsMock).not.toHaveBeenCalled();
   });
 
   it("limits an admin to their own teams and keeps other teams' links", async () => {

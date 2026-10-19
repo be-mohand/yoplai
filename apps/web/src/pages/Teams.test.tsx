@@ -139,6 +139,28 @@ describe("team organization", () => {
     expect(rows.find((row) => row.textContent?.includes("Henry"))?.textContent).toContain("Private");
   });
 
+  it("asks before removing an agent from the team", async () => {
+    const { removeForkFromTeam } = await import("../api/teams");
+    vi.mocked(removeForkFromTeam).mockResolvedValue(undefined as never);
+    mocks.fetchTeamAgents.mockResolvedValue([{ sourcePoolId: "casey", forkAgentId: "casey", public: false, assignment: { mode: "list", teamIds: [team.id] } }]);
+    mocks.fetchPool.mockResolvedValue([{ id: "casey", name: "Casey" }]);
+    await vi.waitFor(() => expect(container.textContent).toContain("Research"));
+    const research = [...container.querySelectorAll("article")].find((card) => card.textContent?.includes("Research"))!;
+    [...research.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Members")!.click();
+    const remove = await vi.waitFor(() => {
+      const button = container.querySelector<HTMLButtonElement>('[aria-label="Remove Casey from team"]');
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    remove.click();
+    const confirm = () => container.querySelector<HTMLElement>('[role="alertdialog"]');
+    expect(confirm()?.textContent).toContain("If you remove Casey from this team, Casey has no team. Only a superadmin can assign Casey to a team again.");
+    expect(removeForkFromTeam).not.toHaveBeenCalled();
+    [...confirm()!.querySelectorAll("button")].find((button) => button.textContent === "Remove")!.click();
+    await vi.waitFor(() => expect(removeForkFromTeam).toHaveBeenCalledWith("casey", team.id));
+    await vi.waitFor(() => expect(confirm()).toBeNull());
+  });
+
   it("adds a searched member with Enter, stages All users, and saves from the footer", async () => {
     const { setTeamMembers } = await import("../api/teams");
     vi.mocked(setTeamMembers).mockResolvedValue({ teamId: team.id, allUsers: false, members: [] });

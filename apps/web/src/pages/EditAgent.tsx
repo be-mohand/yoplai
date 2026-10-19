@@ -39,6 +39,7 @@ import { claimDashboard } from "../api/dashboards";
 import { DashboardListActions, DashboardListRow, ownershipLabel } from "../components/DashboardListRow";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { teamRemovalWarning } from "../lib/team-removal";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -73,6 +74,7 @@ function dashboardSections(dashboards: AgentDashboard[]) {
 // admin-guarded fork APIs the catalog cards used before this control moved here.
 function TeamAssignment(props: {
   poolId: string;
+  agentName: string;
   teams: Team[];
   fork: AgentFork | undefined;
   /** Admins may only (un)assign their own teams. */
@@ -115,6 +117,13 @@ function TeamAssignment(props: {
     return ids.length !== saved.length || ids.some((id) => !saved.includes(id));
   });
   const reset = () => setSelected(baseline());
+  // Saving without a team the agent had asks first: its members lose access.
+  const removedTeams = () => props.teams.filter((team) => baseline().includes(team.id) && !selected().includes(team.id));
+  const [confirmRemoval, setConfirmRemoval] = createSignal(false);
+  const save = () => {
+    if (removedTeams().length > 0) setConfirmRemoval(true);
+    else void handleAssign();
+  };
 
   return (
     <section class="edit-agent-team">
@@ -123,7 +132,7 @@ function TeamAssignment(props: {
         <Show when={dirty()}>
           <div class="edit-agent-team-actions">
             <button type="button" class="edit-agent-team-cancel" disabled={busy()} onClick={reset}>Cancel</button>
-            <button type="button" class="edit-agent-team-button" disabled={busy()} onClick={() => void handleAssign()}>Save</button>
+            <button type="button" class="edit-agent-team-button" disabled={busy()} onClick={save}>Save</button>
           </div>
         </Show>
       </div>
@@ -143,6 +152,19 @@ function TeamAssignment(props: {
       </div>
       <Show when={error()}>
         {(message) => <p class="edit-agent-team-error">{message()}</p>}
+      </Show>
+      <Show when={confirmRemoval()}>
+        <ConfirmDialog
+          title={`Remove ${props.agentName} from ${removedTeams().map((team) => team.name).join(", ")}?`}
+          description={teamRemovalWarning(props.agentName, removedTeams().map((team) => team.name).join(", "), selected().length === 0)}
+          confirmLabel="Remove"
+          danger
+          onConfirm={async () => {
+            await handleAssign();
+            setConfirmRemoval(false);
+          }}
+          onCancel={() => setConfirmRemoval(false)}
+        />
       </Show>
     </section>
   );
@@ -447,6 +469,7 @@ export function EditAgent() {
         <Show when={isAdmin() && capabilities.forkedAgents && poolAgent() && (isSuperadmin() || !fork() || canManageFork())}>
           <TeamAssignment
             poolId={params.agentId}
+            agentName={agent()?.name ?? params.agentId}
             teams={(teams() ?? []).filter((team) => team.canManage)}
             superadmin={isSuperadmin()}
             fork={fork()}
