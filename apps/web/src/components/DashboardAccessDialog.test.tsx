@@ -12,6 +12,15 @@ let dispose: () => void;
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const select = (label: string) => document.body.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
 const choose = (element: HTMLSelectElement, value: string) => { element.value = value; element.dispatchEvent(new Event("change", { bubbles: true })); };
+const search = async (text: string) => {
+  const input = document.body.querySelector<HTMLInputElement>('[role="combobox"][aria-label="Select a user"]')!;
+  input.focus();
+  input.value = text;
+  input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  await tick();
+  return input;
+};
+const options = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'));
 const button = (text: string) => Array.from(document.body.querySelectorAll("button")).find((b) => b.textContent?.trim() === text)!;
 
 beforeEach(() => {
@@ -53,11 +62,29 @@ describe("DashboardAccessDialog", () => {
     remove.click();
     await tick();
     expect(button("Save").disabled).toBe(false);
-    choose(select("Select a user"), "u1");
+    await search("ada");
+    options().find((option) => option.textContent?.includes("Ada Lovelace"))!.click();
     await tick();
     button("Add").click();
     await tick();
     expect(button("Save").disabled).toBe(true);
+  });
+
+  it("filters users by name or email and adds the one picked with the keyboard", async () => {
+    recipientsMock.mockResolvedValue({ users: [{ id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, { id: "u2", name: "Bob Ross", email: "bob@paint.org" }] });
+    await open();
+    await search("");
+    expect(options()).toHaveLength(0);
+    const input = await search("paint");
+    expect(options().map((option) => option.textContent)).toEqual(["Bob Ross (bob@paint.org)"]);
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    button("Add").click();
+    await tick();
+    expect(document.body.textContent).toContain("bob@paint.org");
+    expect(input.value).toBe("");
+    await search("zzz");
+    expect(document.body.textContent).toContain("No matching users");
   });
 
   it("lists existing people and removes them", async () => {

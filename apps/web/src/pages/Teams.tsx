@@ -1140,7 +1140,7 @@ export function Teams() {
           align-items: center;
         }
 
-        .team-detail__add select {
+        .team-detail__add .user-picker {
           flex: 1;
         }
 
