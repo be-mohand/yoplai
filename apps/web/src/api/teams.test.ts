@@ -113,22 +113,6 @@ describe("teams membership api client", () => {
     });
   });
 
-  it("sets all teams via the admin route", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ fork: { sourcePoolId: "scribe", teamId: "team-2" } }),
-    });
-
-    await setForkTeams("scribe", { mode: "all" });
-
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/forks/scribe/teams", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "all" }),
-      credentials: "include",
-    });
-  });
-
   it("removes an explicit team link via the team-scoped admin route", async () => {
     fetchMock.mockResolvedValue({
       ok: true,

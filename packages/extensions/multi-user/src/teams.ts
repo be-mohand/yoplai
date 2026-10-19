@@ -234,9 +234,8 @@ export function createTeamStore(
       const teamlessAgents =
         forks?.()
           ?.listForksForTeam(id)
-          .filter((fork) => fork.assignment?.mode !== "all")
           .filter((fork) => {
-            const teamIds = fork.assignment?.mode === "list" ? fork.assignment.teamIds : [];
+            const teamIds = fork.assignment.teamIds;
             return teamIds.length === 1;
           })
           .map((fork) => fork.forkAgentId) ?? [];

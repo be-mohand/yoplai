@@ -11,11 +11,11 @@ import type { ForkStore } from "./forks.js";
  * The three action states (mirroring the ALG-346 acceptance criteria):
  *   - `chat`           — a fork exists, its agent is discoverable/runnable by
  *                        the gateway config loader, and the user may chat it (a
- *                        member of the fork's team, or staff). Renders the Chat
+ *                        Public, a member of its team, or superadmin). Renders the Chat
  *                        action.
  *   - `assign_to_team` — no fork exists yet AND the user is staff. Renders the
  *                        "Assign to team" flow so an admin can fork+assign.
- *   - `none`           — visible but not chattable: the fork is teamless, or
+ *   - `none`           — visible but not chattable: the Private fork is teamless, or
  *                        the user shares no team with it, or no fork exists and
  *                        the user is not staff, or the fork's agent is no longer
  *                        discoverable on disk (e.g. its folder was renamed or
@@ -112,7 +112,7 @@ export function createPoolCatalogResolver(
       };
     }
 
-    const teamIds = fork.assignment?.mode === "list" ? fork.assignment.teamIds : [];
+    const teamIds = fork.assignment.teamIds;
     const teamName = teamIds.length === 1 ? getTeamName(teamIds[0]) : null;
 
     // The fork row exists, but its agent may not: an operator can rename or
@@ -132,10 +132,7 @@ export function createPoolCatalogResolver(
       };
     }
 
-    // A fork exists. Superadmins always chat it; other users chat it only when they
-    // share the fork's (non-null) team. A teamless fork is chattable by nobody
-    // but superadmins. Reuse the pure access resolver so the membership rule stays in
-    // one place.
+    // Public visibility or shared teams grant chat; superadmins bypass both.
     const chattable =
       user.isSuperadmin || access.canUserChatAgent(user.id, fork.forkAgentId);
 
@@ -150,7 +147,7 @@ export function createPoolCatalogResolver(
       };
     }
 
-    if (fork.assignment?.mode !== "all" && teamIds.length === 0) {
+    if (teamIds.length === 0) {
       return {
         poolId,
         forked: true,

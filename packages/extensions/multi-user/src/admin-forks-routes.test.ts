@@ -24,6 +24,7 @@ import { createAccessResolver } from "./access.js";
 
 const getMultiUserRuntime = vi.fn();
 const recordAudit = vi.fn();
+const notifyAgentListChanged = vi.fn();
 
 vi.mock("./runtime-state.js", () => ({
   getMultiUserRuntime,
@@ -101,6 +102,7 @@ function buildRuntime() {
   });
   return {
     audit: { record: recordAudit },
+    notifyAgentListChanged,
     auth: { api: { getSession } },
     db,
     teams,
@@ -152,7 +154,7 @@ beforeEach(async () => {
 
   db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
-  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY)");
+  db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, role TEXT DEFAULT 'user', approved INTEGER DEFAULT 1)");
   for (const id of ["admin-1", "superadmin-1", "user-1"]) {
     db.prepare("INSERT INTO user (id) VALUES (?)").run(id);
   }
@@ -178,6 +180,78 @@ afterEach(() => {
 });
 
 describe("admin fork/assignment routes", () => {
+  it("blocks a pending regular user upstream even when the fork is Public", async () => {
+    const app = await makeApp("user");
+    const runtime = getMultiUserRuntime();
+    runtime.forks.setTeams("scribe", { mode: "list", teamIds: [] }, "superadmin-1");
+    runtime.forks.setPublic("scribe", true);
+    const { requireAgentAccess } = await import("./middleware.js");
+    app.get("/agents/:id/chat", requireAgentAccess(), (c) => c.json({ ok: true }));
+    expect((await app.request(req("/agents/scribe/chat", undefined, "GET"))).status).toBe(200);
+    db.prepare("UPDATE user SET approved = 0 WHERE id = 'user-1'").run();
+    const pending = createSession("user");
+    pending.user.approved = false;
+    getSession.mockResolvedValue(pending);
+    expect((await app.request(req("/agents/scribe/chat", undefined, "GET"))).status).toBe(403);
+  });
+  it("adds one user only to manageable explicit teams, idempotently, with audit and notification", async () => {
+    createMembershipStore(db).setMembers(teamId, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
+    const app = await makeApp("admin");
+    const add = (app: Hono, team = teamId, user = "user-1") => app.request(req(`/admin/teams/${team}/members/${user}`));
+    const response = await add(app);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ teamId, allUsers: false, members: [{ id: "admin-1", name: null, email: null }, { id: "user-1", name: null, email: null }] });
+    expect(notifyAgentListChanged).toHaveBeenCalledTimes(1);
+    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.team_member_add", changes: [{ field: "userIds", before: ["admin-1"], after: ["admin-1", "user-1"] }] }));
+    expect((await add(app)).status).toBe(200);
+    expect(recordAudit).toHaveBeenCalledTimes(1);
+    const noTeam = await app.request(req("/admin/users/no-team", undefined, "GET"));
+    expect(await noTeam.json()).toEqual({ users: [{ id: "superadmin-1", name: null, email: null, approved: true, role: "user" }] });
+    expect((await add(app, "team-b")).status).toBe(403);
+    expect((await add(app, "missing")).status).toBe(404);
+    expect((await add(app, teamId, "missing")).status).toBe(404);
+    expect((await add(await makeApp("user"))).status).toBe(403);
+    const superApp = await makeApp("superadmin");
+    expect((await add(superApp, "team-b")).status).toBe(200);
+    createMembershipStore(db).setMembers("team-b", { mode: "all" }, "superadmin-1");
+    expect((await add(superApp, "team-b")).status).toBe(409);
+  });
+  it("lists teamless users for staff, including pending users, and respects live All users teams", async () => {
+    const app = await makeApp("admin");
+    db.prepare("UPDATE user SET name = 'Pending', email = 'pending@example.com', approved = 0 WHERE id = 'user-1'").run();
+    createMembershipStore(db).setMembers(teamId, { mode: "list", userIds: ["admin-1", "superadmin-1"] }, "superadmin-1");
+    const list = (app: Hono) => app.request(req("/admin/users/no-team", undefined, "GET"));
+    const response = await list(app);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ users: [{ id: "user-1", name: "Pending", email: "pending@example.com", approved: false, role: "user" }] });
+    expect((await list(await makeApp("superadmin"))).status).toBe(200);
+    expect((await list(await makeApp("user"))).status).toBe(403);
+    createMembershipStore(db).setMembers("team-b", { mode: "all" }, "superadmin-1");
+    expect(await (await list(await makeApp("admin"))).json()).toEqual({ users: [] });
+  });
+  it("separates Public chat from management and audits visibility changes", async () => {
+    const superApp = await makeApp("superadmin");
+    await superApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"));
+    const setVisibility = (app: Hono, publicValue: boolean, poolId = "scribe") => app.request(req(`/admin/forks/${poolId}/visibility`, { public: publicValue }, "PATCH"));
+    expect((await setVisibility(superApp, true)).status).toBe(200);
+    expect(notifyAgentListChanged).toHaveBeenCalledTimes(2);
+    const foreignApp = await makeApp("admin");
+    expect((await setVisibility(foreignApp, false)).status).toBe(403);
+    expect((await foreignApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"))).status).toBe(403);
+    expect((await setVisibility(await makeApp("user"), false)).status).toBe(403);
+    createMembershipStore(db).setMembers(teamId, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
+    const ownedApp = await makeApp("admin");
+    const changed = await setVisibility(ownedApp, false);
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({ fork: { public: false, assignment: { mode: "list", teamIds: [teamId] } } });
+    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.fork_visibility", changes: [{ field: "public", before: true, after: false }] }));
+    expect((await setVisibility(superApp, true, "missing")).status).toBe(404);
+    const teamlessApp = await makeApp("superadmin");
+    await teamlessApp.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"));
+    expect((await setVisibility(await makeApp("admin"), true)).status).toBe(403);
+    expect((await setVisibility(await makeApp("superadmin"), true)).status).toBe(200);
+    expect((await superApp.request(req("/admin/forks/scribe/teams", { mode: "all" }, "PUT"))).status).toBe(400);
+  });
   it("sets explicit teams, forks once, and is idempotent", async () => {
     const app = await makeApp("superadmin");
     const res = await app.request(
@@ -203,7 +277,7 @@ describe("admin fork/assignment routes", () => {
     createMembershipStore(db).setMembers(teamId, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
     const app = await makeApp("admin");
     const put = (body: unknown) => app.request(req("/admin/forks/scribe/teams", body, "PUT"));
-    expect((await put({ mode: "all" })).status).toBe(403);
+    expect((await put({ mode: "all" })).status).toBe(400);
     expect((await put({ mode: "list", teamIds: ["team-b"] })).status).toBe(403);
     expect((await put({ mode: "list", teamIds: [teamId] })).status).toBe(200);
     // Another team's link survives the admin's own-team edits.
@@ -260,7 +334,7 @@ describe("admin fork/assignment routes", () => {
 
   it("lists a team's agents via GET /teams/:id/agents", async () => {
     const app = await makeApp("superadmin");
-    await app.request(req("/admin/forks/scribe/teams", { mode: "all" }, "PUT"));
+    await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT"));
     const res = await app.request(
       new Request(`http://localhost/teams/${teamId}/agents`, {
         headers: { cookie: "session=1" },

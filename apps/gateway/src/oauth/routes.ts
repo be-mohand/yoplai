@@ -20,7 +20,7 @@ export function createOAuthRoutes(
     agentId: string
   ) => Promise<boolean> = async () => true,
   getRequesterUserId: (c: Context) => Promise<string | undefined> = async () => undefined,
-  canConfigureTeam: (c: Context) => Promise<boolean> = async () => true
+  canConfigureTeam: (c: Context, agentId: string) => Promise<boolean> = async () => true
 ): Hono {
   const router = new Hono();
 
@@ -37,6 +37,7 @@ export function createOAuthRoutes(
   async function resolveRequestedScope(
     c: Context,
     requested: string,
+    agentId: string,
     options: { teamRequiresAdmin: boolean }
   ): Promise<{ scope: CredentialScope; userId: string | undefined } | Response> {
     if (requested !== "team" && requested !== "personal") {
@@ -45,7 +46,7 @@ export function createOAuthRoutes(
     if (
       requested === "team" &&
       options.teamRequiresAdmin &&
-      !(await canConfigureTeam(c))
+      !(await canConfigureTeam(c, agentId))
     ) {
       return c.json({ error: "team_requires_admin" }, 403);
     }
@@ -73,9 +74,9 @@ export function createOAuthRoutes(
     if (denied) return denied;
     const scope = c.req.query("scope");
     if (scope === undefined) {
-      return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c)), await canConfigureTeam(c)));
+      return c.html(renderScopePage(provider, agentId, c.req.query("scopes"), !!(await getRequesterUserId(c)), await canConfigureTeam(c, agentId)));
     }
-    const resolved = await resolveRequestedScope(c, scope, {
+    const resolved = await resolveRequestedScope(c, scope, agentId, {
       teamRequiresAdmin: true,
     });
     if (resolved instanceof Response) return resolved;
@@ -162,7 +163,7 @@ export function createOAuthRoutes(
     let userId: string | undefined;
     let scopedRequest: CredentialScope | undefined;
     if (requestedScope) {
-      const resolved = await resolveRequestedScope(c, requestedScope, {
+      const resolved = await resolveRequestedScope(c, requestedScope, agentId, {
         teamRequiresAdmin: false,
       });
       if (resolved instanceof Response) return resolved;
@@ -175,7 +176,7 @@ export function createOAuthRoutes(
       ? service.getScopedConnection(agentId, provider, scopedRequest)
       : service.getConnection(agentId, provider, userId);
     const state = !connection ? "disconnected" : connection.status === "needs_reconnect" ? "needs_reconnect" : "connected";
-    const teamAllowed = await canConfigureTeam(c);
+    const teamAllowed = await canConfigureTeam(c, agentId);
     if (!connection) {
       return c.json({ state, connected: false, provider, canConfigureTeam: teamAllowed });
     }
@@ -203,7 +204,7 @@ export function createOAuthRoutes(
     const denied = await requireAgentAccess(c, agentId);
     if (denied) return denied;
     const requestedScope = c.req.query("scope") ?? "team";
-    const resolved = await resolveRequestedScope(c, requestedScope, {
+    const resolved = await resolveRequestedScope(c, requestedScope, agentId, {
       teamRequiresAdmin: true,
     });
     if (resolved instanceof Response) return resolved;

@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ErrorBoundary } from "solid-js";
 import { render } from "solid-js/web";
 import type { Team } from "../api/teams";
 
 const mocks = vi.hoisted(() => ({
   fetchTeams: vi.fn(),
+  fetchTeamlessUsers: vi.fn(),
+  addTeamMember: vi.fn(),
   createTeam: vi.fn(),
   updateTeam: vi.fn(),
   fetchTeamMembers: vi.fn(),
@@ -32,13 +35,15 @@ const team: Team = {
   createdBy: "admin", createdAt: "2026-10-07",
 };
 
-describe("team privacy controls", () => {
+describe("team organization", () => {
   let container: HTMLDivElement;
   let dispose: () => void;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    mocks.fetchTeams.mockResolvedValue([team]);
+    mocks.fetchTeams.mockResolvedValue([team, { ...team, id: "foreign", name: "HR", canManage: false }]);
+    mocks.fetchTeamlessUsers.mockResolvedValue([{ id: "newcomer", name: "Newcomer", email: "new@example.test", approved: false, role: "user" }]);
+    mocks.addTeamMember.mockResolvedValue({ teamId: team.id, allUsers: false, members: [] });
     mocks.fetchTeamMembers.mockResolvedValue({ teamId: team.id, allUsers: false, members: [{ id: "user-1", name: "Member", email: null }] });
     mocks.fetchTeamAgents.mockResolvedValue([]);
     mocks.fetchUsers.mockResolvedValue([]);
@@ -61,57 +66,97 @@ describe("team privacy controls", () => {
     });
   }
 
-  it("defaults new teams to public and allows private creation", async () => {
-    await click("New team");
-    const privacy = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(privacy.checked).toBe(false);
-    const name = container.querySelector<HTMLInputElement>('input[type="text"]')!;
-    name.value = "Sensitive";
-    name.dispatchEvent(new Event("input", { bubbles: true }));
-    privacy.click();
-    await click("Create");
-    expect(mocks.createTeam).toHaveBeenCalledWith(expect.objectContaining({ name: "Sensitive", private: true }));
+  it("places a pending team-less newcomer using only manageable teams", async () => {
+    await vi.waitFor(() => expect(container.textContent).toContain("No team (1)"));
+    expect(container.textContent).toContain("Newcomer");
+    expect(container.textContent).toContain("new@example.test");
+    expect(container.textContent).toContain("Pending");
+    const picker = container.querySelector<HTMLSelectElement>('[aria-label="Team for Newcomer"]')!;
+    expect([...picker.options].map((option) => option.text)).toEqual(["Choose a team", "Research"]);
+    picker.value = team.id;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    await click("Add to team");
+    await vi.waitFor(() => expect(mocks.addTeamMember).toHaveBeenCalledWith(team.id, "newcomer"));
+    await vi.waitFor(() => expect(container.textContent).toContain("Everyone is in a team"));
+    expect(container.textContent).not.toContain("Newcomer");
   });
 
-  it("shows a badge and toggles privacy immediately without changing members", async () => {
-    await vi.waitFor(() => expect(container.querySelector(".team-card__private")?.textContent).toContain("Private"));
-    mocks.updateTeam.mockResolvedValue({ ...team, private: false });
+  it("keeps placement retryable after failure and the rest of the page usable during a hung add", async () => {
+    mocks.addTeamMember.mockRejectedValueOnce(new Error("Placement failed"));
+    await vi.waitFor(() => expect(container.textContent).toContain("No team (1)"));
+    const picker = container.querySelector<HTMLSelectElement>('[aria-label="Team for Newcomer"]')!;
+    picker.value = team.id;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    await click("Add to team");
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain("Placement failed"));
+    expect(container.textContent).toContain("Newcomer");
+    mocks.addTeamMember.mockImplementation(() => new Promise(() => {}));
+    await click("Add to team");
+    const adding = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Adding…")!;
+    expect(adding.disabled).toBe(true);
+    adding.click();
+    expect(mocks.addTeamMember).toHaveBeenCalledTimes(2);
     await click("Members");
-    await click("Private");
-    expect(mocks.updateTeam).toHaveBeenCalledWith(team.id, { private: false });
-    await vi.waitFor(() => expect(container.querySelector('[aria-label="Private team"]')?.textContent).toBe("Public"));
-    expect(container.textContent).toContain("Member");
-    expect(container.textContent).toContain("Current members stay unchanged");
-  });
-
-  it("preserves privacy and permits retry when an update fails", async () => {
-    mocks.updateTeam.mockRejectedValue(new Error("Connection failed"));
-    await click("Members");
-    await click("Private");
-    await vi.waitFor(() => expect(container.textContent).toContain("Connection failed"));
-    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Private team"]')!;
-    expect(toggle.textContent).toBe("Private");
-    expect(toggle.disabled).toBe(false);
-  });
-
-  it("keeps membership controls and Close usable while a privacy update hangs", async () => {
-    mocks.updateTeam.mockImplementation(() => new Promise<Team>(() => {}));
-    await click("Members");
-    await click("Private");
-    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Private team"]')!;
-    expect(toggle.disabled).toBe(true);
-    toggle.click();
-    expect(mocks.updateTeam).toHaveBeenCalledTimes(1);
-
-    const allUsers = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(allUsers.disabled).toBe(false);
-    allUsers.click();
-    await vi.waitFor(() => expect(allUsers.checked).toBe(true));
-    expect([...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Save")?.disabled).toBe(false);
     await click("Close");
     expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(container.querySelector(".team-card__name")?.textContent).toBe(team.name);
   });
+
+  it("disables placement with a hint for staff who manage no teams", async () => {
+    dispose();
+    mocks.fetchTeams.mockResolvedValue([{ ...team, canManage: false }]);
+    mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "admin" } } }));
+    dispose = render(() => <Teams />, container);
+    await vi.waitFor(() => expect(container.textContent).toContain("No team (1)"));
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="Team for Newcomer"]')?.disabled).toBe(true);
+    expect(container.textContent).toContain("You do not manage any teams");
+  });
+
+  it("keeps teams usable when the No team directory fails to load", async () => {
+    dispose();
+    mocks.fetchTeamlessUsers.mockRejectedValue(new Error("Directory offline"));
+    dispose = render(() => <ErrorBoundary fallback={<p>Page failed</p>}><Teams /></ErrorBoundary>, container);
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain("Directory offline"));
+    expect(container.textContent).toContain("Research");
+    expect(container.textContent).not.toContain("Everyone is in a team");
+    await click("Members");
+    await click("Close");
+  });
+
+  it("shows Public and Private badges on the team's owned agents", async () => {
+    mocks.fetchTeamAgents.mockResolvedValue([
+      { sourcePoolId: "casey", forkAgentId: "Casey", public: true, assignment: { mode: "list", teamIds: [team.id] } },
+      { sourcePoolId: "henry", forkAgentId: "Henry", public: false, assignment: { mode: "list", teamIds: [team.id] } },
+    ]);
+    await click("Members");
+    await vi.waitFor(() => expect(container.textContent).toContain("Casey"));
+    const rows = [...container.querySelectorAll(".team-member")];
+    expect(rows.find((row) => row.textContent?.includes("Casey"))?.textContent).toContain("Public");
+    expect(rows.find((row) => row.textContent?.includes("Henry"))?.textContent).toContain("Private");
+  });
+
+  it("hides the No team directory from regular users", async () => {
+    dispose();
+    mocks.fetchTeamlessUsers.mockClear();
+    mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "user" } } }));
+    dispose = render(() => <Teams />, container);
+    await vi.waitFor(() => expect(container.textContent).toContain("Research"));
+    expect(container.querySelector(".teams-no-team")).toBeNull();
+    expect(mocks.fetchTeamlessUsers).not.toHaveBeenCalled();
+  });
+
+  it("omits obsolete team privacy controls while preserving member management", async () => {
+    await vi.waitFor(() => expect(container.textContent).toContain("Research"));
+    expect(container.querySelector(".team-card__private")).toBeNull();
+    await click("New team");
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+    await click("Cancel");
+    [...container.querySelectorAll("article")].find((card) => card.textContent?.includes("Research"))!.querySelector<HTMLButtonElement>("button")!.click();
+    expect(container.querySelector('[aria-label="Private team"]')).toBeNull();
+    expect(container.textContent).not.toContain("auto-join");
+    expect(container.querySelector('input[type="checkbox"]')).not.toBeNull();
+    expect(container.textContent).toContain("Member");
+  });
+
 });
 
 describe("admin team scoping", () => {
@@ -121,6 +166,7 @@ describe("admin team scoping", () => {
       { ...team, id: "own", name: "Own", canManage: true },
       { ...team, id: "other", name: "Other", canManage: false },
     ]);
+    mocks.fetchTeamlessUsers.mockResolvedValue([]);
     mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "admin" } } }));
     const container = document.createElement("div");
     document.body.append(container);

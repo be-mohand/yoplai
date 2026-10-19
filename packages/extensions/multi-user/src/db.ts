@@ -167,10 +167,10 @@ export function ensureAgentForksTable(db: Database.Database): void {
   // domain invariants directly:
   //   - sourcePoolId UNIQUE  -> a pool definition is forked at most once.
   //   - forkAgentId  UNIQUE  -> a fork is a single, distinct agent id.
-  //   - teamId nullable      -> unassign clears the link (teamless/inert)
+  //   - teamId nullable      -> unassign clears the ownership link
   //                             without deleting the fork row or its folder.
   // The teamId FK uses ON DELETE SET NULL so deleting a team leaves its forks
-  // teamless (inert) rather than cascading them away; deleteTeam surfaces that
+  // teamless rather than cascading them away; deleteTeam surfaces that
   // soon-to-be-teamless set in its warning. `createdBy`/`createdAt` record who
   // first forked and when; `assignedBy`/`assignedAt` record the most recent
   // team (re)assignment provenance and are null while teamless.
@@ -185,6 +185,7 @@ export function ensureAgentForksTable(db: Database.Database): void {
       forkAgentId TEXT NOT NULL UNIQUE,
       teamId TEXT,
       allTeams INTEGER NOT NULL DEFAULT 0,
+      public INTEGER NOT NULL DEFAULT 0,
       createdBy TEXT NOT NULL,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       assignedBy TEXT,
@@ -198,6 +199,9 @@ export function ensureAgentForksTable(db: Database.Database): void {
   const columns = db.prepare("PRAGMA table_info(agent_forks)").all() as Array<{ name: string }>;
   if (!columns.some((column) => column.name === "allTeams")) {
     db.exec("ALTER TABLE agent_forks ADD COLUMN allTeams INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!columns.some((column) => column.name === "public")) {
+    db.exec("ALTER TABLE agent_forks ADD COLUMN public INTEGER NOT NULL DEFAULT 0");
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_fork_teams (
@@ -232,6 +236,15 @@ export function ensureAgentForksTable(db: Database.Database): void {
     db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(
       FORK_TEAMS_BACKFILL_MIGRATION
     );
+  }
+  if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get("all_teams_to_public")) {
+    db.transaction(() => {
+      db.exec(`
+        DELETE FROM agent_fork_teams WHERE forkAgentId IN (SELECT forkAgentId FROM agent_forks WHERE allTeams = 1);
+        UPDATE agent_forks SET public = 1, allTeams = 0, teamId = NULL WHERE allTeams = 1;
+      `);
+      db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run("all_teams_to_public");
+    })();
   }
 }
 

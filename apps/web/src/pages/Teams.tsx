@@ -11,6 +11,8 @@ import {
 import { A } from "@solidjs/router";
 import {
   setTeamMembers,
+  addTeamMember,
+  fetchTeamlessUsers,
   createTeam,
   deleteTeam,
   fetchDeleteTeamPreview,
@@ -21,11 +23,12 @@ import {
   updateTeam,
   type Team,
   type TeamMemberProfile,
+  type TeamlessUser,
 } from "../api/teams";
 import { fetchUsers, type AdminUser } from "../api/admin";
 import { UserPicker } from "../components/UserPicker";
 import { useSession } from "../auth/client";
-import { isSuperadmin as hasSuperadminRole } from "../lib/roles";
+import { hasStaffRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
 
 // Curated palette + Font Awesome icons for the pickers. Both are optional; the
 // backend supplies grey / fa-users defaults when left unset.
@@ -68,7 +71,6 @@ type TeamDraft = {
   description: string;
   color: string | null;
   icon: string | null;
-  private: boolean;
 };
 
 function focusableElements(panel: HTMLElement): HTMLElement[] {
@@ -92,7 +94,6 @@ function TeamModal(props: {
     props.team?.color ?? null
   );
   const [icon, setIcon] = createSignal<string | null>(props.team?.icon ?? null);
-  const [isPrivate, setIsPrivate] = createSignal(props.team?.private ?? false);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   let panelRef: HTMLElement | undefined;
@@ -137,7 +138,6 @@ function TeamModal(props: {
       description: description().trim(),
       color: color(),
       icon: icon(),
-      private: isPrivate(),
     };
     try {
       if (props.team) {
@@ -237,10 +237,6 @@ function TeamModal(props: {
               </For>
             </div>
           </div>
-          <label class="team-field">
-            <span><input type="checkbox" checked={isPrivate()} disabled={saving()} onChange={(event) => setIsPrivate(event.currentTarget.checked)} /> Private team</span>
-            <span class="team-detail__hint">Stops new users from joining automatically. The team stays visible to everyone.</span>
-          </label>
           <Show when={error()}>
             {(message) => <p class="team-modal__error">⚠ {message()}</p>}
           </Show>
@@ -417,24 +413,6 @@ function TeamDetail(props: {
   const [selectedUser, setSelectedUser] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [isPrivate, setIsPrivate] = createSignal(props.team.private);
-  const [privacyBusy, setPrivacyBusy] = createSignal(false);
-
-  const handleTogglePrivate = async () => {
-    if (privacyBusy()) return;
-    setPrivacyBusy(true);
-    setError(null);
-    try {
-      const team = await updateTeam(props.team.id, { private: !isPrivate() });
-      setIsPrivate(team.private);
-      props.onMembersChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update team privacy.");
-    } finally {
-      setPrivacyBusy(false);
-    }
-  };
-
   // Membership edits are staged here and only sent to the server on Save;
   // this keeps a stray "All users" click or Remove from instantly wiping a
   // hand-built roster.
@@ -580,12 +558,6 @@ function TeamDetail(props: {
         </header>
         <div class="team-modal__body">
           <Show when={props.isAdmin}>
-            <div class="team-field">
-              <button type="button" class="team-button" aria-label="Private team" aria-pressed={isPrivate()} disabled={privacyBusy()} onClick={() => void handleTogglePrivate()}>
-                {privacyBusy() ? "Saving…" : isPrivate() ? "Private" : "Public"}
-              </button>
-              <p class="team-detail__hint">Private stops auto-join for future sign-ups. Current members stay unchanged, and the team stays visible to everyone.</p>
-            </div>
             <div class="team-detail__all-users-row">
               <label class="team-detail__all-users"><input type="checkbox" checked={draftAll()} disabled={busy()} onChange={(event) => setDraftAll(event.currentTarget.checked)} /> All users</label>
               <Show when={dirty()}>
@@ -660,13 +632,9 @@ function TeamDetail(props: {
                   {(fork) => (
                     <li class="team-member">
                       <span class="team-member__name">{fork.forkAgentId}</span>
+                      <span class="team-agent-visibility">{fork.public ? "Public" : "Private"}</span>
                       <Show when={props.isAdmin}>
-                        <Show
-                          when={fork.assignment?.mode === "all"}
-                          fallback={<button type="button" class="team-button team-button--danger-text" disabled={agentBusy()} onClick={() => void handleUnassign(fork.sourcePoolId)}>Remove</button>}
-                        >
-                          <A href={`/agents/${encodeURIComponent(fork.sourcePoolId)}/edit`} class="team-button">all teams · manage →</A>
-                        </Show>
+                        <button type="button" class="team-button team-button--danger-text" disabled={agentBusy()} onClick={() => void handleUnassign(fork.sourcePoolId)}>Remove</button>
                       </Show>
                     </li>
                   )}
@@ -694,6 +662,44 @@ function TeamDetail(props: {
   );
 }
 
+function TeamlessUserRow(props: { user: TeamlessUser; teams: Team[]; onAdded: (userId: string) => void }) {
+  const [teamId, setTeamId] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const label = () => memberProfileLabel(props.user);
+  const add = async () => {
+    if (!teamId() || busy()) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await addTeamMember(teamId(), props.user.id);
+      props.onAdded(props.user.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to add to team.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <li class="team-member">
+      <div>
+        <span class="team-member__name">{label()}</span>
+        <Show when={props.user.email && props.user.email !== label()}><p class="team-detail__hint">{props.user.email}</p></Show>
+        <Show when={props.teams.length === 0}><p class="team-detail__hint">You do not manage any teams.</p></Show>
+        <Show when={error()}>{(message) => <p role="alert" class="team-modal__error">{message()}</p>}</Show>
+        <Show when={!props.user.approved}><span class="team-detail__hint"> Pending</span></Show>
+      </div>
+      <div class="team-detail__add">
+        <select class="team-field__input" aria-label={`Team for ${label()}`} value={teamId()} disabled={busy() || props.teams.length === 0} onChange={(event) => setTeamId(event.currentTarget.value)}>
+          <option value="">Choose a team</option>
+          <For each={props.teams}>{(team) => <option value={team.id}>{team.name}</option>}</For>
+        </select>
+        <button type="button" class="team-button" disabled={busy() || !teamId()} onClick={() => void add()}>{busy() ? "Adding…" : "Add to team"}</button>
+      </div>
+    </li>
+  );
+}
+
 export function Teams() {
   const session = useSession();
   const [teams, { refetch }] = createResource(fetchTeams);
@@ -707,6 +713,17 @@ export function Teams() {
   const isSuperadmin = createMemo(() =>
     hasSuperadminRole((session().data?.user as { role?: string } | undefined)?.role)
   );
+
+  const isStaff = createMemo(() => hasStaffRole((session().data?.user as { role?: string | string[] } | undefined)?.role));
+  const [teamless, { refetch: refetchTeamless, mutate: mutateTeamless }] = createResource(
+    isStaff,
+    (staff) => staff ? fetchTeamlessUsers() : Promise.resolve([] as TeamlessUser[])
+  );
+  const teamlessUsers = () => teamless.error ? [] : teamless() ?? [];
+  const membershipChanged = () => {
+    void refetch();
+    void refetchTeamless();
+  };
 
   const sortedTeams = createMemo(() =>
     [...(teams() ?? [])].sort((left, right) =>
@@ -760,9 +777,6 @@ export function Teams() {
                   </div>
                   <div class="team-card__body">
                     <h2 class="team-card__name">{team.name}</h2>
-                    <Show when={team.private}>
-                      <span class="team-card__private"><i class="fa-solid fa-lock" aria-hidden="true" /> Private</span>
-                    </Show>
                     <Show when={team.allUsers}>
                       <p class="team-card__description">All users</p>
                     </Show>
@@ -805,6 +819,24 @@ export function Teams() {
         </Show>
       </Show>
 
+      <Show when={isStaff()}>
+        <section class="teams-no-team" aria-labelledby="teams-no-team-heading">
+          <h2 id="teams-no-team-heading">No team ({teamlessUsers().length})</h2>
+          <Show when={!teamless.error} fallback={<p role="alert" class="team-modal__error">{teamless.error instanceof Error ? teamless.error.message : "Failed to load users."}</p>}>
+          <Show when={!teamless.loading} fallback={<p class="teams-empty">Loading users…</p>}>
+            <Show when={teamlessUsers().length > 0} fallback={<p class="teams-empty">Everyone is in a team</p>}>
+              <ul class="team-member-list">
+                <For each={teamlessUsers()}>{(user) => <TeamlessUserRow user={user} teams={sortedTeams().filter((team) => team.canManage)} onAdded={(id) => {
+                  mutateTeamless((users) => users?.filter((user) => user.id !== id));
+                  void refetch();
+                }} />}</For>
+              </ul>
+            </Show>
+          </Show>
+          </Show>
+        </section>
+      </Show>
+
       <Show when={modalTeam() !== undefined}>
         <TeamModal
           team={modalTeam() ?? null}
@@ -820,7 +852,7 @@ export function Teams() {
             onClose={() => setDeleteTarget(null)}
             onDeleted={() => {
               setDeleteTarget(null);
-              void refetch();
+              membershipChanged();
             }}
           />
         )}
@@ -832,7 +864,7 @@ export function Teams() {
             team={team()}
             isAdmin={team().canManage === true}
             onClose={() => setDetailTeam(null)}
-            onMembersChanged={() => void refetch()}
+            onMembersChanged={membershipChanged}
           />
         )}
       </Show>
@@ -840,6 +872,10 @@ export function Teams() {
       <style>{`
         .teams-page {
           padding: 24px;
+        }
+
+        .teams-no-team {
+          margin-top: 24px;
         }
 
         .teams-header {
@@ -902,12 +938,8 @@ export function Teams() {
           color: var(--text-secondary);
         }
 
-        .team-card__private {
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-          margin-bottom: 4px;
-          padding: 3px 7px;
+        .team-agent-visibility {
+          padding: 2px 7px;
           border: 1px solid var(--border-default);
           border-radius: 6px;
           font-size: 12px;

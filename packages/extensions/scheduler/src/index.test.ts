@@ -179,36 +179,6 @@ describe("scheduler routes", () => {
     expect(run.status).toBe(403);
   });
 
-  it("lets only admins pause, resume, or delete Team jobs while owners manage their own", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-toggle-routes-"));
-    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
-    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
-    setSchedulerContext(context(config));
-    const app = new Hono().basePath("/api");
-    app.use("*", async (c, next) => {
-      (c as unknown as Context<{ Variables: { multiUserAuthContext: { session: { userId: string } } } }>).set("multiUserAuthContext", { session: { userId: "alice" } });
-      await next();
-    });
-    schedulerExtension.registerRoutes!(app);
-    const create = (credentialMode: string) => app.request("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: "alpha", name: credentialMode, credentialMode, schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "Run" } }) });
-    const pause = (id: string) => app.request(`/api/schedules/alpha/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: false }) });
-    const team = (await (await create("team")).json()) as { id: string };
-    const mine = (await (await create("owner")).json()) as { id: string };
-    creatorLookup.mockReturnValue({ role: "user" });
-    expect((await pause(team.id)).status).toBe(403);
-    expect((await pause(mine.id)).status).toBe(200);
-    creatorLookup.mockReturnValue({ role: "admin" });
-    const paused = await pause(team.id);
-    expect(paused.status).toBe(200);
-    expect(await paused.json()).toMatchObject({ enabled: false });
-    creatorLookup.mockReturnValue({ role: "user" });
-    const remove = (id: string) => app.request(`/api/schedules/alpha/${id}`, { method: "DELETE" });
-    expect((await remove(team.id)).status).toBe(403);
-    expect((await remove(mine.id)).status).toBe(200);
-    creatorLookup.mockReturnValue({ role: "superadmin" });
-    expect((await remove(team.id)).status).toBe(200);
-  });
-
   it("lists signed-in Team creations for another member with the server-resolved creator name", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-team-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));

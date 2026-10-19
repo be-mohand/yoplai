@@ -57,6 +57,7 @@ export {
   getRequestAuthContext,
   hasActiveImpersonation,
   hasAgentAccess,
+  canManageAgent,
   requireAdmin,
   requireSuperadmin,
   requireAgentAccess,

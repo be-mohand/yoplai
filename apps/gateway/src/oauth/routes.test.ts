@@ -109,6 +109,24 @@ describe("oauth routes", () => {
     expect(await (await app.request("/oauth/google/status?agent=a1&scope=personal")).json()).toMatchObject({ canConfigureTeam: false });
   });
 
+  it("checks team connection permission for the requested agent while personal connections remain usable", async () => {
+    const app = createOAuthRoutes(
+      new OAuthService({ store, loadConfig: makeConfig }),
+      undefined,
+      async () => "admin",
+      async (_c, agentId) => agentId === "owned"
+    );
+    for (const [agent, canManage, authorizeStatus, disconnectStatus] of [["foreign", false, 403, 403], ["owned", true, 302, 200]] as const) {
+      expect(await (await app.request(`/oauth/google/status?agent=${agent}&scope=personal`)).json()).toMatchObject({ canConfigureTeam: canManage });
+      const page = await (await app.request(`/oauth/google/authorize?agent=${agent}`)).text();
+      expect(page.includes("Whole team")).toBe(canManage);
+      expect((await app.request(`/oauth/google/authorize?agent=${agent}&scope=team`)).status).toBe(authorizeStatus);
+      expect((await app.request(`/oauth/google/disconnect?agent=${agent}&scope=team`, { method: "POST" })).status).toBe(disconnectStatus);
+      expect((await app.request(`/oauth/google/authorize?agent=${agent}&scope=personal`)).status).toBe(302);
+      expect((await app.request(`/oauth/google/disconnect?agent=${agent}&scope=personal`, { method: "POST" })).status).toBe(200);
+    }
+  });
+
   it("binds personal callback ownership to the authenticated initiator, never query userId", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
       String(input).includes("token") ? { access_token: "alice-token", expires_in: 3600 } : { email: "alice@example.com" }

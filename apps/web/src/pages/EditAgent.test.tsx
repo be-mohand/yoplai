@@ -20,6 +20,7 @@ const {
   fetchTeamsMock,
   fetchForksMock,
   setForkTeamsMock,
+  setForkVisibilityMock,
   fetchAgentExtensionsMock,
   fetchMcpServersMock,
   addMcpServerMock,
@@ -41,6 +42,7 @@ const {
   fetchTeamsMock: vi.fn(),
   fetchForksMock: vi.fn(),
   setForkTeamsMock: vi.fn(),
+  setForkVisibilityMock: vi.fn(),
   fetchAgentExtensionsMock: vi.fn(),
   fetchMcpServersMock: vi.fn(),
   addMcpServerMock: vi.fn(),
@@ -93,6 +95,7 @@ vi.mock("../api/teams", () => ({
   fetchForks: fetchForksMock,
   fetchPoolActions: fetchPoolActionsMock,
   setForkTeams: setForkTeamsMock,
+  setForkVisibility: setForkVisibilityMock,
 }));
 
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
@@ -132,6 +135,7 @@ function fork(partial: Partial<AgentFork> & { sourcePoolId: string }): AgentFork
     createdAt: "now",
     assignedBy: null,
     assignedAt: null,
+    public: false,
     ...partial,
     assignment: partial.assignment ?? { mode: "list", teamIds: partial.teamId ? [partial.teamId] : [] },
   };
@@ -198,6 +202,7 @@ beforeEach(() => {
   disconnectMcpServerMock.mockReset();
   patchAgentExtensionMock.mockReset();
   setForkTeamsMock.mockReset();
+  setForkVisibilityMock.mockReset();
   useSessionMock.mockReset();
   useParamsMock.mockReset();
   navigateMock.mockReset();
@@ -421,6 +426,61 @@ describe("EditAgent", () => {
     expect(container.textContent).toContain("Failed to load dashboards.");
   });
 
+  it("lets the owning admin change visibility and refetches the fork", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchTeamsMock.mockResolvedValue([{ id: "own", name: "Writers", canManage: true } as Team]);
+    const owned = fork({ sourcePoolId: "scribe", teamId: "own" });
+    fetchForksMock.mockResolvedValueOnce([owned]).mockResolvedValue([{ ...owned, public: true }]);
+    setForkVisibilityMock.mockResolvedValue({ ...owned, public: true });
+    await mountEdit("scribe");
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Agent visibility"]')!;
+    expect(toggle).not.toBeNull();
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.textContent).toBe("Private");
+    toggle.click();
+    await vi.waitFor(() => expect(setForkVisibilityMock).toHaveBeenCalledWith("scribe", true));
+    await vi.waitFor(() => expect(toggle.textContent).toBe("Public"));
+    expect(fetchForksMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { role: "user", owned: false, state: "hidden" },
+    { role: "admin", owned: false, state: "disabled" },
+    { role: "admin", owned: true, state: "enabled" },
+    { role: "superadmin", owned: false, state: "enabled" },
+  ])("keeps Public visibility $state for $role (owned: $owned)", async ({ role, owned, state }) => {
+    setSession(role);
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchTeamsMock.mockResolvedValue([{ id: "own", name: "Writers", canManage: true } as Team]);
+    fetchForksMock.mockResolvedValue([fork({ sourcePoolId: "scribe", teamId: owned ? "own" : "foreign", public: true })]);
+    fetchPoolActionsMock.mockResolvedValue([{ poolId: "scribe", action: "chat", chatAgentId: "scribe", forked: true, reason: null, teamName: "Writers" }]);
+    await mountEdit("scribe");
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Agent visibility"]');
+    if (state === "hidden") {
+      expect(toggle).toBeNull();
+      expect(fetchForksMock).not.toHaveBeenCalled();
+    } else {
+      expect(toggle).not.toBeNull();
+      expect(toggle!.disabled).toBe(state === "disabled");
+      expect(toggle!.textContent).toBe("Public");
+    }
+    if (state === "disabled") {
+      toggle!.click();
+      expect(setForkVisibilityMock).not.toHaveBeenCalled();
+      expect(container.querySelector(".edit-agent-team")).toBeNull();
+    }
+  });
+
+  it("shows visibility when staff open the runnable fork directly", async () => {
+    setSession("superadmin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe-fork" })]);
+    fetchForksMock.mockResolvedValue([fork({ sourcePoolId: "scribe", forkAgentId: "scribe-fork", public: true })]);
+    await mountEdit("scribe-fork");
+    expect(container.querySelector('[aria-label="Agent visibility"]')?.textContent).toBe("Public");
+  });
+
   it("sets explicit teams for a never-forked agent", async () => {
     setSession("superadmin");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
@@ -432,7 +492,7 @@ describe("EditAgent", () => {
     const section = container.querySelector(".edit-agent-team");
     expect(section).not.toBeNull();
 
-    const pill = container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill")[1]!;
+    const pill = container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill")[0]!;
     pill.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -491,7 +551,7 @@ describe("EditAgent", () => {
     );
     await mountEdit("scribe");
 
-    container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill")[1]!.click();
+    container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill")[0]!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     container.querySelector<HTMLButtonElement>(".edit-agent-team-button")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -515,11 +575,11 @@ describe("EditAgent", () => {
 
     const section = container.querySelector(".edit-agent-team");
     const pills = container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill");
-    expect(pills[1]!.classList.contains("selected")).toBe(true);
+    expect(pills[0]!.classList.contains("selected")).toBe(true);
     expect(section?.textContent).toContain("Red");
 
+    pills[0]!.click();
     pills[1]!.click();
-    pills[2]!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const button = container.querySelector<HTMLButtonElement>(
@@ -544,8 +604,9 @@ describe("EditAgent", () => {
     await mountEdit("scribe");
 
     const pills = container.querySelectorAll<HTMLButtonElement>(".edit-agent-team-pill");
-    expect(pills).toHaveLength(2);
-    expect(pills[0]!.disabled).toBe(true); // All teams is superadmin-only
+    expect(pills).toHaveLength(1);
+    expect(pills[0]!.disabled).toBe(false);
+    expect(container.textContent).not.toContain("All teams");
     expect(container.querySelector(".edit-agent-team")?.textContent).not.toContain("Blue");
   });
 

@@ -97,6 +97,17 @@ afterEach(() => {
 const forkId = (poolId: string) => poolId;
 
 describe("canUserChatAgent", () => {
+  it("opens Public forks to teamless and foreign-team users while Private remains restricted", () => {
+    forks.setPublic("scribe", true);
+    forks.setPublic("orphan", true);
+    expect(resolver.canUserChatAgent("loner", "scribe")).toBe(true);
+    expect(resolver.canUserChatAgent("bob", "scribe")).toBe(true);
+    expect(resolver.canUserChatAgent("loner", "orphan")).toBe(true);
+    expect(resolver.getVisibleChatAgents("loner")).toEqual(["orphan", "scribe"]);
+    forks.setPublic("orphan", false);
+    expect(resolver.canUserChatAgent("alice", "orphan")).toBe(false);
+    expect(resolver.canUserChatAgent("bob", "sage")).toBe(false);
+  });
   it("allows a user who shares the fork's team", () => {
     expect(resolver.canUserChatAgent("alice", forkId("scribe"))).toBe(true);
     expect(resolver.canUserChatAgent("alice", forkId("sage"))).toBe(true);

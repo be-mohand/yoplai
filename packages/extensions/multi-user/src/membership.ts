@@ -8,10 +8,11 @@ export type TeamMember = {
 };
 
 export type TeamMemberProfile = { id: string; name: string | null; email: string | null };
+export type TeamlessUserProfile = TeamMemberProfile & { approved: boolean; role: string };
 export type TeamMembership = { mode: "all" } | { mode: "list"; userIds: string[] };
 
 export class AllUsersTeamError extends Error {
-  constructor() { super("Cannot remove a member from an All users team"); this.name = "AllUsersTeamError"; }
+  constructor(action: "add" | "remove" = "remove") { super(`Cannot ${action} a member ${action === "add" ? "to" : "from"} an All users team`); this.name = "AllUsersTeamError"; }
 }
 
 export function isAllUsersTeamError(error: unknown): boolean {
@@ -28,8 +29,10 @@ export function isAllUsersTeamError(error: unknown): boolean {
  * explicit list restores that saved roster.
  */
 export type MembershipStore = {
+  listTeamlessUsers(): TeamlessUserProfile[];
   setMembers(teamId: string, membership: TeamMembership, addedBy: string): void;
   getMembership(teamId: string): TeamMembership;
+  addMember(teamId: string, userId: string, addedBy: string): void;
   removeMember(teamId: string, userId: string): void;
   isMember(teamId: string, userId: string): boolean;
   /** Team ids the given user belongs to. */
@@ -89,8 +92,19 @@ export function createMembershipStore(db: Database.Database): MembershipStore {
   // name/email columns, and better-sqlite3 validates columns at prepare time.
   let memberProfilesStatement: Database.Statement | undefined;
   let savedMemberProfilesStatement: Database.Statement | undefined;
+  let teamlessUsersStatement: Database.Statement | undefined;
 
   return {
+    listTeamlessUsers() {
+      teamlessUsersStatement ??= db.prepare(`
+        SELECT u.id, u.name, u.email, u.approved, u.role FROM user u
+        WHERE NOT EXISTS (SELECT 1 FROM teams WHERE allUsers = 1)
+          AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.userId = u.id)
+        ORDER BY u.id
+      `);
+      const rows = teamlessUsersStatement.all() as Array<TeamMemberProfile & { approved: number; role: string | null }>;
+      return rows.map((row) => ({ ...row, approved: Boolean(row.approved), role: row.role ?? "user" }));
+    },
     setMembers(teamId, membership, addedBy) {
       db.transaction(() => {
         // Mode "all" only flips the flag: the prior explicit roster's rows
@@ -106,6 +120,10 @@ export function createMembershipStore(db: Database.Database): MembershipStore {
     getMembership(teamId) {
       if ((allUsersStatement.get(teamId) as { allUsers: number } | undefined)?.allUsers) return { mode: "all" };
       return { mode: "list", userIds: (usersForTeamStatement.all(teamId, teamId) as Array<{ userId: string }>).map((row) => row.userId) };
+    },
+    addMember(teamId, userId, addedBy) {
+      if ((allUsersStatement.get(teamId) as { allUsers: number } | undefined)?.allUsers) throw new AllUsersTeamError("add");
+      insertStatement.run(teamId, userId, addedBy);
     },
     removeMember(teamId, userId) {
       if ((allUsersStatement.get(teamId) as { allUsers: number } | undefined)?.allUsers) throw new AllUsersTeamError();

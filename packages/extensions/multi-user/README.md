@@ -19,9 +19,9 @@ email/password), and a session secret.
 - A superadmin role (auto-assigned to the first registered user) plus an
   `approved` flag gating non-admin access.
 - Team membership, pool-agent forks, and team-based agent access. Users and
-  admins only see and run forked agents assigned to one of their teams; only
-  superadmins bypass that check. Admins manage only teams they belong to;
-  only superadmins create or delete teams.
+  admins see and run Public forks and Private forks assigned to their teams; only
+  superadmins bypass that check. Admins manage agents owned by their teams and
+  teams they belong to; only superadmins create or delete teams.
 - The `createAuthMiddleware` mounted on `/api/*`, plus `requireAdmin` and
   `requireAgentAccess` middleware used by other extensions.
 - Bearer-token API auth via the `@better-auth/api-key` plugin (see below).
@@ -53,7 +53,9 @@ Custom tables:
 
 - `teams` and `team_members` own many-to-many user membership.
 - `agent_forks` links one source pool agent to one stable runnable fork; `agent_fork_teams`
-  records its explicit team links, while `allTeams` is a standing org-wide rule.
+  records its explicit team links. The fork boolean `public` grants chat access independently
+  of ownership. A one-shot upgrade migrates legacy All teams forks to Public and clears
+  their old team links; later Private changes survive restart.
   Deleting an explicit team link leaves the fork teamless only when it was its last link,
   rather than deleting its workspace.
 - `agent_assignments` is retained only for compatibility. A one-shot,
@@ -75,7 +77,6 @@ Custom tables:
         },
       },
       "emailAndPassword": { "enabled": true },
-      "autoJoinPublicTeams": true,
       "allowedDomains": ["example.com"],
     },
   },
@@ -93,8 +94,8 @@ Custom tables:
   `authMethods: { google, emailAndPassword }`.
 - `allowedDomains` — optional email-domain allowlist. Sign-in is rejected for
   any other domain. Omit to allow all.
-- `autoJoinPublicTeams` — optional boolean, defaults to `true`. Adds each new
-  user to public teams at sign-up; set `false` for fully manual membership.
+- New users receive no explicit team membership. Existing `autoJoinPublicTeams`
+  configuration keys are accepted and ignored.
 
 `sessionSecret` and OAuth credentials are strings. Prefer `$env:NAME`
 references so plaintext secrets stay outside tracked configuration.
@@ -108,24 +109,25 @@ unless `autoApprove: false` is set, in which case they land with
 their requests are rejected with `403 forbidden` (but the session is created
 so the UI can render an "awaiting approval" state).
 
-### Public and private teams
+### Agent visibility and team membership
 
-New teams are public by default (`private: false`). At sign-up, including the
-first superadmin and pending users, new users join every public team unless
-`autoJoinPublicTeams: false` is configured. These are ordinary, removable
-memberships: removing a user is permanent unless an admin adds them again.
-Pending users still receive `403` on agents until approved.
+Public agents are available to every approved user, including users without a team.
+Private agents require membership in at least one linked team; superadmins bypass
+this restriction. Agent team links describe ownership, independently of visibility.
+Only superadmins and admins sharing an owning team can change visibility, team
+credentials/OAuth, or pause/resume/delete Team scheduled jobs. Public grants no
+management permission. Personal connections and member-level operations remain
+available to users who can chat the agent.
 
-Private teams stop automatic enrollment of future users; they remain visible
-in the team catalog. Changing Private/Public or creating a team never adds or
-removes existing users. Teams already present when upgrading are marked
-private once; teams created afterward default to public, so choose Private
-when creating sensitive teams. The Teams page provides a private badge, a
-creation checkbox, and an immediate Private/Public toggle in team detail.
+The **All users** team flag remains a locked, live membership rule for all current
+and future users. The legacy team `private` API field remains inert and is hidden
+from the UI. Staff see a **No team** list including pending users; adding someone
+to a manageable team removes them from that list immediately. Any All users team
+makes the list empty because every user belongs to it.
 
-The independent **All users** flag remains a locked, live membership rule for
-all current and future users, even on private teams. Public-team auto-join is
-a snapshot at sign-up and does not add explicit memberships to All users teams.
+Scheduler routes require chat access to the relevant agent, and agentless lists
+exclude inaccessible agents' jobs. Pending regular users cannot access Public
+agents until approved; staff retain the existing approval exception.
 
 ## HTTP API
 
@@ -142,24 +144,28 @@ GET    /api/teams/:id/members           # team member profiles
 GET    /api/teams/:id/agents            # team fork links
 GET    /api/pool-actions                # caller-specific pool card actions
 GET    /api/admin/users                 # list users
+GET    /api/admin/users/no-team         # users without any live team
 PATCH  /api/admin/users/:id             # approve / set role
 POST   /api/admin/teams                 # create team
 PATCH  /api/admin/teams/:id             # update team
 DELETE /api/admin/teams/:id             # delete team
 PUT    /api/admin/teams/:id/members     # { mode: "all" } or { mode: "list", userIds }
+POST   /api/admin/teams/:id/members/:userId # single-user add, no body
 DELETE /api/admin/teams/:id/members/:userId
 GET    /api/admin/forks                 # list fork provenance
-PUT    /api/admin/forks/:poolId/teams   # { mode: "all" } or { mode: "list", teamIds }
+PUT    /api/admin/forks/:poolId/teams   # { mode: "list", teamIds }; mode all rejected
+PATCH  /api/admin/forks/:poolId/visibility # { public: boolean }
 DELETE /api/admin/teams/:teamId/agents/:poolId
 ```
 
 Non-admin callers get `403` from any `/api/admin/*` route. `/api/me`, team
 reads, pool actions, and `DELETE /api/user/token/:id` require any authenticated
-user. Agent chat/read/write authorization derives from team membership, not the
-legacy assignment endpoints.
+user. Agent chat authorization derives from Public visibility or team membership;
+agent management requires owning-team admin membership or superadmin. Visibility
+and membership changes are audited and notify connected clients.
 
 Team create and PATCH bodies accept a boolean `private`; all team reads and
-listings return it. Creating a team without the flag defaults to public.
+listings return it for compatibility; it no longer affects enrollment or access.
 
 ## Bearer-Token API Auth
 

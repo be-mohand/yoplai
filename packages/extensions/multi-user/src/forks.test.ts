@@ -80,6 +80,13 @@ afterEach(() => {
 });
 
 describe("fork store", () => {
+  it("keeps visibility private by default and changes it without changing ownership", () => {
+    const fork = store.setTeams("scribe", { mode: "list", teamIds: ["team-a"] }, "admin-1");
+    expect(fork.public).toBe(false);
+    expect(store.setPublic("scribe", true)).toMatchObject({ public: true, assignment: { mode: "list", teamIds: ["team-a"] } });
+    expect(store.getForkByAgentId("scribe")?.public).toBe(true);
+    expect(store.setPublic("scribe", false).public).toBe(false);
+  });
   it("setTeams copies the folder and writes the link row", () => {
     const fork = store.setTeams("scribe", { mode: "list", teamIds: ["team-a"] }, "admin-1");
 
@@ -136,17 +143,13 @@ describe("fork store", () => {
     expect(store.listForks()).toHaveLength(1);
   });
 
-  it("supports multiple teams, All teams, and leaving All with no remembered links", () => {
+  it("keeps multiple team links explicit and rejects retired assignment mode", () => {
     store.setTeams("scribe", { mode: "list", teamIds: ["team-a", "team-b"] }, "admin-1");
     expect(store.listForksForTeam("team-a")).toHaveLength(1);
     expect(store.listForksForTeam("team-b")).toHaveLength(1);
-
-    store.setTeams("scribe", { mode: "all" }, "admin-1");
-    expect(store.listForksForTeam("team-c")).toHaveLength(1);
-    expect(() => store.removeTeam("scribe", "team-a")).toThrow(/All-teams/);
-
-    expect(store.setTeams("scribe", { mode: "list", teamIds: [] }, "admin-1").assignment).toEqual({ mode: "list", teamIds: [] });
-    expect(store.listForksForTeam("team-a")).toHaveLength(0);
+    expect(() => store.setTeams("scribe", JSON.parse('{"mode":"all"}'), "admin-1")).toThrow(/assignment/i);
+    expect(store.removeTeam("scribe", "team-a").assignment).toEqual({ mode: "list", teamIds: ["team-b"] });
+    expect(store.listForksForTeam("team-c")).toEqual([]);
   });
 
   it("an empty list leaves the fork teamless but keeps its folder", () => {

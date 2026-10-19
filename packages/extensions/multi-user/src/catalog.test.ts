@@ -113,6 +113,14 @@ afterEach(() => {
 const forkId = (poolId: string) => poolId;
 
 describe("resolvePoolAction — chat", () => {
+  it("offers Public forks to teamless users but keeps unrunnable forks unavailable", () => {
+    forks.setPublic("scribe", true);
+    forks.setPublic("orphan", true);
+    expect(catalog.resolvePoolAction("scribe", member("loner"))).toMatchObject({ action: "chat", chatAgentId: "scribe", reason: null });
+    expect(catalog.resolvePoolAction("orphan", member("loner"))).toMatchObject({ action: "chat", chatAgentId: "orphan", reason: null });
+    const unavailable = createPoolCatalogResolver({ forks, access: createAccessResolver({ membership, forks }), isAgentRunnable: () => false, getTeamName: () => null });
+    expect(unavailable.resolvePoolAction("orphan", member("loner"))).toMatchObject({ action: "none", chatAgentId: null, reason: "no_workspace" });
+  });
   it("returns chat with the fork agent id when a member shares the team", () => {
     const entry = catalog.resolvePoolAction("scribe", member("alice"));
     expect(entry).toEqual({
