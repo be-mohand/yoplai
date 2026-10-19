@@ -15,7 +15,7 @@ import {
   type JSX,
 } from "solid-js";
 
-import { useParams, useNavigate, useSearchParams, A } from "@solidjs/router";
+import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
 import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { toolLabel } from "@yoplai/shared/tool-labels";
@@ -73,6 +73,7 @@ import {
   streamingActivityItems,
 } from "../lib/chat-activity";
 import { showToast } from "../lib/toast";
+import { MainAgentChatBadge } from "./MainAgentChatBadge";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -939,6 +940,7 @@ export function ChatView() {
   void refreshToolLabels();
   const params = useParams<{ agentId: string; view?: string }>();
   const navigate = useNavigate();
+  const location = useLocation<{ mainAgentHome?: boolean }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
 
   const hasSuperadminRole = (role: string | string[] | null | undefined) => {
@@ -1030,6 +1032,7 @@ export function ChatView() {
   >();
   let loadedHistory: FullHistoryMessage[] = [];
   let loadedHistorySession: string | null = null;
+  let focusedHomeSession: string | null = null;
   let loadedHistoryOffset = 0;
 
   // Empty-chat hero state. `heroEmpty` is true when the chat has no content;
@@ -1414,6 +1417,12 @@ export function ChatView() {
       applyActiveTurn(res.isStreaming ?? false, res.activeTurn ?? null);
     }
     setLoading(false);
+    if (location.state?.mainAgentHome && !sessionId && res.messages.length === 0 && focusedHomeSession !== requestedSession) {
+      focusedHomeSession = requestedSession;
+      requestAnimationFrame(() => {
+        if (requestedSession === currentSession() && !document.querySelector('[aria-modal="true"]')) textareaRef?.focus();
+      });
+    }
   };
 
   const loadEarlierHistory = async () => {
@@ -2899,6 +2908,22 @@ export function ChatView() {
     return "Drop files to attach them.";
   });
 
+  const startFreshChat = (agentId: string) => {
+    if (cleanup) cleanup();
+    cleanup = null;
+    directStreamSession = null;
+    resetStreamingState();
+    startNewChat(agentId);
+    setSimpleMessages([]);
+    setFullMessages([]);
+    setPendingQueuedMessages([]);
+    clearPendingFiles();
+    setShowInterrupted(false);
+    setInput("");
+    navigate(`/chat/${encodeURIComponent(agentId)}`);
+    requestAnimationFrame(() => textareaRef?.focus());
+  };
+
   return (
     <div
       ref={chatViewRef}
@@ -2943,6 +2968,7 @@ export function ChatView() {
           <div class="agent-info-text">
             <div class="agent-title-row">
               <div class="agent-name">{agent()?.name ?? "Loading..."}</div>
+              <Show when={!projectId() && agent()}>{(current) => <MainAgentChatBadge agentId={params.agentId} name={current().name} onPick={startFreshChat} />}</Show>
               <Show when={project()}>
                 {(proj) => (
                   <A href={`/p/${projectId()}`} class="chat-project-chip">
@@ -3027,20 +3053,7 @@ export function ChatView() {
           class="new-chat-btn"
           aria-label="Start a new chat"
           title="New chat"
-          onClick={() => {
-            if (cleanup) cleanup();
-            cleanup = null;
-            directStreamSession = null;
-            resetStreamingState();
-            startNewChat(params.agentId);
-            setSimpleMessages([]);
-            setFullMessages([]);
-            setPendingQueuedMessages([]);
-            clearPendingFiles();
-            setShowInterrupted(false);
-            setInput("");
-            navigate(`/chat/${encodeURIComponent(params.agentId)}`);
-          }}
+          onClick={() => startFreshChat(params.agentId)}
         >
           <svg
             width="14"

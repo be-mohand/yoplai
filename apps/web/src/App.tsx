@@ -20,6 +20,7 @@ import { OnboardingTour } from "./onboarding/OnboardingTour";
 import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
+import { MainAgentHome } from "./pages/MainAgentHome";
 import { EditAgent } from "./pages/EditAgent";
 import { ScheduleRuns } from "./pages/ScheduleRuns";
 import { ScheduleRunTrace } from "./pages/ScheduleRunTrace";
@@ -322,7 +323,7 @@ function HomeRoute() {
     const DefaultHome = defaultHome;
     return <DefaultHome />;
   }
-  return <AgentsRouteShell />;
+  return <LeftNavShell><MainAgentHome /></LeftNavShell>;
 }
 
 function AgentsRouteShell() {

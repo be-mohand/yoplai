@@ -52,7 +52,7 @@ export default defineConfig({
     minWorkers: 1,
     environmentMatchGlobs: [["apps/web/src/**/*.test.tsx", "jsdom"]],
     deps: {
-      inline: ["solid-js", "solid-js/web"],
+      inline: ["solid-js", "solid-js/web", "@solidjs/router"],
     },
   },
 });

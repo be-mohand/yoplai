@@ -57,6 +57,10 @@ Solid.js SPA. It consumes `/api/capabilities` and loads optional extension route
 - `src/components/ui/`: shared primitives (Modal, ConfirmDialog, Button, TextField, TextAreaField) used by chat projects and sidebar; scoped styles, no external UI library
 - core chat supports simple/full history, streaming, attachments, aborts, and explicit sessions
 
+Home keeps extension-owned routes first; otherwise a personal main-agent preference opens a fresh `/chat/<agentId>` via `startNewChat` on every home visit. Users without an accessible preference see a character-select overlay on the catalog; deliberate dismissal lasts only for that visit. One eligible agent auto-saves, zero shows the catalog, and load/save failures retain a usable catalog or picker. The chat header badge reopens the picker; the Agents catalog saves directly and stays in place. Agents navigation remains `/agents` and the logo remains `/`. Blank home chats must not create persisted session files before a user message.
+
+`/api/me/main-agent` (GET/PUT/DELETE) stores `{ mainAgentId, pickerDismissedAt, updatedAt }` atomically in `main-agent.json` beneath the user's session area (config root in single-user mode, `sessions/users/<id>` in multi-user mode), without an auth.db migration or audit entry. The browser-safe `@yoplai/shared/main-agent` eligibility helper is shared by gateway and web: fork catalogs permit only `chat` entries' runnable `chatAgentId`, never template IDs. GET reports current accessibility, picks clear dismissal, and dismissal timestamps come from the server. See [main-agent home](specs/main-agent-home.md) for behavior and E2E scenarios.
+
 Core `App.tsx` must not hard-import optional board/projects route modules. Optional bundles must remain lazy and capability-gated so core web builds work without them.
 
 ### `packages/shared`

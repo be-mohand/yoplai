@@ -126,6 +126,7 @@ describe("REST per-agent access gating (multi-user)", () => {
     const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
     const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
     const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
+    const { createPoolCatalogResolver } = await import("../../../../packages/extensions/multi-user/src/catalog.js");
     const { createOnboardingStore } = await import("../../../../packages/extensions/multi-user/src/onboarding.js");
     const { createConnectPromptStore } = await import("../../../../packages/extensions/multi-user/src/connect-prompt.js");
     const { default: Database } = await import("better-sqlite3");
@@ -159,11 +160,13 @@ describe("REST per-agent access gating (multi-user)", () => {
     forks.setTeams("blocked-agent", { mode: "list", teamIds: ["team-blue"] }, "root");
     membership.setMembers("team-red", { mode: "list", userIds: ["alice", "red-admin"] }, "root");
     const { setMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
+    const access = createAccessResolver({ membership, forks });
     setMultiUserRuntime({
       db,
       forks,
       membership,
-      access: createAccessResolver({ membership, forks }),
+      access,
+      catalog: createPoolCatalogResolver({ forks, access, isAgentRunnable: () => true, getTeamName: () => null }),
       onboarding: createOnboardingStore(db),
       connectPrompt: createConnectPromptStore(db),
       getPoolAgentIds: () => [...poolAgents.keys()],
@@ -327,6 +330,28 @@ describe("REST per-agent access gating (multi-user)", () => {
     ).toBe(200);
   });
 
+  it("keeps a fresh home chat unpersisted until its first user message", async () => {
+    const userDir = path.join(tmpDir, ".yoplai", "sessions", "users", "alice");
+    const sessionFiles = async () => {
+      const files = await fs.readdir(userDir, { recursive: true }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      });
+      const persisted = files.filter((file) => file.endsWith(".jsonl") || path.basename(file) === "sessions.json").sort();
+      return Promise.all(persisted.map(async (file) => ({ file, contents: await fs.readFile(path.join(userDir, file), "utf8") })));
+    };
+    const before = await sessionFiles();
+    for (const view of ["simple", "full"]) {
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/agents/allowed-agent/history?sessionKey=web-home-without-message&view=${view}`,
+        { headers: authHeader("alice") }
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ messages: [], view });
+    }
+    expect(await sessionFiles()).toEqual(before);
+  });
+
   it("uses current account roles rather than stale superadmin sessions for legacy dashboard access", async () => {
     const { getDashboardRegistry } = await import("../canvas/store.js");
     const { getAgent } = await import("../config/index.js");
@@ -396,6 +421,52 @@ describe("REST per-agent access gating (multi-user)", () => {
 
   it("does not treat aggregate /agents/status as a per-agent address", async () => {
     expect(await get("/api/agents/status", authHeader("mallory"))).toBe(200);
+  });
+
+  it("persists the authenticated user's main agent without changing another user's preference", async () => {
+    const url = `http://127.0.0.1:${port}/api/me/main-agent`;
+    const initial = await fetch(url, { headers: authHeader("alice") });
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toEqual({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+    const saved = await fetch(url, { method: "PUT", headers: { ...authHeader("alice"), "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "allowed-agent" }) });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ mainAgentId: "allowed-agent", accessible: true, pickerDismissedAt: null });
+    expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toEqual({ mainAgentId: "allowed-agent", accessible: true, pickerDismissedAt: null });
+    expect(await (await fetch(url, { headers: authHeader("mallory") })).json()).toEqual({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+    const other = await fetch(url, { method: "PUT", headers: { ...authHeader("mallory"), "content-type": "application/json" }, body: JSON.stringify({ pickerDismissedAt: "now" }) });
+    expect(other.status).toBe(200);
+    const dismissed = await other.json();
+    expect(dismissed).toEqual({ mainAgentId: null, accessible: false, pickerDismissedAt: expect.any(String) });
+    expect(await (await fetch(url, { headers: authHeader("mallory") })).json()).toEqual(dismissed);
+    expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toEqual({ mainAgentId: "allowed-agent", accessible: true, pickerDismissedAt: null });
+  });
+
+  it("rejects an ineligible main agent without replacing the saved choice", async () => {
+    const url = `http://127.0.0.1:${port}/api/me/main-agent`;
+    const saved = await fetch(url, { method: "PUT", headers: { ...authHeader("alice"), "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "allowed-agent" }) });
+    expect(saved.status).toBe(200);
+    const denied = await fetch(url, { method: "PUT", headers: { ...authHeader("alice"), "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "blocked-agent" }) });
+    expect(denied.status).toBe(403);
+    expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toEqual({ mainAgentId: "allowed-agent", accessible: true, pickerDismissedAt: null });
+  });
+
+  it("rejects unforked pool templates as main agents even for superadmins", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/main-agent`, { method: "PUT", headers: { ...authHeader("root", "superadmin"), "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "pool-template" }) });
+    expect(response.status).toBe(403);
+  });
+
+  it("reports a saved main agent inaccessible after team access is revoked", async () => {
+    const url = `http://127.0.0.1:${port}/api/me/main-agent`;
+    const saved = await fetch(url, { method: "PUT", headers: { ...authHeader("alice"), "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "allowed-agent" }) });
+    expect(saved.status).toBe(200);
+    const { getMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
+    const runtime = getMultiUserRuntime()!;
+    runtime.membership.removeMember("team-red", "alice");
+    try {
+      expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toEqual({ mainAgentId: "allowed-agent", accessible: false, pickerDismissedAt: null });
+    } finally {
+      runtime.membership.setMembers("team-red", { mode: "list", userIds: ["alice", "red-admin"] }, "root");
+    }
   });
 
   it("stores onboarding status per authenticated user", async () => {

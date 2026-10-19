@@ -64,6 +64,11 @@
       "development": "./src/testing/tool-deferral-fixture.ts",
       "import": "./dist/testing/tool-deferral-fixture.js",
       "types": "./dist/testing/tool-deferral-fixture.d.ts"
+    },
+    "./main-agent": {
+      "development": "./src/main-agent.ts",
+      "import": "./dist/main-agent.js",
+      "types": "./dist/main-agent.d.ts"
     }
   },
   "scripts": {

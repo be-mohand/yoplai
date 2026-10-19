@@ -37,9 +37,14 @@ export function Modal(props: ModalProps) {
 
     if (event.key === "Tab") {
       const focusable = getFocusableElements();
-      if (focusable.length === 0) return;
-      if (focusable.length === 1) {
+      if (focusable.length === 0) {
         event.preventDefault();
+        panelRef?.focus();
+        return;
+      }
+      if (focusable.length === 1 || document.activeElement === panelRef) {
+        event.preventDefault();
+        focusable[event.shiftKey ? focusable.length - 1 : 0].focus();
         return;
       }
 
@@ -95,6 +100,7 @@ export function Modal(props: ModalProps) {
         class="ui-modal"
         classList={{ "ui-modal--sm": props.size === "sm", "ui-modal--lg": props.size === "lg" }}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby={titleId}
         onMouseDown={(event) => event.stopPropagation()}

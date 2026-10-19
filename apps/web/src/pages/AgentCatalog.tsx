@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { A } from "@solidjs/router";
 import { fetchAgents, fetchPool } from "../api";
 import { startNewChat } from "../api/chat";
@@ -10,6 +10,8 @@ import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
 import { subscribeToRealtime } from "../api/realtime-client";
 import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
+import { fetchMainAgentPreference, saveMainAgentPreference } from "../api/main-agent";
+import { showToast } from "../lib/toast";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -25,6 +27,9 @@ function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
 }
 
 export function AgentCatalog() {
+  const [mainAgent, { mutate: setMainAgent }] = createResource(() => fetchMainAgentPreference().catch(() => null));
+  const [savingMain, setSavingMain] = createSignal<string | null>(null);
+  const [mainAgentError, setMainAgentError] = createSignal("");
   const [agents] = createResource(() =>
     capabilities.forkedAgents ? fetchPool() : fetchAgents()
   );
@@ -65,10 +70,29 @@ export function AgentCatalog() {
   });
   const canEditAgent = (entry: PoolCatalogEntry | undefined) =>
     !capabilities.forkedAgents || isSuperadmin() || entry?.action === "chat" || entry?.action === "assign_to_team";
+  const mainAgentIdFor = (agentId: string) => {
+    if (!capabilities.forkedAgents) return agentId;
+    const entry = actionByPool().get(agentId);
+    return entry?.action === "chat" ? entry.chatAgentId : null;
+  };
+  const makeMainAgent = async (agentId: string, name: string) => {
+    if (savingMain()) return;
+    setSavingMain(agentId);
+    setMainAgentError("");
+    try {
+      setMainAgent(await saveMainAgentPreference({ mainAgentId: agentId }));
+      showToast(`${name} is your main agent`, "success");
+    } catch (error) {
+      setMainAgentError(error instanceof Error ? error.message : "Could not save your main agent. Try again.");
+    } finally {
+      setSavingMain(null);
+    }
+  };
 
   return (
     <div class="agent-catalog">
       <h1 class="catalog-heading">Agents</h1>
+      <Show when={mainAgentError()}><div class="catalog-main-error" role="alert">{mainAgentError()}</div></Show>
 
       <Show when={agents.loading}>
         <div class="loading">Loading agents...</div>
@@ -169,6 +193,15 @@ export function AgentCatalog() {
                     </Show>
                   );
                 })()}
+                <Show when={mainAgentIdFor(agent.id)}>{(chatAgentId) => (
+                  <Show when={mainAgent()?.accessible && mainAgent()?.mainAgentId === chatAgentId()} fallback={
+                    <button type="button" class="catalog-make-main" disabled={savingMain() !== null} aria-label={`Make ${agent.name} main agent`} onClick={() => void makeMainAgent(chatAgentId(), agent.name)}>
+                      {savingMain() === chatAgentId() ? "Saving…" : "Make main agent"}
+                    </button>
+                  }>
+                    <span class="catalog-main-mark"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>Main agent</span>
+                  </Show>
+                )}</Show>
               </div>
             )}
           </For>
@@ -186,6 +219,14 @@ export function AgentCatalog() {
           color: var(--text-primary);
           margin-bottom: 20px;
         }
+
+        .catalog-make-main, .catalog-main-mark { margin-top: 8px; min-height: 44px; display: inline-flex; justify-content: center; align-items: center; gap: 6px; padding: 8px 12px; font: inherit; font-size: 12px; }
+        .catalog-make-main { border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+        .catalog-make-main:hover { color: var(--text-primary); background: var(--bg-raised); }
+        .catalog-make-main:focus-visible { outline: 2px solid var(--tone-user); outline-offset: 2px; }
+        .catalog-make-main:disabled { opacity: .5; cursor: wait; }
+        .catalog-main-mark { color: var(--tone-user); }
+        .catalog-main-error { margin-bottom: 20px; color: var(--tone-error); font-size: 14px; }
 
         .loading, .error {
           padding: 24px;

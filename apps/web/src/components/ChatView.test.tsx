@@ -56,6 +56,7 @@ const {
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
+  useLocation: () => ({ state: null }),
   useParams: () => ({ agentId: "agent-1", view: routeState.view }),
   useSearchParams: () => [
     {
