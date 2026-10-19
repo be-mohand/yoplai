@@ -164,14 +164,23 @@ function ForkVisibility(props: { fork: AgentFork; canManage: boolean; onChanged:
       setBusy(false);
     }
   };
+  const tooltip = () => {
+    const access = props.fork.public
+      ? "Public: every user can chat with this agent."
+      : "Private: only members of the assigned teams can chat with this agent.";
+    return props.canManage ? `${access} Click to make it ${props.fork.public ? "private" : "public"}.` : access;
+  };
   return (
-    <section class="edit-agent-visibility">
-      <div class="edit-agent-team-head">
-        <h2 class="edit-agent-section-title">Visibility</h2>
-        <button type="button" class="edit-agent-visibility-toggle" aria-label="Agent visibility" aria-pressed={props.fork.public} disabled={busy() || !props.canManage} onClick={() => void toggle()}>{busy() ? "Saving…" : props.fork.public ? "Public" : "Private"}</button>
-      </div>
-      <Show when={error()}>{(message) => <p role="alert" class="edit-agent-team-error">{message()}</p>}</Show>
-    </section>
+    <>
+      {/* The title sits on a wrapper because disabled buttons do not always show it. */}
+      <span class="edit-agent-visibility" title={tooltip()}>
+        <button type="button" class="edit-agent-visibility-toggle" aria-label="Agent visibility" aria-pressed={props.fork.public} disabled={busy() || !props.canManage} onClick={() => void toggle()}>
+          <i class={props.fork.public ? "fa-solid fa-globe" : "fa-solid fa-lock"} aria-hidden="true" />
+          {busy() ? "Saving…" : props.fork.public ? "Public" : "Private"}
+        </button>
+      </span>
+      <Show when={error()}>{(message) => <p role="alert" class="edit-agent-team-error edit-agent-visibility-error">{message()}</p>}</Show>
+    </>
   );
 }
 
@@ -421,17 +430,18 @@ export function EditAgent() {
                 )}
               </Show>
               <div class="edit-agent-identity">
-                <h1 class="edit-agent-name">{current().name}</h1>
+                <div class="edit-agent-name-row">
+                  <h1 class="edit-agent-name">{current().name}</h1>
+                  <Show when={isAdmin() && capabilities.forkedAgents && fork()}>
+                    {(currentFork) => <ForkVisibility fork={currentFork()} canManage={canManageFork()} onChanged={refetchForks} />}
+                  </Show>
+                </div>
                 <Show when={current().role}>
                   <div class="edit-agent-role">{current().role}</div>
                 </Show>
               </div>
             </div>
           )}
-        </Show>
-
-        <Show when={isAdmin() && capabilities.forkedAgents && fork()}>
-          {(currentFork) => <ForkVisibility fork={currentFork()} canManage={canManageFork()} onChanged={refetchForks} />}
         </Show>
 
         <Show when={isAdmin() && capabilities.forkedAgents && poolAgent() && (isSuperadmin() || !fork() || canManageFork())}>
@@ -758,8 +768,18 @@ export function EditAgent() {
           color: var(--text-tertiary);
         }
 
-        .edit-agent-team,
-        .edit-agent-visibility {
+        .edit-agent-name-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px 12px;
+        }
+
+        .edit-agent-visibility-error {
+          flex-basis: 100%;
+        }
+
+        .edit-agent-team {
           margin-top: 28px;
           max-width: 520px;
           display: flex;
@@ -864,6 +884,16 @@ export function EditAgent() {
           font-size: 13px;
           font-weight: 500;
           cursor: pointer;
+        }
+
+        .edit-agent-visibility-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .edit-agent-visibility-toggle i {
+          font-size: 11px;
         }
 
         .edit-agent-team-button:disabled,

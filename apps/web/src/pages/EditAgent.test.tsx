@@ -438,6 +438,7 @@ describe("EditAgent", () => {
     expect(toggle).not.toBeNull();
     expect(toggle.disabled).toBe(false);
     expect(toggle.textContent).toBe("Private");
+    expect(toggle.closest("[title]")?.getAttribute("title")).toContain("Click to make it public");
     toggle.click();
     await vi.waitFor(() => expect(setForkVisibilityMock).toHaveBeenCalledWith("scribe", true));
     await vi.waitFor(() => expect(toggle.textContent).toBe("Public"));
