@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   fetchTeamMembers: vi.fn(),
   fetchTeamAgents: vi.fn(),
   fetchUsers: vi.fn(),
+  fetchPool: vi.fn(),
   useSession: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ vi.mock("../api/teams", () => ({
   setTeamMembers: vi.fn(),
 }));
 vi.mock("../api/admin", () => ({ fetchUsers: mocks.fetchUsers }));
+vi.mock("../api/agents", () => ({ fetchPool: mocks.fetchPool }));
 vi.mock("../auth/client", () => ({ useSession: mocks.useSession }));
 vi.mock("@solidjs/router", () => ({ A: () => document.createElement("a") }));
 
@@ -47,6 +49,7 @@ describe("team organization", () => {
     mocks.fetchTeamMembers.mockResolvedValue({ teamId: team.id, allUsers: false, members: [{ id: "user-1", name: "Member", email: null }] });
     mocks.fetchTeamAgents.mockResolvedValue([]);
     mocks.fetchUsers.mockResolvedValue([]);
+    mocks.fetchPool.mockResolvedValue([]);
     mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "superadmin" } } }));
     container = document.createElement("div");
     document.body.append(container);
@@ -127,11 +130,63 @@ describe("team organization", () => {
       { sourcePoolId: "casey", forkAgentId: "Casey", public: true, assignment: { mode: "list", teamIds: [team.id] } },
       { sourcePoolId: "henry", forkAgentId: "Henry", public: false, assignment: { mode: "list", teamIds: [team.id] } },
     ]);
+    mocks.fetchPool.mockResolvedValue([{ id: "casey", name: "Casey Sales", avatar: "/api/pool/casey/avatar" }]);
     await click("Members");
-    await vi.waitFor(() => expect(container.textContent).toContain("Casey"));
-    const rows = [...container.querySelectorAll(".team-member")];
+    await vi.waitFor(() => expect(container.textContent).toContain("Casey Sales"));
+    expect(container.querySelector('img[src="/api/pool/casey/avatar"]')).not.toBeNull();
+    const rows = [...container.querySelectorAll("li")];
     expect(rows.find((row) => row.textContent?.includes("Casey"))?.textContent).toContain("Public");
     expect(rows.find((row) => row.textContent?.includes("Henry"))?.textContent).toContain("Private");
+  });
+
+  it("adds a searched member, stages All users, and saves from the footer", async () => {
+    const { setTeamMembers } = await import("../api/teams");
+    vi.mocked(setTeamMembers).mockResolvedValue({ teamId: team.id, allUsers: false, members: [] });
+    mocks.fetchUsers.mockResolvedValue([{ id: "user-2", name: "Dana", email: "dana@example.test", role: "user", approved: true }]);
+    await vi.waitFor(() => expect(container.textContent).toContain("Research"));
+    const research = [...container.querySelectorAll("article")].find((card) => card.textContent?.includes("Research"))!;
+    [...research.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Members")!.click();
+    const dialog = () => container.querySelector<HTMLElement>('[role="dialog"]')!;
+    const search = await vi.waitFor(() => {
+      const input = dialog().querySelector<HTMLInputElement>('[role="combobox"]');
+      expect(input?.disabled).toBe(false);
+      return input!;
+    });
+    const save = () => [...dialog().querySelectorAll("button")].find((button) => button.textContent === "Save")!;
+    expect(save().disabled).toBe(true);
+    search.value = "dana@";
+    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => dialog().querySelector<HTMLElement>('[role="option"]')!.click());
+    await click("Add");
+    expect(dialog().textContent).toContain("dana@example.test");
+    const allUsers = dialog().querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(allUsers.closest("label")?.textContent).toContain("All users");
+    allUsers.click();
+    expect(dialog().querySelector('[role="combobox"]')).toBeNull();
+    allUsers.click();
+    expect(dialog().textContent).toContain("Cancel");
+    save().click();
+    await vi.waitFor(() => expect(setTeamMembers).toHaveBeenCalledWith(team.id, { mode: "list", userIds: ["user-1", "user-2"] }));
+    await vi.waitFor(() => expect(container.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+  it("asks before closing with unsaved member changes", async () => {
+    await vi.waitFor(() => expect(container.textContent).toContain("Research"));
+    const research = [...container.querySelectorAll("article")].find((card) => card.textContent?.includes("Research"))!;
+    [...research.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Members")!.click();
+    const dialog = () => container.querySelector<HTMLElement>('[role="dialog"]');
+    const button = (root: HTMLElement, label: string) => [...root.querySelectorAll("button")].find((item) => item.textContent?.trim() === label)!;
+    await vi.waitFor(() => expect(dialog()?.textContent).toContain("Member"));
+    dialog()!.querySelector<HTMLButtonElement>('[aria-label="Remove Member"]')!.click();
+    button(dialog()!, "Cancel").click();
+    const confirm = () => container.querySelector<HTMLElement>('[role="alertdialog"]');
+    expect(confirm()?.textContent).toContain("unsaved changes");
+    button(confirm()!, "Cancel").click();
+    expect(confirm()).toBeNull();
+    expect(dialog()).not.toBeNull();
+    button(dialog()!, "Cancel").click();
+    button(confirm()!, "Discard").click();
+    await vi.waitFor(() => expect(dialog()).toBeNull());
   });
 
   it("hides the No team directory from regular users", async () => {

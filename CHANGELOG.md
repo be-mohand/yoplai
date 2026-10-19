@@ -20,6 +20,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - The agent Dashboards tab and the Dashboards page use one aligned row layout: title, an access pill (Private, Can view, Can edit, people count or Everyone) and fixed icon actions. "Manage access" opens a new Share dialog with "People with access" and "General access". Superadmins see "Owned by" for dashboards that nobody shared with them.
 - The user picker in the dashboard Share dialog and on the Teams page is now a search box. Type part of a name or email, then pick a user with the mouse or the arrow keys and Enter.
+- The team Members dialog uses the same layout as the dashboard Share dialog: a search box to add members, rows with initials and email, an "All users" checkbox in its own "General membership" section, and agent avatars with Public/Private icons. Member changes save from the dialog footer, and closing with unsaved changes asks to discard them first.
 - The Dashboards page shows each agent group with the agent avatar and puts the dashboard rows in a bordered panel. More space separates the sections.
 - Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
 - Threadit masking now hides JSON secret values with escaped quotes whole; tool names that are raw commands (Codex style) are labelled `Running: …` and masked.
@@ -29,7 +30,6 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Superadmins can mark global system extensions and HTTP MCP servers in Admin Extensions, hiding them from users and admins on agent configuration pages while preserving runtime behavior. System flags remove Top stars in multi-user mode and appear in the settings audit log.
 - Public/Private agent visibility separates chat access from team ownership, with team-scoped management, scheduler access checks, and a staff No team view for placing newcomers; sign-up no longer joins teams and legacy All teams agents migrate to Public.
-
 - A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from a star in the chat header or on Agents page cards (with confirmation; main agent listed first and highlighted), plus a settings cog in the chat header whose Back link returns to that chat. A click anywhere on an Agents card opens a chat with that agent. Available in single-user and multi-user installs; blank home visits do not create saved sessions.
 - Private-by-default owned dashboards, selected-user/platform-wide read/write sharing, a Dashboards home, private legacy claiming, and durable published HTML separate from live drafts/history. Viewing/management is independent of agent access; publication still requires agent execution. Create/update publish explicitly; `dashboard_link` only returns readable links.
 - Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
