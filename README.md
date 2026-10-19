@@ -141,6 +141,8 @@ Once foreground startup works, see [Self-hosting](docs/self-hosting.md) for back
 
 ## Basic customization
 
+Choose a **main agent** on your first home visit: home then opens a fresh chat with that agent, ready for your first message. With only one available agent, this happens automatically. Change your choice from the star button in the chat header or the star on an agent's card on the **Agents** page (with a confirmation); the main agent is listed first and highlighted there, and the chat header's cog opens that agent's settings; all other agents remain available there. The preference is personal and survives logout, browser changes, and gateway restarts in both single-user and multi-user installs. Opening a blank chat creates no saved session until you send a message.
+
 Edit `$YOPLAI_HOME/agents/my-agent/agent.yaml` to change model or agent settings. Edit prompt files in the same folder to define identity and instructions.
 
 Enable optional features in root `extensions`:

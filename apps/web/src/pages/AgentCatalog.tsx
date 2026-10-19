@@ -1,5 +1,5 @@
-import { createEffect, createMemo, createResource, For, Show, onCleanup } from "solid-js";
-import { A } from "@solidjs/router";
+import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
+import { A, useNavigate } from "@solidjs/router";
 import { fetchAgents, fetchPool } from "../api";
 import { startNewChat } from "../api/chat";
 import {
@@ -10,6 +10,9 @@ import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
 import { subscribeToRealtime } from "../api/realtime-client";
 import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
+import { fetchMainAgentPreference, saveMainAgentPreference } from "../api/main-agent";
+import { showToast } from "../lib/toast";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -25,6 +28,11 @@ function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
 }
 
 export function AgentCatalog() {
+  const [mainAgent, { mutate: setMainAgent }] = createResource(() => fetchMainAgentPreference().catch(() => null));
+  const [savingMain, setSavingMain] = createSignal<string | null>(null);
+  const navigate = useNavigate();
+  const [pendingMain, setPendingMain] = createSignal<{ chatAgentId: string; name: string } | null>(null);
+  const [mainAgentError, setMainAgentError] = createSignal("");
   const [agents] = createResource(() =>
     capabilities.forkedAgents ? fetchPool() : fetchAgents()
   );
@@ -63,12 +71,47 @@ export function AgentCatalog() {
     if (!actions()) return [];
     return list.filter((agent) => actionByPool().get(agent.id)?.action === "chat");
   });
+  const isMainCard = (agentId: string) => {
+    const chatAgentId = mainAgentIdFor(agentId);
+    return !!chatAgentId && mainAgent()?.accessible === true && mainAgent()?.mainAgentId === chatAgentId;
+  };
+  // Main agent first; Array.sort is stable so the rest keep their order.
+  const sortedAgents = createMemo(() => [...visibleAgents()].sort((a, b) => Number(isMainCard(b.id)) - Number(isMainCard(a.id))));
   const canEditAgent = (entry: PoolCatalogEntry | undefined) =>
     !capabilities.forkedAgents || isSuperadmin() || entry?.action === "chat" || entry?.action === "assign_to_team";
+  const mainAgentIdFor = (agentId: string) => {
+    if (!capabilities.forkedAgents) return agentId;
+    const entry = actionByPool().get(agentId);
+    return entry?.action === "chat" ? entry.chatAgentId : null;
+  };
+  const makeMainAgent = async (agentId: string, name: string) => {
+    if (savingMain()) return;
+    setSavingMain(agentId);
+    setMainAgentError("");
+    try {
+      setMainAgent(await saveMainAgentPreference({ mainAgentId: agentId }));
+      showToast(`${name} is your main agent`, "success");
+      setPendingMain(null);
+    } catch (error) {
+      setMainAgentError(error instanceof Error ? error.message : "Could not save your main agent. Try again.");
+    } finally {
+      setSavingMain(null);
+    }
+  };
 
   return (
     <div class="agent-catalog">
       <h1 class="catalog-heading">Agents</h1>
+      <Show when={pendingMain()}>{(pending) => (
+        <ConfirmDialog
+          title={`Make ${pending().name} your main agent?`}
+          description={`Home opens a fresh chat with ${pending().name}. Every agent stays available.`}
+          confirmLabel="Make main agent"
+          error={mainAgentError()}
+          onConfirm={() => makeMainAgent(pending().chatAgentId, pending().name)}
+          onCancel={() => { setPendingMain(null); setMainAgentError(""); }}
+        />
+      )}</Show>
 
       <Show when={agents.loading}>
         <div class="loading">Loading agents...</div>
@@ -80,9 +123,20 @@ export function AgentCatalog() {
 
       <Show when={agents()}>
         <div class="catalog-grid" data-tour="agent-grid">
-          <For each={visibleAgents()}>
+          <For each={sortedAgents()}>
             {(agent, index) => (
-              <div class="catalog-card" data-tour={index() === 0 ? "agent-card" : undefined}>
+              <div
+                class="catalog-card"
+                classList={{ "is-main": isMainCard(agent.id), "is-chattable": !!mainAgentIdFor(agent.id) }}
+                data-tour={index() === 0 ? "agent-card" : undefined}
+                // Whole-card click starts a chat; the Chat link stays the keyboard path.
+                onClick={(event) => {
+                  const chatAgentId = mainAgentIdFor(agent.id);
+                  if (!chatAgentId || (event.target as Element).closest("a, button")) return;
+                  startNewChat(chatAgentId);
+                  navigate(`/chat/${chatAgentId}`);
+                }}
+              >
                 <Show when={canEditAgent(actionByPool().get(agent.id))}>
                   <A
                     href={`/agents/${agent.id}/edit`}
@@ -106,6 +160,20 @@ export function AgentCatalog() {
                     </svg>
                   </A>
                 </Show>
+                <Show when={mainAgentIdFor(agent.id)}>{(chatAgentId) => (
+                  <button
+                    type="button"
+                    class="catalog-star"
+                    classList={{ "is-main": isMainCard(agent.id) }}
+                    disabled={isMainCard(agent.id)}
+                    aria-pressed={isMainCard(agent.id)}
+                    aria-label={isMainCard(agent.id) ? `${agent.name} is your main agent` : `Make ${agent.name} your main agent`}
+                    title={isMainCard(agent.id) ? "Main agent" : "Make main agent"}
+                    onClick={() => { setMainAgentError(""); setPendingMain({ chatAgentId: chatAgentId(), name: agent.name }); }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill={isMainCard(agent.id) ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" /></svg>
+                  </button>
+                )}</Show>
                 <Show when={agent.avatar}>
                   {(avatar) => (
                     <div class="catalog-avatar">
@@ -217,6 +285,8 @@ export function AgentCatalog() {
           transition: border-color 0.2s ease, background 0.2s ease;
         }
 
+        .catalog-card.is-chattable { cursor: pointer; }
+
         .catalog-card:hover,
         .catalog-card:focus-within {
           border-color: var(--border-default);
@@ -243,9 +313,52 @@ export function AgentCatalog() {
 
         .catalog-card:hover .catalog-edit,
         .catalog-card:focus-within .catalog-edit,
-        .catalog-edit:focus-visible {
+        .catalog-edit:focus-visible,
+        .catalog-card:hover .catalog-star,
+        .catalog-card:focus-within .catalog-star,
+        .catalog-star:focus-visible,
+        .catalog-star.is-main {
           opacity: 1;
         }
+
+        .catalog-card.is-main,
+        .catalog-card.is-main:hover,
+        .catalog-card.is-main:focus-within {
+          border-color: var(--tone-user);
+          box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone-user) 35%, transparent), 0 0 18px color-mix(in srgb, var(--tone-user) 28%, transparent);
+        }
+
+        .catalog-star {
+          position: absolute;
+          top: 8px;
+          left: 8px;
+          z-index: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          padding: 0;
+          border: 0;
+          border-radius: 8px;
+          color: var(--text-secondary);
+          background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
+          cursor: pointer;
+          opacity: 0;
+          transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+        }
+
+        .catalog-star:hover:not(:disabled) {
+          background: var(--border-default);
+          color: var(--text-primary);
+        }
+
+        .catalog-star.is-main {
+          color: var(--tone-user);
+          cursor: default;
+        }
+
+        .catalog-star:focus-visible { outline: 2px solid var(--tone-user); outline-offset: 2px; }
 
         .catalog-edit:hover {
           background: var(--border-default);

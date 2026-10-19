@@ -52,6 +52,25 @@ describe("extension-disabled API responses", () => {
     });
   });
 
+  it("serves core main-agent preferences when multi-user is disabled", async () => {
+    const { app } = await import("./index.js");
+    const initial = await app.request("/api/me/main-agent");
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toEqual({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+    const saved = await app.request("/api/me/main-agent", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "main" }) });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ mainAgentId: "main", accessible: true, pickerDismissedAt: null });
+    expect(await (await app.request("/api/me/main-agent")).json()).toEqual({ mainAgentId: "main", accessible: true, pickerDismissedAt: null });
+    const cleared = await app.request("/api/me/main-agent", { method: "DELETE" });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toEqual({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+    for (const url of ["/api/me", "/api/me/admin", "/api/admin/users"]) {
+      const blocked = await app.request(url);
+      expect(blocked.status).toBe(404);
+      expect(await blocked.json()).toEqual({ error: "extension_disabled", extension: "multiUser" });
+    }
+  });
+
   it("gates routes loaded from an external extension", async () => {
     const { getExtensionRuntime } = await import("../extensions/registry.js");
     getExtensionRuntime().load([

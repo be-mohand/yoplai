@@ -516,6 +516,18 @@ describe("api core session resolution", () => {
     expect((await patch("archivable", { archived: "yes" })).status).toBe(400);
   });
 
+  it("supports main-agent preferences through the single-user API without an auth user", async () => {
+    await fs.rm("/tmp/yoplai-test/main-agent.json", { force: true });
+    getActiveAgents.mockReturnValue([{ id: "alpha", name: "Alpha" }]);
+    const { api } = await import("./api.core.js");
+    expect(await (await api.request("/me/main-agent")).json()).toEqual({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+    const saved = await api.request("/me/main-agent", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "alpha" }) });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ mainAgentId: "alpha", accessible: true, pickerDismissedAt: null });
+    expect(await (await api.request("/me/main-agent")).json()).toEqual({ mainAgentId: "alpha", accessible: true, pickerDismissedAt: null });
+    expect((await api.request("/me/main-agent", { method: "DELETE" })).status).toBe(200);
+  });
+
   it("scopes project CRUD and session membership to the requester, preserving chats on deletion", async () => {
     await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
     const { api } = await import("./api.core.js");

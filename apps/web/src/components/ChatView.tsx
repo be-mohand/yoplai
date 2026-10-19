@@ -15,7 +15,7 @@ import {
   type JSX,
 } from "solid-js";
 
-import { useParams, useNavigate, useSearchParams, A } from "@solidjs/router";
+import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
 import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { toolLabel } from "@yoplai/shared/tool-labels";
@@ -73,6 +73,8 @@ import {
   streamingActivityItems,
 } from "../lib/chat-activity";
 import { showToast } from "../lib/toast";
+import { MainAgentStarButton } from "./MainAgentStarButton";
+import { fetchPoolActions } from "../api/teams";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -939,7 +941,21 @@ export function ChatView() {
   void refreshToolLabels();
   const params = useParams<{ agentId: string; view?: string }>();
   const navigate = useNavigate();
+  const location = useLocation<{ mainAgentHome?: boolean }>();
   const [agent] = createResource(() => params.agentId, fetchAgent);
+  // Settings live on the pool agent in forked mode; the chat agent is a fork.
+  const [settingsPoolActions] = createResource(
+    () => (capabilities.forkedAgents ? params.agentId : null),
+    (chatAgentId) => fetchPoolActions()
+      .then((entries) => ({ chatAgentId, poolId: entries.find((entry) => entry.action === "chat" && entry.chatAgentId === chatAgentId)?.poolId ?? null }))
+      .catch(() => ({ chatAgentId, poolId: null }))
+  );
+  // Ignore a stale result from the previous agent while the new lookup loads.
+  const settingsAgentId = () => {
+    if (!capabilities.forkedAgents) return params.agentId;
+    const resolved = settingsPoolActions();
+    return resolved?.chatAgentId === params.agentId ? resolved.poolId : null;
+  };
 
   const hasSuperadminRole = (role: string | string[] | null | undefined) => {
     return Array.isArray(role)
@@ -1030,6 +1046,7 @@ export function ChatView() {
   >();
   let loadedHistory: FullHistoryMessage[] = [];
   let loadedHistorySession: string | null = null;
+  let focusedHomeSession: string | null = null;
   let loadedHistoryOffset = 0;
 
   // Empty-chat hero state. `heroEmpty` is true when the chat has no content;
@@ -1414,6 +1431,12 @@ export function ChatView() {
       applyActiveTurn(res.isStreaming ?? false, res.activeTurn ?? null);
     }
     setLoading(false);
+    if (location.state?.mainAgentHome && !sessionId && res.messages.length === 0 && focusedHomeSession !== requestedSession) {
+      focusedHomeSession = requestedSession;
+      requestAnimationFrame(() => {
+        if (requestedSession === currentSession() && !document.querySelector('[aria-modal="true"]')) textareaRef?.focus();
+      });
+    }
   };
 
   const loadEarlierHistory = async () => {
@@ -2899,6 +2922,22 @@ export function ChatView() {
     return "Drop files to attach them.";
   });
 
+  const startFreshChat = (agentId: string) => {
+    if (cleanup) cleanup();
+    cleanup = null;
+    directStreamSession = null;
+    resetStreamingState();
+    startNewChat(agentId);
+    setSimpleMessages([]);
+    setFullMessages([]);
+    setPendingQueuedMessages([]);
+    clearPendingFiles();
+    setShowInterrupted(false);
+    setInput("");
+    navigate(`/chat/${encodeURIComponent(agentId)}`);
+    requestAnimationFrame(() => textareaRef?.focus());
+  };
+
   return (
     <div
       ref={chatViewRef}
@@ -3027,20 +3066,7 @@ export function ChatView() {
           class="new-chat-btn"
           aria-label="Start a new chat"
           title="New chat"
-          onClick={() => {
-            if (cleanup) cleanup();
-            cleanup = null;
-            directStreamSession = null;
-            resetStreamingState();
-            startNewChat(params.agentId);
-            setSimpleMessages([]);
-            setFullMessages([]);
-            setPendingQueuedMessages([]);
-            clearPendingFiles();
-            setShowInterrupted(false);
-            setInput("");
-            navigate(`/chat/${encodeURIComponent(params.agentId)}`);
-          }}
+          onClick={() => startFreshChat(params.agentId)}
         >
           <svg
             width="14"
@@ -3056,6 +3082,25 @@ export function ChatView() {
           </svg>
           New chat
         </button>
+        <Show when={settingsAgentId()}>
+          {(poolId) => (
+            <A
+              href={`/agents/${encodeURIComponent(poolId())}/edit`}
+              state={{ backTo: `${location.pathname}${location.search}` }}
+              class="agent-settings-btn"
+              aria-label={`${agent()?.name ?? "Agent"} settings`}
+              title="Agent settings"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </A>
+          )}
+        </Show>
+        <Show when={!projectId() && agent()}>
+          {(current) => <MainAgentStarButton agentId={params.agentId} name={current().name} onPick={startFreshChat} />}
+        </Show>
       </header>
 
       <ArchivedSessionBanner
@@ -4216,6 +4261,34 @@ export function ChatView() {
         .new-chat-btn:hover {
           background: var(--surface-3);
           color: var(--text-primary);
+        }
+
+        .agent-settings-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          width: 32px;
+          height: 32px;
+          border-radius: 12px;
+          border: 1px solid color-mix(in srgb, var(--surface-2) 70%, transparent);
+          background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+          color: var(--text-secondary);
+          transition: background 0.16s ease, color 0.16s ease;
+        }
+
+        .agent-settings-btn:hover {
+          background: var(--surface-3);
+          color: var(--text-primary);
+        }
+
+        .agent-settings-btn:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 2px;
+        }
+
+        @media (max-width: 600px) {
+          .agent-settings-btn { width: 44px; height: 44px; }
         }
 
         .toggle-btn:hover:not(.active) {

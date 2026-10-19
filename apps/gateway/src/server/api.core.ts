@@ -4,6 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
 import { resolveDefaultProjectManager, resolveHomeDir } from "@yoplai/shared";
+import { eligibleMainAgents } from "@yoplai/shared/main-agent";
 import { readMcpServerSources } from "../capabilities/catalog.js";
 import { aggregateMcpCandidates, readMcpIconCache, readSharedMcpServerSources, readTopExtensions, sanitizeTopExtensions, writeTopExtensions } from "../extensions/top-extensions.js";
 import {
@@ -78,6 +79,7 @@ import {
 } from "../history/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
+import { createMainAgentRoutes } from "../main-agent/routes.js";
 import { createChatProjectRoutes } from "../chat-projects/routes.js";
 import { ChatProjectStore, isSafeChatProjectId } from "../chat-projects/store.js";
 import { getOAuthService } from "../oauth/service.js";
@@ -363,11 +365,28 @@ async function getVisibleAgents(c: Context) {
   return getAgentFilter(authContext.user.id, authContext.user.role)(agents);
 }
 
+async function getEligibleMainAgents(c: Context) {
+  const agents = await getVisibleAgents(c);
+  if (!isExtensionLoaded("multiUser") || !loadConfig().forkedAgents) return eligibleMainAgents(agents);
+  const auth = await getRequestAuthContext(c);
+  const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+  const runtime = getMultiUserRuntime();
+  if (!auth || !runtime) return [];
+  const role = auth.user.role;
+  const actions = runtime.catalog.resolvePoolActions(runtime.getPoolAgentIds(), {
+    id: auth.session.userId,
+    isStaff: hasAdminRole(role),
+    isSuperadmin: Array.isArray(role) ? role.includes("superadmin") : role === "superadmin",
+  });
+  return eligibleMainAgents(agents, actions);
+}
+
 function contentDispositionFilename(filename: string): string {
   return filename.replace(/["\\\r\n]/g, "_");
 }
 
 // OAuth connect framework (authorize + callback + status/disconnect).
+api.route("/", createMainAgentRoutes({ dataDir: CONFIG_DIR, getUserId: getRequestUserId, getEligibleAgents: getEligibleMainAgents }));
 api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId }));
 api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
 api.route("/", createOAuthRoutes(
