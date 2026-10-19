@@ -195,8 +195,25 @@ describe("AgentCatalog action states", () => {
     expect(container.querySelector(".catalog-unavailable")).toBeNull();
   });
 
-  it("shows the no-workspace message for an admin on a broken fork", async () => {
+  it("hides agents an admin cannot chat but keeps unforked agents to assign", async () => {
     setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent("private"), agent("orphan"), agent("broken"), agent("fresh"), agent("helper")]);
+    fetchPoolActionsMock.mockResolvedValue([
+      entry("private", "none", null, { reason: "other_team" }),
+      entry("orphan", "none", null, { reason: "unassigned" }),
+      entry("broken", "none", null, { reason: "no_workspace" }),
+      entry("fresh", "assign_to_team"),
+      entry("helper", "chat"),
+    ]);
+    await mountCatalog();
+
+    expect(container.querySelectorAll(".catalog-card")).toHaveLength(2);
+    expect(container.textContent).toContain("This agent has not been assigned to a team.");
+    expect(container.textContent).not.toContain("This agent has no workspace.");
+  });
+
+  it("shows the no-workspace message for a superadmin on a broken fork", async () => {
+    setSession("superadmin");
     fetchPoolMock.mockResolvedValue([agent("scribe")]);
     fetchPoolActionsMock.mockResolvedValue([
       entry("scribe", "none", null, { reason: "no_workspace", teamName: "Red" }),

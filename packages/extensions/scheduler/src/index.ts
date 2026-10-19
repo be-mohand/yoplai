@@ -92,6 +92,13 @@ function requestUserId(c: Context): string | undefined {
   return context.get("multiUserAuthContext")?.session.userId;
 }
 
+async function canAccessAgent(c: Context, agentId: string): Promise<boolean> {
+  if (!getSchedulerContext().getConfig().extensions?.multiUser?.enabled) return true;
+  const { getRequestAuthContext, hasAgentAccess } = await import("@yoplai/extension-multi-user");
+  const auth = getRequestAuthContext(c);
+  return !!auth && hasAgentAccess(auth, agentId);
+}
+
 async function canAccessJob(agentId: string, id: string, userId?: string): Promise<boolean> {
   const job = (await getScheduler().list(agentId)).find(
     (candidate) => candidate.id === id
@@ -113,17 +120,15 @@ async function creatorDisplayName(userId: string): Promise<string | undefined> {
   }
 }
 
-const STAFF_ROLES = ["admin", "superadmin"];
-
-/** Pausing/resuming/deleting a Team job is admin-only; private jobs stay with their owner. Userless/single-user callers are trusted. */
-async function canManageJob(job: { ownerUserId?: string }, userId?: string): Promise<boolean> {
+/** Team jobs require agent management; private jobs stay with their owner. Userless/single-user callers are trusted. */
+async function canManageJob(job: { ownerUserId?: string; agentId: string }, userId?: string): Promise<boolean> {
   if (job.ownerUserId || !userId) return true;
   try {
-    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    const { getMultiUserRuntime, canManageAgent } = await import("@yoplai/extension-multi-user");
     const runtime = getMultiUserRuntime();
     if (!runtime) return true;
     const role = (runtime.db.prepare("SELECT role FROM user WHERE id = ?").get(userId) as { role?: string | null } | undefined)?.role;
-    return !!role && role.split(",").some((r) => STAFF_ROLES.includes(r.trim()));
+    return canManageAgent({ user: { id: userId, role: role?.split(",").map((value) => value.trim()) }, session: { id: "scheduler", userId } }, job.agentId);
   } catch {
     return false;
   }
@@ -547,11 +552,19 @@ const schedulerExtension: Extension = {
     return "Scheduled jobs: " + credentialModeGuidance;
   },
   registerRoutes(app: Hono) {
+    app.use("/schedules/:agentId/*", async (c, next) => {
+      if (!(await canAccessAgent(c, c.req.param("agentId")))) return c.json({ error: "Agent access required" }, 403);
+      await next();
+    });
     app.get("/schedules", async (c) => {
       const scheduler = getScheduler();
       const agentId = c.req.query("agent") ?? undefined;
+      if (agentId && !(await canAccessAgent(c, agentId))) return c.json({ error: "Agent access required" }, 403);
       const userId = requestUserId(c);
-      const jobs = (await scheduler.list(agentId)).filter((job) => !job.ownerUserId || job.ownerUserId === userId);
+      const ownedJobs = (await scheduler.list(agentId)).filter((job) => !job.ownerUserId || job.ownerUserId === userId);
+      const jobs = (await Promise.all(ownedJobs.map(async (job) =>
+        await canAccessAgent(c, job.agentId) ? job : undefined
+      ))).filter((job) => job !== undefined);
       return c.json(await Promise.all(jobs.map(async (job) => {
         if (job.ownerUserId || !job.createdByUserId) return job;
         return { ...job, createdByDisplayName: await creatorDisplayName(job.createdByUserId) };
@@ -568,6 +581,7 @@ const schedulerExtension: Extension = {
       if (!parsed.data.agentId) {
         return c.json({ error: "agentId is required" }, 400);
       }
+      if (!(await canAccessAgent(c, parsed.data.agentId))) return c.json({ error: "Agent access required" }, 403);
       const scheduler = getScheduler();
       const { agentId, ...input } = parsed.data;
       try {
@@ -590,13 +604,6 @@ const schedulerExtension: Extension = {
       }
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
-      if (getSchedulerContext().getConfig().extensions?.multiUser?.enabled) {
-        const { getRequestAuthContext, hasAgentAccess } = await import("@yoplai/extension-multi-user");
-        const auth = getRequestAuthContext(c);
-        if (!auth || !(await hasAgentAccess(auth, agentId))) {
-          return c.json({ error: "Agent access required" }, 403);
-        }
-      }
       if (!(await canAccessJob(agentId, id, requestUserId(c)))) {
         return c.json({ error: "Schedule owner access required" }, 403);
       }
@@ -609,13 +616,6 @@ const schedulerExtension: Extension = {
       }
       const agentId = c.req.param("agentId");
       const id = c.req.param("id");
-      if (getSchedulerContext().getConfig().extensions?.multiUser?.enabled) {
-        const { getRequestAuthContext, hasAgentAccess } = await import("@yoplai/extension-multi-user");
-        const auth = getRequestAuthContext(c);
-        if (!auth || !(await hasAgentAccess(auth, agentId))) {
-          return c.json({ error: "Agent access required" }, 403);
-        }
-      }
       if (!(await canAccessJob(agentId, id, requestUserId(c)))) {
         return c.json({ error: "Schedule owner access required" }, 403);
       }

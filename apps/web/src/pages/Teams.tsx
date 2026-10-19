@@ -11,6 +11,8 @@ import {
 import { A } from "@solidjs/router";
 import {
   setTeamMembers,
+  addTeamMember,
+  fetchTeamlessUsers,
   createTeam,
   deleteTeam,
   fetchDeleteTeamPreview,
@@ -21,11 +23,15 @@ import {
   updateTeam,
   type Team,
   type TeamMemberProfile,
+  type TeamlessUser,
 } from "../api/teams";
 import { fetchUsers, type AdminUser } from "../api/admin";
+import { fetchPool } from "../api/agents";
 import { UserPicker } from "../components/UserPicker";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { teamRemovalWarning } from "../lib/team-removal";
 import { useSession } from "../auth/client";
-import { isSuperadmin as hasSuperadminRole } from "../lib/roles";
+import { hasStaffRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
 
 // Curated palette + Font Awesome icons for the pickers. Both are optional; the
 // backend supplies grey / fa-users defaults when left unset.
@@ -68,7 +74,6 @@ type TeamDraft = {
   description: string;
   color: string | null;
   icon: string | null;
-  private: boolean;
 };
 
 function focusableElements(panel: HTMLElement): HTMLElement[] {
@@ -92,7 +97,6 @@ function TeamModal(props: {
     props.team?.color ?? null
   );
   const [icon, setIcon] = createSignal<string | null>(props.team?.icon ?? null);
-  const [isPrivate, setIsPrivate] = createSignal(props.team?.private ?? false);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   let panelRef: HTMLElement | undefined;
@@ -137,7 +141,6 @@ function TeamModal(props: {
       description: description().trim(),
       color: color(),
       icon: icon(),
-      private: isPrivate(),
     };
     try {
       if (props.team) {
@@ -237,10 +240,6 @@ function TeamModal(props: {
               </For>
             </div>
           </div>
-          <label class="team-field">
-            <span><input type="checkbox" checked={isPrivate()} disabled={saving()} onChange={(event) => setIsPrivate(event.currentTarget.checked)} /> Private team</span>
-            <span class="team-detail__hint">Stops new users from joining automatically. The team stays visible to everyone.</span>
-          </label>
           <Show when={error()}>
             {(message) => <p class="team-modal__error">⚠ {message()}</p>}
           </Show>
@@ -372,6 +371,11 @@ function userLabel(
   return user.name || user.email || userId;
 }
 
+const isEmoji = (value: string) => /^\p{Emoji}/u.test(value) && value.length <= 4;
+
+const initials = (name: string) =>
+  name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]!.toUpperCase()).join("") || "?";
+
 function memberProfileLabel(m: TeamMemberProfile): string {
   return m.name || m.email || m.id;
 }
@@ -390,7 +394,11 @@ function TeamDetail(props: {
     () => props.team.id,
     fetchTeamAgents
   );
+  // Pool metadata gives each team agent its display name and avatar.
+  const [pool] = createResource(fetchPool);
+  const poolAgent = (poolId: string) => (pool.error ? undefined : pool())?.find((agent) => agent.id === poolId);
   const [agentBusy, setAgentBusy] = createSignal(false);
+  const [removeTarget, setRemoveTarget] = createSignal<{ poolId: string; name: string; lastTeam: boolean; public: boolean } | null>(null);
 
   const handleUnassign = async (poolId: string) => {
     if (agentBusy()) return;
@@ -417,24 +425,6 @@ function TeamDetail(props: {
   const [selectedUser, setSelectedUser] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [isPrivate, setIsPrivate] = createSignal(props.team.private);
-  const [privacyBusy, setPrivacyBusy] = createSignal(false);
-
-  const handleTogglePrivate = async () => {
-    if (privacyBusy()) return;
-    setPrivacyBusy(true);
-    setError(null);
-    try {
-      const team = await updateTeam(props.team.id, { private: !isPrivate() });
-      setIsPrivate(team.private);
-      props.onMembersChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update team privacy.");
-    } finally {
-      setPrivacyBusy(false);
-    }
-  };
-
   // Membership edits are staged here and only sent to the server on Save;
   // this keeps a stray "All users" click or Remove from instantly wiping a
   // hand-built roster.
@@ -480,28 +470,22 @@ function TeamDetail(props: {
   });
 
   const displayedMembers = createMemo(() => {
-    if (!draftAll()) {
-      const profiles = memberProfileById();
-      return draftIds()
-        .map((id) => {
-          const profile = profiles.get(id);
-          return {
-            id,
-            label: profile ? memberProfileLabel(profile) : userLabel(id, directory()),
-          };
+    const fromProfile = (m: TeamMemberProfile) => ({ id: m.id, name: memberProfileLabel(m), email: m.name ? m.email : null });
+    const fromDirectory = (id: string) => {
+      const user = directory().get(id);
+      return { id, name: userLabel(id, directory()), email: user?.name ? user.email : null };
+    };
+    const list = !draftAll()
+      ? draftIds().map((id) => {
+          const profile = memberProfileById().get(id);
+          return profile ? fromProfile(profile) : fromDirectory(id);
         })
-        .sort((a, b) => a.label.localeCompare(b.label));
-    }
-    if (members()?.allUsers) {
-      return (members()?.members ?? [])
-        .map((m) => ({ id: m.id, label: memberProfileLabel(m) }))
-        .sort((a, b) => a.label.localeCompare(b.label));
-    }
-    // Staged, unsaved all-users: show the full directory so the admin can see
-    // who they're about to include.
-    return (users() ?? [])
-      .map((u) => ({ id: u.id, label: userLabel(u.id, directory()) }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+      : members()?.allUsers
+        ? (members()?.members ?? []).map(fromProfile)
+        // Staged, unsaved all-users: show the full directory so the admin can
+        // see who they're about to include.
+        : (users() ?? []).map((u) => fromDirectory(u.id));
+    return list.sort((a, b) => a.name.localeCompare(b.name));
   });
 
   const dirty = createMemo(() => {
@@ -515,21 +499,19 @@ function TeamDetail(props: {
     return false;
   });
 
+  // Closing with staged member changes asks first, so a stray click does not drop them.
+  const [confirmClose, setConfirmClose] = createSignal(false);
+  const requestClose = () => {
+    if (busy()) return;
+    if (dirty()) setConfirmClose(true);
+    else props.onClose();
+  };
+
   const handleAdd = () => {
     const userId = selectedUser();
     if (!userId) return;
     setDraftIds([...draftIds(), userId]);
     setSelectedUser("");
-  };
-
-  const handleCancel = () => {
-    const data = members();
-    setDraftAll(data?.allUsers ?? false);
-    setDraftIds(
-      data?.allUsers
-        ? (data.savedMembers ?? []).map((m) => m.id)
-        : (data?.members ?? []).map((m) => m.id)
-    );
   };
 
   const handleSave = async () => {
@@ -543,6 +525,7 @@ function TeamDetail(props: {
       );
       await refetchMembers();
       props.onMembersChanged();
+      props.onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to save members.");
     } finally {
@@ -554,7 +537,7 @@ function TeamDetail(props: {
     <div
       class="team-modal-overlay"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) props.onClose();
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <section
@@ -578,32 +561,20 @@ function TeamDetail(props: {
             </Show>
           </div>
         </header>
-        <div class="team-modal__body">
-          <Show when={props.isAdmin}>
-            <div class="team-field">
-              <button type="button" class="team-button" aria-label="Private team" aria-pressed={isPrivate()} disabled={privacyBusy()} onClick={() => void handleTogglePrivate()}>
-                {privacyBusy() ? "Saving…" : isPrivate() ? "Private" : "Public"}
-              </button>
-              <p class="team-detail__hint">Private stops auto-join for future sign-ups. Current members stay unchanged, and the team stays visible to everyone.</p>
-            </div>
-            <div class="team-detail__all-users-row">
-              <label class="team-detail__all-users"><input type="checkbox" checked={draftAll()} disabled={busy()} onChange={(event) => setDraftAll(event.currentTarget.checked)} /> All users</label>
-              <Show when={dirty()}>
-                <div class="team-detail__save-row">
-                  <button type="button" class="team-detail__cancel" disabled={busy()} onClick={handleCancel}>Cancel</button>
-                  <button type="button" class="team-button team-button--primary" disabled={busy()} onClick={() => void handleSave()}>{busy() ? "Saving…" : "Save"}</button>
-                </div>
-              </Show>
-            </div>
-          </Show>
+        <div class="team-modal__body team-detail__body">
           <Show when={props.isAdmin && !draftAll()}>
             <div class="team-detail__add">
               <UserPicker
                 class="team-field__input"
                 value={selectedUser()}
-                disabled={busy() || addableUsers().length === 0}
+                disabled={busy() || users.loading || addableUsers().length === 0}
+                placeholder={!users.loading && addableUsers().length === 0 ? "All users are already in this team" : undefined}
                 onChange={setSelectedUser}
-                users={addableUsers().map((user) => ({ id: user.id, label: userLabel(user.id, directory()) }))}
+                onEnter={handleAdd}
+                users={addableUsers().map((user) => ({
+                  id: user.id,
+                  label: user.name && user.email ? `${user.name} (${user.email})` : userLabel(user.id, directory()),
+                }))}
               />
               <button
                 type="button"
@@ -616,81 +587,203 @@ function TeamDetail(props: {
             </div>
           </Show>
 
-          <h3 class="team-detail__section-title">
-            Members ({displayedMembers().length})
-          </h3>
-          <Show
-            when={!members.loading}
-            fallback={<p class="team-detail__empty">Loading members…</p>}
-          >
+          <section aria-labelledby="team-detail-members">
+            <h3 id="team-detail-members" class="team-detail__section-title">
+              Members <span class="team-detail__count">{displayedMembers().length}</span>
+            </h3>
             <Show
-              when={displayedMembers().length > 0}
-              fallback={<p class="team-detail__empty">No members yet.</p>}
+              when={!members.loading}
+              fallback={<p class="team-detail__empty">Loading members…</p>}
             >
-              <ul class="team-member-list">
-                <For each={displayedMembers()}>
-                  {(member) => (
-                    <li class="team-member">
-                      <span class="team-member__name">
-                        {member.label}
-                      </span>
-                      <Show when={draftAll()} fallback={<Show when={props.isAdmin}><button type="button" class="team-button team-button--danger-text" disabled={busy()} onClick={() => setDraftIds(draftIds().filter((id) => id !== member.id))}>Remove</button></Show>}>
-                        <span class="team-member__all-users">all users</span>
-                      </Show>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </Show>
-          </Show>
-
-          <h3 class="team-detail__section-title">
-            Agents ({agents()?.length ?? 0})
-          </h3>
-          <Show
-            when={!agents.loading}
-            fallback={<p class="team-detail__empty">Loading agents…</p>}
-          >
-            <Show
-              when={(agents()?.length ?? 0) > 0}
-              fallback={<p class="team-detail__empty">No agents assigned.</p>}
-            >
-              <ul class="team-member-list">
-                <For each={agents()}>
-                  {(fork) => (
-                    <li class="team-member">
-                      <span class="team-member__name">{fork.forkAgentId}</span>
-                      <Show when={props.isAdmin}>
-                        <Show
-                          when={fork.assignment?.mode === "all"}
-                          fallback={<button type="button" class="team-button team-button--danger-text" disabled={agentBusy()} onClick={() => void handleUnassign(fork.sourcePoolId)}>Remove</button>}
-                        >
-                          <A href={`/agents/${encodeURIComponent(fork.sourcePoolId)}/edit`} class="team-button">all teams · manage →</A>
+              <Show
+                when={displayedMembers().length > 0}
+                fallback={<p class="team-detail__empty">No members yet.</p>}
+              >
+                <ul class="team-detail__list">
+                  <For each={displayedMembers()}>
+                    {(member) => (
+                      <li class="team-detail__row">
+                        <span class="team-detail__avatar" aria-hidden="true">{initials(member.name)}</span>
+                        <span class="team-detail__text">
+                          <strong>{member.name}</strong>
+                          <Show when={member.email}><span>{member.email}</span></Show>
+                        </span>
+                        <Show when={props.isAdmin && !draftAll()}>
+                          <button
+                            type="button"
+                            class="team-detail__remove"
+                            aria-label={`Remove ${member.name}`}
+                            title="Remove from team"
+                            disabled={busy()}
+                            onClick={() => setDraftIds(draftIds().filter((id) => id !== member.id))}
+                          >
+                            <i class="fa-solid fa-xmark" aria-hidden="true" />
+                          </button>
                         </Show>
-                      </Show>
-                    </li>
-                  )}
-                </For>
-              </ul>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
             </Show>
-          </Show>
-          <Show when={props.isAdmin}>
-            <p class="team-detail__hint">
-              Assign an agent to this team from the <A href="/agents">Agents page</A>.
-            </p>
-          </Show>
+          </section>
+
+          <section aria-labelledby="team-detail-general">
+            <h3 id="team-detail-general" class="team-detail__section-title">General membership</h3>
+            <label class="team-detail__row team-detail__all-users">
+              <span class="team-detail__check">
+                <input
+                  type="checkbox"
+                  checked={draftAll()}
+                  disabled={busy() || !props.isAdmin}
+                  onChange={(event) => setDraftAll(event.currentTarget.checked)}
+                />
+              </span>
+              <span class="team-detail__text">
+                <strong>All users</strong>
+                <span>Every user on the platform is a member, including new sign-ups.</span>
+              </span>
+            </label>
+          </section>
+
+          <section aria-labelledby="team-detail-agents">
+            <h3 id="team-detail-agents" class="team-detail__section-title">
+              Agents <span class="team-detail__count">{agents()?.length ?? 0}</span>
+            </h3>
+            <Show
+              when={!agents.loading}
+              fallback={<p class="team-detail__empty">Loading agents…</p>}
+            >
+              <Show
+                when={(agents()?.length ?? 0) > 0}
+                fallback={<p class="team-detail__empty">No agents assigned.</p>}
+              >
+                <ul class="team-detail__list">
+                  <For each={agents()}>
+                    {(fork) => {
+                      const agent = () => poolAgent(fork.sourcePoolId);
+                      const name = () => agent()?.name ?? fork.forkAgentId;
+                      return (
+                      <li class="team-detail__row">
+                        <span class="team-detail__avatar" aria-hidden="true">
+                          <Show when={agent()?.avatar} fallback={<i class="fa-solid fa-robot" />}>
+                            {(avatar) => isEmoji(avatar()) ? <span>{avatar()}</span> : <img src={avatar()} alt="" />}
+                          </Show>
+                        </span>
+                        <span class="team-detail__text"><strong>{name()}</strong></span>
+                        <span
+                          class="team-agent-visibility"
+                          title={fork.public ? "Every user can chat with this agent." : "Only members of its teams can chat with this agent."}
+                        >
+                          <i class={fork.public ? "fa-solid fa-globe" : "fa-solid fa-lock"} aria-hidden="true" />
+                          {fork.public ? "Public" : "Private"}
+                        </span>
+                        <Show when={props.isAdmin}>
+                          <button
+                            type="button"
+                            class="team-detail__remove"
+                            aria-label={`Remove ${name()} from team`}
+                            title="Remove from team"
+                            disabled={agentBusy()}
+                            onClick={() => setRemoveTarget({ poolId: fork.sourcePoolId, name: name(), lastTeam: fork.assignment.teamIds.length <= 1, public: fork.public })}
+                          >
+                            <i class="fa-solid fa-xmark" aria-hidden="true" />
+                          </button>
+                        </Show>
+                      </li>
+                      );
+                    }}
+                  </For>
+                </ul>
+              </Show>
+            </Show>
+            <Show when={props.isAdmin}>
+              <p class="team-detail__note">
+                <i class="fa-solid fa-circle-info" aria-hidden="true" />
+                <span>Assign an agent to this team from the <A href="/agents">Agents page</A>. Agent removal applies at once, after you confirm it.</span>
+              </p>
+            </Show>
+          </section>
 
           <Show when={error()}>
-            {(message) => <p class="team-modal__error">⚠ {message()}</p>}
+            {(message) => <p role="alert" class="team-modal__error">{message()}</p>}
           </Show>
         </div>
         <footer class="team-modal__footer">
-          <button type="button" class="team-button" onClick={props.onClose}>
-            Close
+          <button type="button" class="team-button" disabled={busy()} onClick={requestClose}>
+            {dirty() ? "Cancel" : "Close"}
           </button>
+          <Show when={props.isAdmin}>
+            <button type="button" class="team-button team-button--primary" disabled={busy() || !dirty()} onClick={() => void handleSave()}>
+              {busy() ? "Saving…" : "Save"}
+            </button>
+          </Show>
         </footer>
       </section>
+      <Show when={removeTarget()}>
+        {(target) => (
+          <ConfirmDialog
+            title={`Remove ${target().name} from ${props.team.name}?`}
+            description={teamRemovalWarning(target().name, "this team", target().lastTeam, target().public)}
+            confirmLabel="Remove"
+            danger
+            onConfirm={async () => {
+              await handleUnassign(target().poolId);
+              setRemoveTarget(null);
+            }}
+            onCancel={() => setRemoveTarget(null)}
+          />
+        )}
+      </Show>
+      <Show when={confirmClose()}>
+        <ConfirmDialog
+          title="Discard unsaved changes?"
+          description="You have unsaved changes to the members of this team. If you close the dialog, you lose them."
+          confirmLabel="Discard"
+          danger
+          onConfirm={props.onClose}
+          onCancel={() => setConfirmClose(false)}
+        />
+      </Show>
     </div>
+  );
+}
+
+function TeamlessUserRow(props: { user: TeamlessUser; teams: Team[]; onAdded: (userId: string) => void }) {
+  const [teamId, setTeamId] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const label = () => memberProfileLabel(props.user);
+  const add = async () => {
+    if (!teamId() || busy()) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await addTeamMember(teamId(), props.user.id);
+      props.onAdded(props.user.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to add to team.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <li class="team-member">
+      <div>
+        <span class="team-member__name">{label()}</span>
+        <Show when={props.user.email && props.user.email !== label()}><p class="team-detail__hint">{props.user.email}</p></Show>
+        <Show when={props.teams.length === 0}><p class="team-detail__hint">You do not manage any teams.</p></Show>
+        <Show when={error()}>{(message) => <p role="alert" class="team-modal__error">{message()}</p>}</Show>
+        <Show when={!props.user.approved}><span class="team-detail__hint"> Pending</span></Show>
+      </div>
+      <div class="team-detail__add">
+        <select class="team-field__input" aria-label={`Team for ${label()}`} value={teamId()} disabled={busy() || props.teams.length === 0} onChange={(event) => setTeamId(event.currentTarget.value)}>
+          <option value="">Choose a team</option>
+          <For each={props.teams}>{(team) => <option value={team.id}>{team.name}</option>}</For>
+        </select>
+        <button type="button" class="team-button" disabled={busy() || !teamId()} onClick={() => void add()}>{busy() ? "Adding…" : "Add to team"}</button>
+      </div>
+    </li>
   );
 }
 
@@ -707,6 +800,17 @@ export function Teams() {
   const isSuperadmin = createMemo(() =>
     hasSuperadminRole((session().data?.user as { role?: string } | undefined)?.role)
   );
+
+  const isStaff = createMemo(() => hasStaffRole((session().data?.user as { role?: string | string[] } | undefined)?.role));
+  const [teamless, { refetch: refetchTeamless, mutate: mutateTeamless }] = createResource(
+    isStaff,
+    (staff) => staff ? fetchTeamlessUsers() : Promise.resolve([] as TeamlessUser[])
+  );
+  const teamlessUsers = () => teamless.error ? [] : teamless() ?? [];
+  const membershipChanged = () => {
+    void refetch();
+    void refetchTeamless();
+  };
 
   const sortedTeams = createMemo(() =>
     [...(teams() ?? [])].sort((left, right) =>
@@ -760,9 +864,6 @@ export function Teams() {
                   </div>
                   <div class="team-card__body">
                     <h2 class="team-card__name">{team.name}</h2>
-                    <Show when={team.private}>
-                      <span class="team-card__private"><i class="fa-solid fa-lock" aria-hidden="true" /> Private</span>
-                    </Show>
                     <Show when={team.allUsers}>
                       <p class="team-card__description">All users</p>
                     </Show>
@@ -805,6 +906,24 @@ export function Teams() {
         </Show>
       </Show>
 
+      <Show when={isStaff()}>
+        <section class="teams-no-team" aria-labelledby="teams-no-team-heading">
+          <h2 id="teams-no-team-heading">No team ({teamlessUsers().length})</h2>
+          <Show when={!teamless.error} fallback={<p role="alert" class="team-modal__error">{teamless.error instanceof Error ? teamless.error.message : "Failed to load users."}</p>}>
+          <Show when={!teamless.loading} fallback={<p class="teams-empty">Loading users…</p>}>
+            <Show when={teamlessUsers().length > 0} fallback={<p class="teams-empty">Everyone is in a team</p>}>
+              <ul class="team-member-list">
+                <For each={teamlessUsers()}>{(user) => <TeamlessUserRow user={user} teams={sortedTeams().filter((team) => team.canManage)} onAdded={(id) => {
+                  mutateTeamless((users) => users?.filter((user) => user.id !== id));
+                  void refetch();
+                }} />}</For>
+              </ul>
+            </Show>
+          </Show>
+          </Show>
+        </section>
+      </Show>
+
       <Show when={modalTeam() !== undefined}>
         <TeamModal
           team={modalTeam() ?? null}
@@ -820,7 +939,7 @@ export function Teams() {
             onClose={() => setDeleteTarget(null)}
             onDeleted={() => {
               setDeleteTarget(null);
-              void refetch();
+              membershipChanged();
             }}
           />
         )}
@@ -832,7 +951,7 @@ export function Teams() {
             team={team()}
             isAdmin={team().canManage === true}
             onClose={() => setDetailTeam(null)}
-            onMembersChanged={() => void refetch()}
+            onMembersChanged={membershipChanged}
           />
         )}
       </Show>
@@ -840,6 +959,10 @@ export function Teams() {
       <style>{`
         .teams-page {
           padding: 24px;
+        }
+
+        .teams-no-team {
+          margin-top: 24px;
         }
 
         .teams-header {
@@ -902,16 +1025,20 @@ export function Teams() {
           color: var(--text-secondary);
         }
 
-        .team-card__private {
+        .team-agent-visibility {
+          flex: none;
           display: inline-flex;
           align-items: center;
           gap: 5px;
-          margin-bottom: 4px;
-          padding: 3px 7px;
+          padding: 2px 7px;
           border: 1px solid var(--border-default);
           border-radius: 6px;
           font-size: 12px;
           color: var(--text-secondary);
+        }
+
+        .team-agent-visibility i {
+          font-size: 10px;
         }
 
         .team-card__actions {
@@ -1103,37 +1230,6 @@ export function Teams() {
           color: var(--text-secondary);
         }
 
-        .team-detail__all-users-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-        }
-
-        .team-detail__save-row {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .team-detail__cancel {
-          border: none;
-          background: none;
-          padding: 0;
-          font-size: 13px;
-          color: var(--text-tertiary);
-          cursor: pointer;
-        }
-
-        .team-detail__cancel:hover {
-          color: var(--text-primary);
-        }
-
-        .team-detail__cancel:disabled {
-          cursor: not-allowed;
-          opacity: 0.62;
-        }
-
         .team-detail__add {
           display: flex;
           gap: 8px;
@@ -1145,10 +1241,13 @@ export function Teams() {
         }
 
         .team-detail__section-title {
-          margin: 4px 0 0;
+          margin: 0 0 4px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
           font-size: 13px;
           font-weight: 600;
-          color: var(--text-secondary);
+          color: var(--text-primary);
         }
 
         .team-detail__empty {
@@ -1161,10 +1260,6 @@ export function Teams() {
           margin: 6px 0 0;
           font-size: 12px;
           color: var(--text-tertiary);
-        }
-
-        .team-detail__hint a {
-          color: var(--color-link, #4a9eff);
         }
 
         .team-member-list {
@@ -1192,10 +1287,141 @@ export function Teams() {
           color: var(--text-primary);
         }
 
-        .team-member__all-users,
-        .team-detail__all-users {
-          font-size: 12px;
+        .team-detail__body {
+          gap: 20px;
+        }
+
+        .team-detail__count {
+          font-weight: 500;
           color: var(--text-tertiary);
+          font-variant-numeric: tabular-nums;
+        }
+
+        .team-detail__list {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+        }
+
+        .team-detail__row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px 0;
+          border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .team-detail__list .team-detail__row:last-child {
+          border-bottom: 0;
+        }
+
+        .team-detail__avatar,
+        .team-detail__check {
+          flex: none;
+          width: 32px;
+          height: 32px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .team-detail__avatar {
+          border-radius: 50%;
+          font-size: 12px;
+          font-weight: 600;
+          background: var(--bg-raised);
+          color: var(--text-secondary);
+          border: 1px solid var(--border-subtle);
+          overflow: hidden;
+        }
+
+        .team-detail__avatar img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .team-detail__avatar span {
+          font-size: 18px;
+        }
+
+        .team-detail__text {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          font-size: 13px;
+        }
+
+        .team-detail__text strong {
+          font-weight: 600;
+          color: var(--text-primary);
+          overflow-wrap: anywhere;
+        }
+
+        .team-detail__text span {
+          font-size: 12px;
+          color: var(--text-secondary);
+          overflow-wrap: anywhere;
+        }
+
+        .team-detail__all-users {
+          border-bottom: 0;
+          cursor: pointer;
+        }
+
+        .team-detail__all-users:has(input:disabled) {
+          cursor: default;
+        }
+
+        .team-detail__check input {
+          width: 16px;
+          height: 16px;
+          margin: 0;
+          accent-color: var(--accent, #3b82f6);
+          cursor: inherit;
+        }
+
+        .team-detail__remove {
+          flex: none;
+          width: 28px;
+          height: 28px;
+          border: 0;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--text-secondary);
+          cursor: pointer;
+        }
+
+        .team-detail__remove:hover:not(:disabled) {
+          background: var(--bg-raised);
+          color: var(--text-primary);
+        }
+
+        .team-detail__remove:focus-visible {
+          outline: 2px solid var(--accent, #3b82f6);
+          outline-offset: 1px;
+        }
+
+        .team-detail__remove:disabled {
+          cursor: not-allowed;
+          opacity: 0.5;
+        }
+
+        .team-detail__note {
+          display: flex;
+          gap: 8px;
+          margin: 8px 0 0;
+          font-size: 12px;
+          color: var(--text-secondary);
+        }
+
+        .team-detail__note i {
+          margin-top: 2px;
+        }
+
+        .team-detail__note a {
+          color: var(--color-link, #4a9eff);
         }
       `}</style>
     </div>

@@ -109,6 +109,7 @@ type MultiUserApiDeps = {
   getForwardedAuthContext: typeof import("@yoplai/extension-multi-user").getForwardedAuthContext;
   getAgentFilter: typeof import("@yoplai/extension-multi-user").getAgentFilter;
   hasAgentAccess: typeof import("@yoplai/extension-multi-user").hasAgentAccess;
+  canManageAgent: typeof import("@yoplai/extension-multi-user").canManageAgent;
 };
 
 let multiUserApiDepsPromise: Promise<MultiUserApiDeps> | null = null;
@@ -119,6 +120,7 @@ function loadMultiUserApiDeps(): Promise<MultiUserApiDeps> {
       getForwardedAuthContext: module.getForwardedAuthContext,
       getAgentFilter: module.getAgentFilter,
       hasAgentAccess: module.hasAgentAccess,
+      canManageAgent: module.canManageAgent,
     })
   );
   return multiUserApiDepsPromise;
@@ -133,8 +135,8 @@ async function getRequestAuthContext(c: Context) {
 /**
  * True iff the caller may access `agentId`. In single-user mode (or when the
  * multi-user extension is not loaded) there is no access boundary, so allow.
- * In multi-user mode this delegates to the team-access resolver, which applies
- * staff bypass (admin/superadmin) and resolves chat access from team
+ * In multi-user mode this delegates to the access resolver, which applies
+ * caller bypasses and resolves chat access from fork visibility and team
  * membership.
  */
 async function callerHasAgentAccess(
@@ -285,12 +287,12 @@ async function canConfigureAgentExtensions(
 }
 
 /**
- * Whole-team extension setup (shared credentials, team OAuth grants, shared
- * MCP config) is admin-only; other users may only manage their own connection.
+ * Whole-team credentials and OAuth require management of the owning agent.
  */
-async function canConfigureTeamExtensions(c: Context): Promise<boolean> {
+async function canConfigureTeamExtensions(c: Context, agentId: string): Promise<boolean> {
   if (!isExtensionLoaded("multiUser")) return true;
-  return hasAdminRole((await getRequestAuthContext(c))?.user.role);
+  const { canManageAgent } = await loadMultiUserApiDeps();
+  return canManageAgent(await getRequestAuthContext(c), agentId);
 }
 
 /**
@@ -316,7 +318,7 @@ function hasOAuthConnection(
 
 async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agent: AgentConfig, configurable = true) {
   const auth = await getRequestAuthContext(c);
-  const canConfigureTeam = await canConfigureTeamExtensions(c);
+  const canConfigureTeam = await canConfigureTeamExtensions(c, agent.id);
   const catalog = await buildExtensionCatalog(config, agent, { configurable, ...(auth ? { requesterUserId: auth.user.id } : {}) });
   const withOAuth = catalog.map((entry) => entry.oauth
     ? { ...entry, canConfigureTeam, oauthConnected: hasOAuthConnection(agent.id, entry.oauth, auth?.user.id) }
@@ -923,8 +925,8 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   }
 
   const secretFields = targetExtension ? extensionSecretFields(targetExtension) : targetEntry?.requiredSecrets ?? [];
-  // Whole-team setup of credential/OAuth extensions is admin-only.
-  if (!personalScope && (secretFields.length > 0 || targetEntry?.oauth) && !(await canConfigureTeamExtensions(c))) {
+  // Public chat access does not grant control of team credentials or OAuth.
+  if (!personalScope && (secretFields.length > 0 || targetEntry?.oauth) && !(await canConfigureTeamExtensions(c, agentId))) {
     return c.json({ error: "team_requires_admin" }, 403);
   }
   if (Object.keys(patch.config ?? {}).some((field) => secretFields.includes(field))) {
@@ -1037,7 +1039,7 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
 // DELETE /api/agents/:id/connections/extension/:extensionId.
 api.delete("/agents/:id/extensions/:extensionId/credentials", async (c) => {
   const agentId = c.req.param("id");
-  if (!(await canConfigureAgentExtensions(c, agentId)) || !(await canConfigureTeamExtensions(c))) {
+  if (!(await canConfigureAgentExtensions(c, agentId)) || !(await canConfigureTeamExtensions(c, agentId))) {
     return c.json({ error: "forbidden" }, 403);
   }
   const extensionId = c.req.param("extensionId");

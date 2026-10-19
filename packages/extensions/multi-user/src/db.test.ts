@@ -26,6 +26,31 @@ afterEach(() => {
 });
 
 describe("multi-user db", () => {
+  it("upgrades legacy All teams forks once and preserves later Private visibility", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-public-migration-"));
+    tempDirs.push(home);
+    const dbPath = path.join(home, "auth.db");
+    const legacy = new Database(dbPath);
+    legacy.exec(`CREATE TABLE user (id TEXT PRIMARY KEY);
+      INSERT INTO user VALUES ('admin');
+      CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT NOT NULL, createdBy TEXT NOT NULL);
+      INSERT INTO teams VALUES ('team', 'Team', 'admin');
+      CREATE TABLE agent_forks (sourcePoolId TEXT UNIQUE NOT NULL, forkAgentId TEXT UNIQUE NOT NULL, teamId TEXT, allTeams INTEGER NOT NULL DEFAULT 0, createdBy TEXT NOT NULL, createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, assignedBy TEXT, assignedAt TEXT);
+      INSERT INTO agent_forks (sourcePoolId, forkAgentId, teamId, allTeams, createdBy) VALUES ('legacy', 'legacy', 'team', 1, 'admin');`);
+    legacy.close();
+    const openStore = () => {
+      const db = initializeMultiUserDatabase(dbPath);
+      return { db, store: createForkStore({ db, getPoolAgent: () => null, getForksDir: () => home }) };
+    };
+    let current = openStore();
+    expect(current.store.getForkByPool("legacy")).toMatchObject({ public: true, teamId: null, assignment: { mode: "list", teamIds: [] } });
+    expect(current.store.listForksForTeam("team")).toEqual([]);
+    current.store.setPublic("legacy", false);
+    current.db.close();
+    current = openStore();
+    expect(current.store.getForkByPool("legacy")).toMatchObject({ public: false, teamId: null, assignment: { mode: "list", teamIds: [] } });
+    current.db.close();
+  });
   it("initializes sqlite db and agent assignments table", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-db-"));
     tempDirs.push(tempDir);

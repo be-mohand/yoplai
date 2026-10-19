@@ -22,6 +22,7 @@ import {
   fetchPoolActions,
   fetchTeams,
   setForkTeams,
+  setForkVisibility,
   type AgentFork,
   type Team,
 } from "../api/teams";
@@ -38,6 +39,7 @@ import { claimDashboard } from "../api/dashboards";
 import { DashboardListActions, DashboardListRow, ownershipLabel } from "../components/DashboardListRow";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { teamRemovalWarning } from "../lib/team-removal";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -72,21 +74,20 @@ function dashboardSections(dashboards: AgentDashboard[]) {
 // admin-guarded fork APIs the catalog cards used before this control moved here.
 function TeamAssignment(props: {
   poolId: string;
+  agentName: string;
   teams: Team[];
   fork: AgentFork | undefined;
-  /** Admins may only (un)assign their own teams and never "All teams". */
+  /** Admins may only (un)assign their own teams. */
   superadmin: boolean;
   onChanged: () => void;
 }) {
-  const [selected, setSelected] = createSignal<string[]>(props.fork?.assignment?.mode === "list" ? props.fork.assignment.teamIds : []);
-  const [allTeams, setAllTeams] = createSignal(props.fork?.assignment?.mode === "all");
+  const [selected, setSelected] = createSignal<string[]>(props.fork?.assignment.teamIds ?? []);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
   createEffect(() => {
     const assignment = props.fork?.assignment;
-    setAllTeams(assignment?.mode === "all");
-    setSelected(assignment?.mode === "list" ? assignment.teamIds : []);
+    setSelected(assignment?.teamIds ?? []);
   });
 
   const handleAssign = async () => {
@@ -97,7 +98,7 @@ function TeamAssignment(props: {
       // Admins send only their own teams; the server keeps other teams' links.
       const own = new Set(props.teams.map((team) => team.id));
       const teamIds = props.superadmin ? selected() : selected().filter((id) => own.has(id));
-      await setForkTeams(props.poolId, allTeams() ? { mode: "all" } : { mode: "list", teamIds });
+      await setForkTeams(props.poolId, { mode: "list", teamIds });
       props.onChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to assign.");
@@ -109,21 +110,19 @@ function TeamAssignment(props: {
   // Dirty state compares current selection against the last-synced fork
   // assignment, so the Save/Cancel row only appears when there's something
   // to persist or discard.
-  const baseline = () => {
-    const a = props.fork?.assignment;
-    return { all: a?.mode === "all", ids: a?.mode === "list" ? a.teamIds : [] };
-  };
+  const baseline = () => props.fork?.assignment.teamIds ?? [];
   const dirty = createMemo(() => {
-    const b = baseline();
-    if (allTeams() !== b.all) return true;
-    if (allTeams()) return false;
     const ids = selected();
-    return ids.length !== b.ids.length || ids.some((id) => !b.ids.includes(id));
+    const saved = baseline();
+    return ids.length !== saved.length || ids.some((id) => !saved.includes(id));
   });
-  const reset = () => {
-    const b = baseline();
-    setAllTeams(b.all);
-    setSelected(b.ids);
+  const reset = () => setSelected(baseline());
+  // Saving without a team the agent had asks first: its members lose access.
+  const removedTeams = () => props.teams.filter((team) => baseline().includes(team.id) && !selected().includes(team.id));
+  const [confirmRemoval, setConfirmRemoval] = createSignal(false);
+  const save = () => {
+    if (removedTeams().length > 0) setConfirmRemoval(true);
+    else void handleAssign();
   };
 
   return (
@@ -133,28 +132,18 @@ function TeamAssignment(props: {
         <Show when={dirty()}>
           <div class="edit-agent-team-actions">
             <button type="button" class="edit-agent-team-cancel" disabled={busy()} onClick={reset}>Cancel</button>
-            <button type="button" class="edit-agent-team-button" disabled={busy()} onClick={() => void handleAssign()}>Save</button>
+            <button type="button" class="edit-agent-team-button" disabled={busy()} onClick={save}>Save</button>
           </div>
         </Show>
       </div>
       <div class="edit-agent-team-pills">
-        <button
-          type="button"
-          class="edit-agent-team-pill"
-          classList={{ selected: allTeams() }}
-          aria-pressed={allTeams()}
-          disabled={busy() || !props.superadmin}
-          onClick={() => { const next = !allTeams(); setAllTeams(next); if (next) setSelected([]); }}
-        >
-          All teams
-        </button>
         <For each={props.teams}>{(team) => (
           <button
             type="button"
             class="edit-agent-team-pill"
-            classList={{ selected: !allTeams() && selected().includes(team.id) }}
-            aria-pressed={!allTeams() && selected().includes(team.id)}
-            disabled={busy() || allTeams()}
+            classList={{ selected: selected().includes(team.id) }}
+            aria-pressed={selected().includes(team.id)}
+            disabled={busy()}
             onClick={() => setSelected((ids) => ids.includes(team.id) ? ids.filter((id) => id !== team.id) : [...ids, team.id])}
           >
             {team.name}
@@ -164,7 +153,56 @@ function TeamAssignment(props: {
       <Show when={error()}>
         {(message) => <p class="edit-agent-team-error">{message()}</p>}
       </Show>
+      <Show when={confirmRemoval()}>
+        <ConfirmDialog
+          title={`Remove ${props.agentName} from ${removedTeams().map((team) => team.name).join(", ")}?`}
+          description={teamRemovalWarning(props.agentName, removedTeams().map((team) => team.name).join(", "), selected().length === 0, props.fork?.public === true)}
+          confirmLabel="Remove"
+          danger
+          onConfirm={async () => {
+            await handleAssign();
+            setConfirmRemoval(false);
+          }}
+          onCancel={() => setConfirmRemoval(false)}
+        />
+      </Show>
     </section>
+  );
+}
+
+function ForkVisibility(props: { fork: AgentFork; canManage: boolean; onChanged: () => unknown }) {
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const toggle = async () => {
+    if (busy() || !props.canManage) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await setForkVisibility(props.fork.sourcePoolId, !props.fork.public);
+      await props.onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to update visibility.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const tooltip = () => {
+    const access = props.fork.public
+      ? "Public: every user can chat with this agent."
+      : "Private: only members of the assigned teams can chat with this agent.";
+    return props.canManage ? `${access} Click to make it ${props.fork.public ? "private" : "public"}.` : access;
+  };
+  return (
+    <>
+      {/* The title sits on a wrapper because disabled buttons do not always show it. */}
+      <span class="edit-agent-visibility" title={tooltip()}>
+        <button type="button" class="edit-agent-visibility-toggle" aria-label="Agent visibility" aria-pressed={props.fork.public} disabled={busy() || !props.canManage} onClick={() => void toggle()}>
+          <i class={props.fork.public ? "fa-solid fa-globe" : "fa-solid fa-lock"} aria-hidden="true" />
+          {busy() ? "Saving…" : props.fork.public ? "Public" : "Private"}
+        </button>
+      </span>
+      <Show when={error()}>{(message) => <p role="alert" class="edit-agent-team-error edit-agent-visibility-error">{message()}</p>}</Show>
+    </>
   );
 }
 
@@ -215,8 +253,9 @@ export function EditAgent() {
       : Promise.resolve([] as AgentFork[])
   );
   const fork = createMemo(() =>
-    (forks() ?? []).find((entry) => entry.sourcePoolId === params.agentId)
+    (forks() ?? []).find((entry) => entry.sourcePoolId === params.agentId || entry.forkAgentId === params.agentId)
   );
+  const canManageFork = createMemo(() => isSuperadmin() || Boolean(fork()?.assignment.teamIds.some((id) => (teams() ?? []).some((team) => team.id === id && team.canManage))));
   const [poolActions] = createResource(
     () => capabilities.forkedAgents && !isSuperadmin(),
     (enabled) => enabled ? fetchPoolActions() : Promise.resolve([])
@@ -413,7 +452,12 @@ export function EditAgent() {
                 )}
               </Show>
               <div class="edit-agent-identity">
-                <h1 class="edit-agent-name">{current().name}</h1>
+                <div class="edit-agent-name-row">
+                  <h1 class="edit-agent-name">{current().name}</h1>
+                  <Show when={isAdmin() && capabilities.forkedAgents && fork()}>
+                    {(currentFork) => <ForkVisibility fork={currentFork()} canManage={canManageFork()} onChanged={refetchForks} />}
+                  </Show>
+                </div>
                 <Show when={current().role}>
                   <div class="edit-agent-role">{current().role}</div>
                 </Show>
@@ -422,9 +466,10 @@ export function EditAgent() {
           )}
         </Show>
 
-        <Show when={isAdmin() && capabilities.forkedAgents && poolAgent() && (isSuperadmin() || !fork() || dashboardAgentId())}>
+        <Show when={isAdmin() && capabilities.forkedAgents && poolAgent() && (isSuperadmin() || !fork() || fork()!.public || canManageFork())}>
           <TeamAssignment
             poolId={params.agentId}
+            agentName={agent()?.name ?? params.agentId}
             teams={(teams() ?? []).filter((team) => team.canManage)}
             superadmin={isSuperadmin()}
             fork={fork()}
@@ -746,6 +791,17 @@ export function EditAgent() {
           color: var(--text-tertiary);
         }
 
+        .edit-agent-name-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px 12px;
+        }
+
+        .edit-agent-visibility-error {
+          flex-basis: 100%;
+        }
+
         .edit-agent-team {
           margin-top: 28px;
           max-width: 520px;
@@ -841,7 +897,8 @@ export function EditAgent() {
           margin: 0;
         }
 
-        .edit-agent-team-button {
+        .edit-agent-team-button,
+        .edit-agent-visibility-toggle {
           padding: 4px 14px;
           border-radius: 999px;
           border: none;
@@ -852,7 +909,18 @@ export function EditAgent() {
           cursor: pointer;
         }
 
-        .edit-agent-team-button:disabled {
+        .edit-agent-visibility-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .edit-agent-visibility-toggle i {
+          font-size: 11px;
+        }
+
+        .edit-agent-team-button:disabled,
+        .edit-agent-visibility-toggle:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }

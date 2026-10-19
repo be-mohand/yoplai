@@ -43,7 +43,8 @@ function hasStaffRole(role: unknown): boolean {
   return typeof role === "string" && staff.includes(role);
 }
 
-vi.mock("@yoplai/extension-multi-user", () => ({
+vi.mock("@yoplai/extension-multi-user", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@yoplai/extension-multi-user")>(),
   getForwardedAuthContext: vi.fn(() => state.authContext),
   getAgentFilter: vi.fn(() => (agents: unknown[]) => agents),
   hasAgentAccess: vi.fn(

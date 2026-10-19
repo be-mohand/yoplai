@@ -267,7 +267,7 @@ describe("email/password auth", () => {
   }
 
   it.each([undefined, true, false])(
-    "auto-joins only public teams at sign-up with switch %s",
+    "keeps new users teamless with legacy auto-join switch %s",
     async (autoJoinPublicTeams) => {
       const { db, signUp } = await setup({
         emailAndPassword: { enabled: true },
@@ -292,19 +292,15 @@ describe("email/password auth", () => {
       const user = db
         .prepare("SELECT id FROM user WHERE email = ?")
         .get("alice@e2e.test") as { id: string };
-      expect(membership.isMember(publicTeam.id, user.id)).toBe(
-        autoJoinPublicTeams !== false
-      );
+      expect(membership.isMember(publicTeam.id, user.id)).toBe(false);
       expect(membership.isMember(privateTeam.id, user.id)).toBe(false);
-      if (autoJoinPublicTeams !== false)
-        membership.removeMember(publicTeam.id, user.id);
       expect((await signUp("bob@e2e.test")).status).toBe(200);
       expect(membership.isMember(publicTeam.id, user.id)).toBe(false);
       db.close();
     }
   );
 
-  it("joins pending sign-ups to public teams while preserving pending approval", async () => {
+  it("keeps pending sign-ups teamless while preserving pending approval", async () => {
     const { db, signUp, userRow } = await setup({
       emailAndPassword: { enabled: true },
       autoApprove: false,
@@ -321,7 +317,7 @@ describe("email/password auth", () => {
     const user = db
       .prepare("SELECT id FROM user WHERE email = ?")
       .get("pending@e2e.test") as { id: string };
-    expect(createMembershipStore(db).isMember(team.id, user.id)).toBe(true);
+    expect(createMembershipStore(db).isMember(team.id, user.id)).toBe(false);
     expect(userRow("pending@e2e.test")?.approved).toBe(0);
     db.close();
   });

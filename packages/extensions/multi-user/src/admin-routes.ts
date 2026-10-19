@@ -3,6 +3,7 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import {
   getRequestAuthContext,
+  canManageAgent,
   hasSuperadminRole,
   requireAdmin,
   requireSuperadmin,
@@ -31,10 +32,11 @@ const SetTeamMembersBodySchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("list"), userIds: z.array(z.string().min(1)) }),
 ]);
 
-const SetForkTeamsBodySchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("all") }),
-  z.object({ mode: z.literal("list"), teamIds: z.array(z.string().min(1)) }),
-]);
+const SetForkTeamsBodySchema = z.object({
+  mode: z.literal("list"), teamIds: z.array(z.string().min(1)),
+});
+
+const SetForkVisibilityBodySchema = z.object({ public: z.boolean() });
 
 const StartImpersonationBodySchema = z.object({
   targetUserId: z.string().min(1),
@@ -109,6 +111,10 @@ function canManageTeam(c: Context, teamId: string): boolean {
 }
 
 export function registerMultiUserAdminRoutes(app: Hono): void {
+  app.get("/admin/users/no-team", requireAdmin(), (c) => {
+    return c.json({ users: getRuntimeOrThrow().membership.listTeamlessUsers() });
+  });
+
   app.get("/admin/users", requireAdmin(), async (c) => {
     const { auth } = getRuntimeOrThrow();
     const result = await auth.api.listUsers({
@@ -214,13 +220,27 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     return c.json({ forks: forks.listForks() });
   });
 
+  app.patch("/admin/forks/:poolId/visibility", requireAdmin(), async (c) => {
+    const parsed = SetForkVisibilityBodySchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
+    const { forks, notifyAgentListChanged } = getRuntimeOrThrow();
+    const poolId = c.req.param("poolId");
+    const existing = forks.getForkByPool(poolId);
+    if (!existing) return c.json({ error: "Fork not found" }, 404);
+    if (!canManageAgent(getRequestAuthContext(c), existing.forkAgentId)) return c.json({ error: "forbidden" }, 403);
+    const fork = forks.setPublic(poolId, parsed.data.public);
+    recordAdminChange(c, { action: "admin.fork_visibility", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, { public: existing.public }, { public: fork.public });
+    notifyAgentListChanged?.();
+    return c.json({ fork });
+  });
+
   app.put("/admin/forks/:poolId/teams", requireAdmin(), async (c) => {
     const parsed = SetForkTeamsBodySchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
     const authContext = getRequestAuthContext(c);
     if (!authContext) return c.json({ error: "unauthorized" }, 401);
-    const { forks, teams, membership, access } = getRuntimeOrThrow();
-    if (parsed.data.mode === "list" && parsed.data.teamIds.some((teamId) => !teams.getTeam(teamId))) {
+    const { forks, teams, membership, notifyAgentListChanged } = getRuntimeOrThrow();
+    if (parsed.data.teamIds.some((teamId) => !teams.getTeam(teamId))) {
       return c.json({ error: "Team not found" }, 404);
     }
     const poolId = c.req.param("poolId");
@@ -228,17 +248,18 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     let assignment = parsed.data;
     if (!hasSuperadminRole(authContext)) {
       // Admins only (un)assign their own teams; links to other teams are kept.
-      if (assignment.mode === "all" || existing?.assignment.mode === "all") return c.json({ error: "forbidden" }, 403);
-      if (existing && !access.canUserChatAgent(authContext.user.id, existing.forkAgentId)) return c.json({ error: "forbidden" }, 403);
+      // Any admin may add a Public agent to their team; Private agents need a shared team.
+      if (existing && !existing.public && !canManageAgent(authContext, existing.forkAgentId)) return c.json({ error: "forbidden" }, 403);
       const ownTeams = new Set(membership.listTeamsForUser(authContext.user.id));
       if (assignment.teamIds.some((teamId) => !ownTeams.has(teamId))) return c.json({ error: "forbidden" }, 403);
-      const otherTeams = existing?.assignment.mode === "list" ? existing.assignment.teamIds.filter((teamId) => !ownTeams.has(teamId)) : [];
+      const otherTeams = existing?.assignment.teamIds.filter((teamId) => !ownTeams.has(teamId)) ?? [];
       assignment = { mode: "list", teamIds: [...new Set([...otherTeams, ...assignment.teamIds])] };
     }
     try {
       const before = existing ? { assignment: existing.assignment } : {};
       const fork = forks.setTeams(poolId, assignment, authContext.user.id);
       recordAdminChange(c, { action: "admin.fork_teams", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, before, { assignment: fork.assignment });
+      notifyAgentListChanged?.();
       return c.json({ fork });
     } catch (error) {
       if (isPoolAgentNotFoundError(error) || isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
@@ -257,7 +278,6 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       return c.json({ fork });
     } catch (error) {
       if (isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
-      if (error instanceof Error && /All-teams/.test(error.message)) return c.json({ error: error.message }, 409);
       throw error;
     }
   });
@@ -376,6 +396,25 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       // UI can restore it if the admin unchecks All users.
       ...(allUsers ? { savedMembers: membership.listSavedMemberProfilesForTeam(teamId) } : {}),
     });
+  });
+
+  app.post("/admin/teams/:teamId/members/:userId", requireAdmin(), (c) => {
+    const teamId = c.req.param("teamId");
+    const userId = c.req.param("userId");
+    const { teams, membership, db, notifyAgentListChanged } = getRuntimeOrThrow();
+    if (!teams.getTeam(teamId)) return c.json({ error: "Team not found" }, 404);
+    if (!canManageTeam(c, teamId)) return c.json({ error: "forbidden" }, 403);
+    if (!db.prepare("SELECT 1 FROM user WHERE id = ?").get(userId)) return c.json({ error: "User not found" }, 404);
+    const authContext = getRequestAuthContext(c);
+    if (!authContext) return c.json({ error: "unauthorized" }, 401);
+    const before = membership.listUsersForTeam(teamId).sort();
+    try { membership.addMember(teamId, userId, authContext.user.id); } catch (error) {
+      if (isAllUsersTeamError(error)) return c.json({ error: (error as Error).message }, 409);
+      throw error;
+    }
+    recordAdminChange(c, { action: "admin.team_member_add", targetType: "team", targetId: teamId }, { userIds: before }, { userIds: membership.listUsersForTeam(teamId).sort() });
+    notifyAgentListChanged?.();
+    return c.json({ teamId, allUsers: teams.getTeam(teamId)?.allUsers ?? false, members: membership.listMemberProfilesForTeam(teamId) });
   });
 
   app.delete("/admin/teams/:teamId/members/:userId", requireAdmin(), (c) => {

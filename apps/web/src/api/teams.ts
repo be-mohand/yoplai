@@ -22,6 +22,8 @@ export type TeamInput = {
 };
 
 export type TeamMemberProfile = { id: string; name: string | null; email: string | null };
+export type TeamlessUser = TeamMemberProfile & { approved: boolean; role: string };
+
 export type TeamMembersResponse = {
   teamId: string;
   allUsers: boolean;
@@ -40,7 +42,7 @@ export type DeleteTeamResult = {
 export type DeleteTeamPreview = { teamlessUsers: string[] };
 
 // A forked pool agent and its provenance link. `teamId` is null when the fork
-// is teamless/inert (unassigned).
+// has no owning team. Public forks remain chattable without team links.
 export type AgentFork = {
   sourcePoolId: string;
   forkAgentId: string;
@@ -49,7 +51,8 @@ export type AgentFork = {
   createdAt: string;
   assignedBy: string | null;
   assignedAt: string | null;
-  assignment: { mode: "all" } | { mode: "list"; teamIds: string[] };
+  public: boolean;
+  assignment: { mode: "list"; teamIds: string[] };
 };
 
 // The single action a pool catalog card should offer the current user. Mirrors
@@ -158,6 +161,18 @@ export async function setTeamMembers(
   );
 }
 
+export async function fetchTeamlessUsers(): Promise<TeamlessUser[]> {
+  const data = await request<{ users: TeamlessUser[] }>("/api/admin/users/no-team");
+  return data.users;
+}
+
+export async function addTeamMember(teamId: string, userId: string): Promise<TeamMembersResponse> {
+  return request<TeamMembersResponse>(
+    `/api/admin/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`,
+    { method: "POST" }
+  );
+}
+
 // Admin-only: remove a user from a team.
 export async function removeTeamMember(
   teamId: string,
@@ -193,7 +208,7 @@ export async function fetchPoolActions(): Promise<PoolCatalogEntry[]> {
   return data.actions;
 }
 
-/** Replace an agent's explicit team set or enable its standing All teams rule. */
+/** Replace an agent's explicit team set. */
 export async function setForkTeams(
   poolId: string,
   assignment: AgentFork["assignment"]
@@ -201,6 +216,14 @@ export async function setForkTeams(
   const data = await request<{ fork: AgentFork }>(
     `/api/admin/forks/${encodeURIComponent(poolId)}/teams`,
     { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(assignment) }
+  );
+  return data.fork;
+}
+
+export async function setForkVisibility(poolId: string, isPublic: boolean): Promise<AgentFork> {
+  const data = await request<{ fork: AgentFork }>(
+    `/api/admin/forks/${encodeURIComponent(poolId)}/visibility`,
+    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ public: isPublic }) }
   );
   return data.fork;
 }

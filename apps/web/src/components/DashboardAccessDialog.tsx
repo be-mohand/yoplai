@@ -45,7 +45,7 @@ export function DashboardAccessDialog(props: { dashboard: Pick<DashboardRow, "id
       footer={<><Button variant="secondary" disabled={busy()} onClick={props.onClose}>Cancel</Button><Button variant="primary" disabled={busy() || !changed() || recipients.loading || !!recipients.error} onClick={() => void save()}>{busy() ? "Saving…" : "Save"}</Button></>}>
       <Show when={recipients.error}><p role="alert">Unable to load users.</p></Show>
       <div class="share-add">
-        <UserPicker class="share-select" value={selected()} onChange={setSelected} disabled={busy() || recipients.loading}
+        <UserPicker class="share-select" value={selected()} onChange={setSelected} onEnter={add} disabled={busy() || recipients.loading}
           users={users().filter((user) => !userShares().some((share) => share.id === user.id)).map((user) => ({ id: user.id, label: `${user.name} (${user.email})` }))} />
         <Button variant="primary" disabled={busy() || !selected()} onClick={add}>Add</Button>
       </div>

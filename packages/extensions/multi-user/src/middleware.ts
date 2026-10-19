@@ -74,7 +74,7 @@ const STAFF_ROLES = ["admin", "superadmin"];
 
 /**
  * Staff bypass: both `admin` and `superadmin` are privileged staff and
- * bypass approval / agent-assignment checks.
+ * bypass approval checks. Agent management remains scoped to ownership.
  */
 export function hasAdminRole(authContext: RequestAuthContext): boolean {
   const { role } = authContext.user;
@@ -479,6 +479,20 @@ export const requireSuperadmin = (): MiddlewareHandler => {
   };
 };
 
+/** Management follows owning teams and never widens when a fork becomes Public. */
+export function canManageAgent(
+  authContext: RequestAuthContext | null | undefined,
+  agentId: string
+): boolean {
+  const runtime = getMultiUserRuntime();
+  if (!runtime) return true;
+  if (!authContext) return false;
+  if (hasSuperadminRole(authContext)) return true;
+  if (!hasAdminRole(authContext)) return false;
+  const fork = runtime.forks.getForkByAgentId(agentId);
+  return Boolean(fork?.assignment.teamIds.some((teamId) => runtime.membership.isMember(teamId, authContext.user.id)));
+}
+
 export async function hasAgentAccess(
   authContext: RequestAuthContext | null,
   agentId: string
@@ -500,8 +514,7 @@ export async function hasAgentAccess(
     return true;
   }
 
-  // Chat access resolves from team membership, not the legacy allowlist: a
-  // non-staff user may chat a fork iff they share a team with it.
+  // Chat access follows Public visibility or shared teams.
   return runtime.access.canUserChatAgent(authContext.user.id, agentId);
 }
 

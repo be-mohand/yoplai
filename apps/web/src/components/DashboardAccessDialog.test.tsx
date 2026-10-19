@@ -79,9 +79,7 @@ describe("DashboardAccessDialog", () => {
     expect(options().map((option) => option.textContent)).toEqual(["Bob Ross (bob@paint.org)"]);
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await tick();
-    button("Add").click();
-    await tick();
-    expect(document.body.textContent).toContain("bob@paint.org");
+    expect(document.body.querySelector('button[aria-label="Remove Bob Ross"]')).not.toBeNull();
     expect(input.value).toBe("");
     await search("zzz");
     expect(document.body.textContent).toContain("No matching users");

@@ -8,10 +8,19 @@ import {
   ContainerRunnerProtocolEventSchema,
   GatewayConfigSchema,
   HistoryEventSchema,
+  MultiUserConfigSchema,
   ProjectsOrchestratorConfigSchema,
   ScheduleSchema,
   StreamEventSchema,
 } from "./types.js";
+
+describe("multi-user legacy config compatibility", () => {
+  it("loads the retired auto-join key without enabling enrollment", () => {
+    expect(MultiUserConfigSchema.parse({ enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "legacy-config-secret", autoJoinPublicTeams: true })).toEqual({
+      enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "legacy-config-secret",
+    });
+  });
+});
 
 describe("ScheduleSchema", () => {
   it("requires exactly one schedule kind", () => {

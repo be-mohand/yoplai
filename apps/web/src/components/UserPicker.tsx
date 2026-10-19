@@ -2,12 +2,16 @@ import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untr
 
 const MAX_RESULTS = 50;
 
-/** Searchable user combobox: type part of a name or email, then pick with the mouse or arrow keys + Enter. */
+/** Searchable user combobox: type part of a name or email, then pick with the mouse or arrow keys + Enter. Enter also calls `onEnter` after a pick. */
 export function UserPicker(props: {
   users: { id: string; label: string }[];
   value: string;
   onChange: (id: string) => void;
+  /** Called after Enter picks a user, or on Enter when a user is already picked. */
+  onEnter?: () => void;
   disabled?: boolean;
+  /** Overrides the search hint, e.g. to say why the picker is disabled. */
+  placeholder?: string;
   class?: string;
 }) {
   const listId = createUniqueId();
@@ -38,6 +42,10 @@ export function UserPicker(props: {
     } else if (event.key === "Enter" && open() && matches()[active()]) {
       event.preventDefault();
       pick(matches()[active()]!);
+      props.onEnter?.();
+    } else if (event.key === "Enter" && !open() && props.value) {
+      event.preventDefault();
+      props.onEnter?.();
     } else if (event.key === "Escape" && open()) {
       // Close only the list, not the surrounding modal.
       event.stopPropagation();
@@ -49,7 +57,7 @@ export function UserPicker(props: {
       <i class="fa-solid fa-magnifying-glass user-picker__icon" aria-hidden="true" />
       <input type="text" role="combobox" aria-label="Select a user" aria-autocomplete="list" aria-controls={listId}
         aria-expanded={open()} aria-activedescendant={open() && matches()[active()] ? `${listId}-${active()}` : undefined}
-        placeholder="Search by name or email…" autocomplete="off" value={query()} disabled={props.disabled}
+        placeholder={props.placeholder ?? "Search by name or email…"} autocomplete="off" value={query()} disabled={props.disabled}
         onInput={(event) => {
           setQuery(event.currentTarget.value);
           setActive(0);
@@ -74,6 +82,8 @@ export function UserPicker(props: {
         div.user-picker { position: relative; display: flex; align-items: center; padding: 0; }
         .user-picker__icon { position: absolute; left: 10px; font-size: 12px; color: var(--text-tertiary, var(--text-secondary)); pointer-events: none; }
         .user-picker input { flex: 1; min-width: 0; padding: 7px 8px 7px 30px; border: 0; border-radius: inherit; background: transparent; color: inherit; font: inherit; outline: none; }
+        .user-picker:has(input:disabled) { opacity: 0.6; cursor: not-allowed; }
+        .user-picker input:disabled { cursor: not-allowed; }
         .user-picker:focus-within { outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }
         .user-picker__list { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; right: 0; max-height: 240px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
         .user-picker__option { padding: 7px 8px; border-radius: 6px; font-size: 13px; color: var(--text-primary); cursor: pointer; overflow-wrap: anywhere; }

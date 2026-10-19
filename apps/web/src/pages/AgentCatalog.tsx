@@ -20,7 +20,7 @@ function isEmoji(str: string): boolean {
 
 const UNASSIGNED_MESSAGE = "This agent has not been assigned to a team.";
 
-// Copy for an admin's inert card (non-admins never see inaccessible cards).
+// Copy for a card with no Chat: an admin's unforked card or a superadmin's inert card.
 function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
   return entry?.reason === "no_workspace"
     ? "This agent has no workspace."
@@ -63,13 +63,17 @@ export function AgentCatalog() {
     for (const entry of actions() ?? []) map.set(entry.poolId, entry);
     return map;
   });
-  // Non-admins only see agents they can chat; inaccessible ones are hidden
-  // (held back until actions resolve so they don't flash in).
+  // Users and admins only see agents they can chat; admins also see unforked
+  // agents they can assign. Superadmins see every card. Inaccessible cards are
+  // held back until actions resolve so they don't flash in.
   const visibleAgents = createMemo(() => {
     const list = agents() ?? [];
-    if (!capabilities.forkedAgents || isAdmin()) return list;
+    if (!capabilities.forkedAgents || isSuperadmin()) return list;
     if (!actions()) return [];
-    return list.filter((agent) => actionByPool().get(agent.id)?.action === "chat");
+    return list.filter((agent) => {
+      const action = actionByPool().get(agent.id)?.action;
+      return action === "chat" || (isAdmin() && action === "assign_to_team");
+    });
   });
   const isMainCard = (agentId: string) => {
     const chatAgentId = mainAgentIdFor(agentId);

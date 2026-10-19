@@ -74,6 +74,11 @@ vi.mock("@yoplai/extension-multi-user", () => ({
   getForwardedAuthContext: vi.fn(() => multiUserState.authContext),
   getAgentFilter: vi.fn(() => (agents: unknown[]) => agents),
   hasAgentAccess: vi.fn(async () => multiUserState.agentAccess),
+  canManageAgent: vi.fn(() => {
+    const role = multiUserState.authContext?.user.role;
+    const roles = Array.isArray(role) ? role : [role];
+    return multiUserState.agentAccess && roles.some((value) => value === "admin" || value === "superadmin");
+  }),
 }));
 
 const buildExtensionCatalog = vi.fn();
