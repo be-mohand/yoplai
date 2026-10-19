@@ -25,7 +25,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
-- A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from the chat header or Agents page. Available in single-user and multi-user installs; blank home visits do not create saved sessions.
+- A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from a star in the chat header or on Agents page cards (with confirmation; main agent listed first and highlighted), plus a settings cog in the chat header. Available in single-user and multi-user installs; blank home visits do not create saved sessions.
 - Private-by-default owned dashboards, selected-user/platform-wide read/write sharing, a Dashboards home, private legacy claiming, and durable published HTML separate from live drafts/history. Viewing/management is independent of agent access; publication still requires agent execution. Create/update publish explicitly; `dashboard_link` only returns readable links.
 - Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
 - Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.

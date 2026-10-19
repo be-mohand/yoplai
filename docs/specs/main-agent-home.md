@@ -23,7 +23,7 @@ The choice step is a prompt that looks like a character select screen. It is pla
  7. As a user who closed the picker, I want the catalog home behind it to work as before, so that I can still browse and chat.
  8. As a user, I want to see which agent is my main agent in the home chat, so that I know who I talk to.
  9. As a user, I want to change my main agent from the home chat in one click, so that a wrong pick is easy to fix.
-10. As a user, I want a "Make main agent" action on each card of the Agents page, so that I can change my main agent while I browse.
+10. As a user, I want a star on each card of the Agents page, so that I can change my main agent while I browse.
 11. As a user who changes the main agent, I want a short confirmation, so that I know the change took effect.
 12. As a user with access to one agent only, I want no picker, so that I land in the chat at once.
 13. As a user whose main agent was removed or unshared, I want the picker to return, so that I pick a new one instead of landing on an error.
@@ -70,16 +70,16 @@ The choice step is a prompt that looks like a character select screen. It is pla
 * Overlay over the catalog home. One agent in focus, large, with name, avatar, and description. Other agents to the sides, smaller. Arrows and keyboard left/right move the focus. Click on a side card brings it to focus. A primary button confirms the focused agent.
 * Initial focus: the agent with the most recent session for this user, from the existing sessions list. Fallback: the first agent in catalog order.
 * Copy states: this is your preference, you keep access to every agent, you can change it later. Keep the copy short.
-* Close controls: an `x` in the corner and a quiet "I will decide later" link. Click outside and `Esc` do nothing. When no main agent is set, or the saved main agent is not accessible, close records `pickerDismissedAt` and shows the catalog home. The picker returns on the next home visit. When the picker was reopened from the home chat badge, close records nothing and returns to the chat.
+* Close controls: an `x` in the corner and a quiet "I will decide later" link. Click outside and `Esc` do nothing. When no main agent is set, or the saved main agent is not accessible, close records `pickerDismissedAt` and shows the catalog home. The picker returns on the next home visit. When the picker was reopened from the home chat star, close records nothing and returns to the chat.
 * After a first pick: save, then go to the home chat with a short confirmation that names the agent. On a save failure, stay in the picker and show the error.
-* Reopen from the home chat badge: the same component opens with the current main agent in focus. A new pick saves, then starts a fresh home chat with the new agent.
+* Reopen from the home chat star: the same component opens with the current main agent in focus. A new pick saves, then starts a fresh home chat with the new agent.
 * The picker must feel playful and branded. A plain list or a plain modal is a failure. The worker agents use the design skills under `~/dotagents/skills/design`: `frontend-design`, `impeccable`, and `interface-design`. They read those skills before they build the picker and the home chat changes. The sketch on Threadit #36 shows the intended feel, not the layout.
 * Works on narrow screens: the side cards stack or scroll, the focus card stays visible, the confirm button stays reachable.
 
 ### Change entry points (web)
 
-* Home chat header: a small "Main agent: <name>" badge. Click reopens the picker. A new pick replaces the home chat with a fresh chat with the new agent.
-* Agents page: each eligible card gets a "Make main agent" action. The action saves the clicked agent at once, without the picker. The current main agent card shows a "Main agent" mark instead. The page shows a short confirmation and stays on the Agents page. The change takes effect on the next home visit. On a save failure, show the error and keep the previous mark.
+* Home chat header: after the New chat button, a settings cog (links to the agent's edit page) and a star button. The star is filled when the chat agent is the main agent; click opens the picker. A new pick replaces the home chat with a fresh chat with the new agent.
+* Agents page: the main agent card is listed first with an accent glow. Each eligible card has a star at its top-left: filled on the main card, outline elsewhere. Clicking an outline star opens a confirmation ("Make <name> your main agent?"); confirming saves, shows a short toast, and stays on the Agents page. Cancel saves nothing. On a save failure, the error shows in the dialog, which stays open. The change takes effect on the next home visit.
 
 ### Sidebar
 
@@ -125,10 +125,10 @@ Run the exact changed gateway and web test files serially with `YOPLAI_HOME` uns
 | Scenario | Browser action and expected result | Evidence |
 | --- | --- | --- |
 | First visit | Sign in with two eligible agents and no preference; visit `/`. Character-select overlay shows name, existing avatar, description and preference copy over the working catalog. Arrow keys/buttons and side cards move focus. Escape and outside clicks keep it open. | `01-picker.png`, `01-picker.dom.txt` |
-| Pick | Confirm the focused agent. The URL becomes `/chat/<chatAgentId>`, an empty composer is available, a confirmation names the agent, and the header shows `Main agent: <name>`. GET `/api/me/main-agent` reports the saved runnable ID and `accessible: true`. | `02-picked.png`, `02-picked.dom.txt`, redacted API transcript |
+| Pick | Confirm the focused agent. The URL becomes `/chat/<chatAgentId>`, an empty composer is available, a confirmation names the agent, and the header star is filled for that agent. GET `/api/me/main-agent` reports the saved runnable ID and `accessible: true`. | `02-picked.png`, `02-picked.dom.txt`, redacted API transcript |
 | Return | Click the logo from chat, then revisit `/` in a fresh browser context after signing in. Both visits skip the picker and start fresh chats; the earlier session is not resumed. Verify the preference again after restarting only the isolated dev stack. | `03-return.png`, `03-return.dom.txt`, persistence transcript |
-| Agents change | Open the sidebar's Agents link (`/agents`). Choose Make main agent on another eligible card. The mark and confirmation change, the URL stays `/agents`, and the next home visit opens that agent. On a failed save the old mark remains. | `04-agents.png`, `04-agents.dom.txt` |
-| Home chat change | Click the Main agent badge. Current agent starts in focus; closing writes no dismissal. Reopen, select another agent, and confirm; a fresh chat opens with its name. A failed save keeps the picker and error visible. | `05-change.png`, `05-change.dom.txt` |
+| Agents change | Open the sidebar's Agents link (`/agents`). Click the star on another eligible card and confirm. The main card moves first, the star fills, a toast appears, the URL stays `/agents`, and the next home visit opens that agent. On a failed save the dialog shows the error and the old main card remains. | `04-agents.png`, `04-agents.dom.txt` |
+| Home chat change | Click the header star. Current agent starts in focus; closing writes no dismissal. Reopen, select another agent, and confirm; a fresh chat opens with its name. A failed save keeps the picker and error visible. | `05-change.png`, `05-change.dom.txt` |
 | Dismissal | Clear the preference through DELETE, visit `/`, dismiss with x or I will decide later. The catalog works and GET has a server-generated dismissal timestamp; the next `/` visit shows the picker again. | `06-dismissed.png`, `06-dismissed.dom.txt` |
 | One agent | Sign in as a user with exactly one eligible agent. Visiting `/` saves that agent and opens chat without a picker. Repeat in an isolated single-user home. A forced save failure shows the catalog, error and Retry, and retry succeeds after recovery. | `07-single.png`, `07-single.dom.txt` |
 | No blank sessions | Before sending any message, record session files and GET `/api/agents/sessions`. Visit home, pick, return, and switch main agents. No history/runtime `.jsonl` or logical `sessions.json` file is created, and the session list stays empty. Then send a first message to prove normal session persistence begins only then. | `08-sessions.json`, filesystem transcript |

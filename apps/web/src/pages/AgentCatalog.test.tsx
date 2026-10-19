@@ -12,7 +12,11 @@ const {
   fetchPoolActionsMock,
   subscribeToRealtimeMock,
   useSessionMock,
+  fetchMainAgentPreferenceMock,
+  saveMainAgentPreferenceMock,
 } = vi.hoisted(() => ({
+  fetchMainAgentPreferenceMock: vi.fn(),
+  saveMainAgentPreferenceMock: vi.fn(),
   fetchAgentsMock: vi.fn(),
   fetchPoolMock: vi.fn(),
   fetchPoolActionsMock: vi.fn(),
@@ -23,6 +27,11 @@ const {
 vi.mock("../api", () => ({
   fetchAgents: fetchAgentsMock,
   fetchPool: fetchPoolMock,
+}));
+
+vi.mock("../api/main-agent", () => ({
+  fetchMainAgentPreference: fetchMainAgentPreferenceMock,
+  saveMainAgentPreference: saveMainAgentPreferenceMock,
 }));
 
 vi.mock("../api/teams", () => ({
@@ -102,6 +111,9 @@ beforeEach(() => {
   subscribeToRealtimeMock.mockReturnValue(() => undefined);
   setCapabilitiesForTests({ forkedAgents: true });
   useSessionMock.mockReset();
+  fetchMainAgentPreferenceMock.mockReset();
+  fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+  saveMainAgentPreferenceMock.mockReset();
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -261,5 +273,58 @@ describe("AgentCatalog action states", () => {
     await mountCatalog();
     dispose();
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+});
+
+describe("AgentCatalog main agent", () => {
+  const byLabel = (label: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  const buttonText = (text: string) => Array.from(container.ownerDocument.querySelectorAll("button")).find((b) => b.textContent === text)!;
+
+  async function mountWithMain(mainAgentId: string | null) {
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("alpha"), agent("beta"), agent("gamma")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("alpha", "chat"), entry("beta", "chat"), entry("gamma", "chat")]);
+    fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId, accessible: !!mainAgentId, pickerDismissedAt: null });
+    await mountCatalog();
+  }
+
+  it("lists the main agent first and marks its star pressed", async () => {
+    await mountWithMain("gamma");
+    const names = Array.from(container.querySelectorAll("button[aria-label$='your main agent']"))
+      .map((star) => star.getAttribute("aria-label")!.replace(/^Make | is your main agent$| your main agent$/g, ""));
+    expect(names).toEqual(["gamma", "alpha", "beta"]);
+    expect(byLabel("gamma is your main agent")?.getAttribute("aria-pressed")).toBe("true");
+    expect(byLabel("Make alpha your main agent")?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("saves a new main agent only after confirming", async () => {
+    await mountWithMain("gamma");
+    saveMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: "beta", accessible: true, pickerDismissedAt: null });
+    byLabel("Make beta your main agent")!.click();
+    expect(document.body.textContent).toContain("Make beta your main agent?");
+    expect(saveMainAgentPreferenceMock).not.toHaveBeenCalled();
+    buttonText("Make main agent").click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(saveMainAgentPreferenceMock).toHaveBeenCalledWith({ mainAgentId: "beta" });
+    expect(document.body.textContent).not.toContain("Make beta your main agent?");
+    expect(byLabel("beta is your main agent")).not.toBeNull();
+  });
+
+  it("does not save when the confirmation is cancelled", async () => {
+    await mountWithMain("gamma");
+    byLabel("Make alpha your main agent")!.click();
+    buttonText("Cancel").click();
+    expect(saveMainAgentPreferenceMock).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("Make alpha your main agent?");
+  });
+
+  it("keeps the confirmation open and shows the error when saving fails", async () => {
+    await mountWithMain("gamma");
+    saveMainAgentPreferenceMock.mockRejectedValue(new Error("Could not save your main agent. Try again."));
+    byLabel("Make alpha your main agent")!.click();
+    buttonText("Make main agent").click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.body.textContent).toContain("Make alpha your main agent?");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Could not save your main agent");
   });
 });

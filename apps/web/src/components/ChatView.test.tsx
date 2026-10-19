@@ -29,8 +29,14 @@ const {
   subscribeToRealtimeMock,
   uploadFilesMock,
   fetchChatProjectMock,
+  fetchMainAgentPreferenceMock,
+  fetchMainAgentOptionsMock,
+  fetchPoolActionsMock,
   routeState,
 } = vi.hoisted(() => ({
+  fetchMainAgentPreferenceMock: vi.fn(),
+  fetchMainAgentOptionsMock: vi.fn(),
+  fetchPoolActionsMock: vi.fn(),
   fetchAgentMock: vi.fn(),
   fetchAgentSuggestionsMock: vi.fn(),
   fetchSimpleHistoryMock: vi.fn(),
@@ -86,6 +92,14 @@ vi.mock("../api", () => ({
   subscribeToRealtime: subscribeToRealtimeMock,
   uploadFiles: uploadFilesMock,
 }));
+
+vi.mock("../api/main-agent", () => ({
+  fetchMainAgentPreference: fetchMainAgentPreferenceMock,
+  fetchMainAgentOptions: fetchMainAgentOptionsMock,
+  saveMainAgentPreference: vi.fn(),
+}));
+
+vi.mock("../api/teams", () => ({ fetchPoolActions: fetchPoolActionsMock }));
 
 vi.mock("../api/chat-projects", () => ({
   fetchChatProject: fetchChatProjectMock,
@@ -176,6 +190,9 @@ describe("ChatView abort handling", () => {
     routeState.view = undefined;
     routeState.session = undefined;
     routeState.project = undefined;
+    fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+    fetchMainAgentOptionsMock.mockResolvedValue({ preference: null, agents: [{ id: "agent-1", name: "Agent" }, { id: "agent-2", name: "Other" }] });
+    fetchPoolActionsMock.mockResolvedValue([]);
     setRouteVersion(0);
   });
 
@@ -183,6 +200,45 @@ describe("ChatView abort handling", () => {
     document.body.innerHTML = "";
     resetCapabilitiesForTests();
     vi.clearAllMocks();
+  });
+
+  it("links the settings cog to the agent edit page", async () => {
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector('a[aria-label="Agent settings"]')).not.toBeNull());
+    expect(container.querySelector('a[aria-label="Agent settings"]')?.getAttribute("href")).toBe("/agents/agent-1/edit");
+    dispose();
+  });
+
+  it("links the settings cog to the pool agent in forked mode and hides it without a match", async () => {
+    setCapabilitiesForTests({ multiUser: false, forkedAgents: true });
+    fetchPoolActionsMock.mockResolvedValue([{ poolId: "pool-1", action: "chat", chatAgentId: "agent-1", forked: true, reason: null, teamName: null }]);
+    const first = renderView();
+    await waitFor(() => expect(first.container.querySelector('a[aria-label="Agent settings"]')?.getAttribute("href")).toBe("/agents/pool-1/edit"));
+    first.dispose();
+    fetchPoolActionsMock.mockResolvedValue([]);
+    const second = renderView();
+    await tick();
+    await tick();
+    expect(second.container.querySelector('a[aria-label="Agent settings"]')).toBeNull();
+    second.dispose();
+  });
+
+  it("shows an unpressed star for a non-main agent and opens the picker", async () => {
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector('button[aria-label="Choose main agent"]')).not.toBeNull());
+    const star = container.querySelector<HTMLButtonElement>('button[aria-label="Choose main agent"]')!;
+    expect(star.getAttribute("aria-pressed")).toBe("false");
+    star.click();
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    dispose();
+  });
+
+  it("shows a pressed star when the chat agent is the main agent", async () => {
+    fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: "agent-1", accessible: true, pickerDismissedAt: null });
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(container.querySelector('button[aria-label="Agent is your main agent. Change main agent"]')).not.toBeNull());
+    expect(container.querySelector('button[aria-label="Agent is your main agent. Change main agent"]')?.getAttribute("aria-pressed")).toBe("true");
+    dispose();
   });
 
   it.each(["full", "simple"] as const)("nests history tool calls once, collapsed in %s mode", async (mode) => {
