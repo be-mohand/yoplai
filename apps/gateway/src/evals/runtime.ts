@@ -19,6 +19,7 @@
  * accepts an empty extension list (this is what `yoplai send` does).
  */
 
+import path from "node:path";
 import { loadConfig, getAgent, setLoadedConfig } from "../config/index.js";
 import {
   resolveStartupConfig,
@@ -32,6 +33,8 @@ import {
 import { runAgent } from "../agents/index.js";
 import type { StreamEvent } from "@yoplai/shared";
 import { TrajectoryBuilder, type AtifTrajectory } from "./trajectory.js";
+import { getDashboardRegistry } from "../canvas/store.js";
+import { listDashboardSlugs, openDashboardFile } from "../canvas/dashboard-files.js";
 
 export type EvalToolCall = {
   id: string;
@@ -156,6 +159,7 @@ class EventCollector {
  * verifier failures are the right place to differentiate.
  */
 export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
+  const actorUserId = `eval:${path.resolve(opts.configPath ?? process.env.YOPLAI_HOME ?? process.cwd())}`;
   // 1. Load + resolve config (same path as `yoplai send`)
   const rawConfig = loadConfig(opts.configPath);
   const resolvedStartupConfig = await resolveStartupConfig(rawConfig);
@@ -168,17 +172,31 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
   );
   setLoadedConfig(config);
 
+  const canvasContext = bindExtensionContext(createExtensionContext(config), "canvas");
   const canvas = extensions.find((extension) => extension.id === "canvas");
   if (canvas) {
-    await canvas.start(
-      bindExtensionContext(createExtensionContext(config), canvas.id)
-    );
+    await canvas.start(canvasContext);
   }
 
   // 2. Resolve agent (infra error if not found)
   const agent = getAgent(opts.agentId);
   if (!agent) {
     throw new Error(`Agent not found: ${opts.agentId}`);
+  }
+
+  // Eval fixtures are explicit owned registrations; gateway legacy discovery
+  // does not run in this isolated runtime.
+  if (canvas) {
+    const registry = getDashboardRegistry(path.join(canvasContext.getDataDir(), "canvas", "registry.json"));
+    for (const slug of await listDashboardSlugs(agent)) {
+      if (await registry.find(agent.id, slug)) continue;
+      const file = await openDashboardFile(agent, slug);
+      try {
+        await registry.createOwned(agent.id, slug, actorUserId, await file.readFile("utf8"));
+      } finally {
+        await file.close();
+      }
+    }
   }
 
   if (opts.modelOverride && !agent.model.provider) {
@@ -202,6 +220,9 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
   try {
     const runResult = await runAgent({
       agentId: agent.id,
+      actorKind: "eval",
+      actorUserId,
+      userId: undefined,
       message: opts.instruction,
       // Each eval invocation is a fresh single-turn session.
       sessionId: `eval-${Date.now()}`,

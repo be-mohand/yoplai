@@ -6,6 +6,9 @@ import type { Agent } from "../api/types";
 import type { AgentDashboard } from "../api/agents";
 import type { AgentFork, Team } from "../api/teams";
 
+const byText = <T extends HTMLElement>(selector: string, text: string) =>
+  Array.from(document.body.querySelectorAll<T>(selector)).find((element) => element.textContent?.trim() === text)!;
+
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 const {
@@ -261,9 +264,8 @@ describe("EditAgent", () => {
     expect(fetchAgentDashboardsMock).toHaveBeenCalledWith("scribe-fork", expect.any(Object));
     expect(container.textContent).toContain("Writing Report");
     expect(container.textContent).not.toContain("report.html");
-    expect(container.textContent).toContain("Updated");
-    expect(container.querySelector<HTMLAnchorElement>(".edit-agent-dashboard a")?.getAttribute("href")).toBe("https://yoplai.test/d/stable-link");
-    container.querySelector<HTMLButtonElement>(".edit-agent-dashboard button")!.click();
+        expect(byText<HTMLAnchorElement>("a", "Open").getAttribute("href")).toBe("https://yoplai.test/d/stable-link");
+    byText<HTMLButtonElement>("button", "Copy link").click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(writeText).toHaveBeenCalledWith("https://yoplai.test/d/stable-link");
   });
@@ -290,7 +292,7 @@ describe("EditAgent", () => {
     const panel = container.querySelector(".edit-agent-dashboards")!;
     const top = panel.querySelectorAll(":scope > ul > li");
     expect(Array.from(top, (li) => li.querySelector("strong")?.textContent)).toEqual(["clients", "csm"]);
-    expect(panel.querySelectorAll(".edit-agent-dashboard-actions a")).toHaveLength(2);
+    expect(Array.from(panel.querySelectorAll("a")).filter((a) => a.textContent === "Open")).toHaveLength(2);
     const sub = Array.from(panel.querySelectorAll(".edit-agent-subpages li"));
     expect(sub.map((li) => li.querySelector("strong")?.textContent)).toEqual(["client", "qbr", "orphan"]);
     const parents = (li: Element) => Array.from(li.querySelectorAll("a"), (a) => [a.textContent, a.getAttribute("href")]);
@@ -314,7 +316,7 @@ describe("EditAgent", () => {
     const panel = container.querySelector(".edit-agent-dashboards")!;
     expect(panel.textContent).toContain("Detail pages");
     expect(panel.textContent).toContain("Client");
-    expect(panel.querySelector("a, button")).toBeNull();
+    expect(Array.from(panel.querySelectorAll("a")).filter((a) => a.textContent === "Open")).toHaveLength(0);
     expect(panel.textContent).not.toContain("No dashboards yet.");
   });
 
@@ -367,15 +369,15 @@ describe("EditAgent", () => {
     expect(container.textContent).toContain("Loading dashboards…");
 
     resolveDashboards([
-      { title: "Clients", slug: "clients.html", params: [], linksTo: ["client.html"], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/clients" },
-      { title: "Client", slug: "client.html", params: ["id"], linksTo: [], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/client" },
+      { id: "clients", agentId: "scribe", agentName: "Scribe", publishedAt: null, legacy: false, isOwner: false, shared: true, ownerName: "Alice", mode: "read", title: "Clients", slug: "clients.html", params: [], linksTo: ["client.html"], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/clients" },
+      { id: "client", agentId: "scribe", agentName: "Scribe", publishedAt: null, legacy: false, isOwner: false, shared: true, ownerName: "Alice", mode: "read", title: "Client", slug: "client.html", params: ["id"], linksTo: [], updatedAt: "2026-09-25T10:00:00.000Z", link: "/d/client" },
     ]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.textContent).not.toContain("Loading dashboards…");
     const child = container.querySelector(".edit-agent-subpages li")!;
     expect(child.textContent).toContain("Client");
     expect(child.querySelector("a")?.getAttribute("href")).toBe("/d/clients");
-    expect(container.querySelector(".edit-agent-dashboard-actions a")?.getAttribute("href")).toBe("/d/clients");
+    expect(byText<HTMLAnchorElement>("a", "Open").getAttribute("href")).toBe("/d/clients");
   });
 
   it("shows a dashboard load error", async () => {

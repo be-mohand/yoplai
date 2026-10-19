@@ -116,7 +116,7 @@ describe("REST per-agent access gating (multi-user)", () => {
             if (ctx) c.set("multiUserAuthContext", ctx);
             await next();
           },
-        validateWebSocketRequest: async () => null,
+        validateWebSocketRequest: async (request: Request) => decodeAuth(request.headers.get(AUTH_HEADER)),
       };
     });
 
@@ -131,9 +131,9 @@ describe("REST per-agent access gating (multi-user)", () => {
     const { default: Database } = await import("better-sqlite3");
     const db = new Database(":memory:");
     db.pragma("foreign_keys = ON");
-    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY)");
+    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, approved INTEGER DEFAULT 1, banned INTEGER DEFAULT 0, role TEXT DEFAULT 'user')");
     for (const u of ["alice", "mallory", "red-admin", "boss", "root"]) {
-      db.prepare("INSERT INTO user (id) VALUES (?)").run(u);
+      db.prepare("INSERT INTO user (id, name, email, role) VALUES (?, ?, ?, ?)").run(u, u, `${u}@example.test`, u === "root" ? "superadmin" : u.includes("admin") || u === "boss" ? "admin" : "user");
     }
     dbMod.ensureTeamsTable(db);
     dbMod.ensureTeamMembersTable(db);
@@ -325,6 +325,22 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(
       await get("/api/agents/allowed-agent/history", authHeader("alice"))
     ).toBe(200);
+  });
+
+  it("uses current account roles rather than stale superadmin sessions for legacy dashboard access", async () => {
+    const { getDashboardRegistry } = await import("../canvas/store.js");
+    const { getAgent } = await import("../config/index.js");
+    const { dashboardDirectory } = await import("../canvas/dashboard-files.js");
+    const blocked = getAgent("blocked-agent")!;
+    await fs.mkdir(dashboardDirectory(blocked), { recursive: true });
+    await fs.writeFile(path.join(dashboardDirectory(blocked), "legacy.html"), "LEGACY-ROLE-GUARD");
+    const registry = getDashboardRegistry(path.join(tmpDir, ".yoplai", "canvas", "registry.json"));
+    const legacy = await registry.link("blocked-agent", "legacy.html");
+    const response = await fetch(`http://127.0.0.1:${port}/d/${legacy.id}`, { headers: authHeader("mallory", "superadmin") });
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain("LEGACY-ROLE-GUARD");
+    const claim = await fetch(`http://127.0.0.1:${port}/api/dashboards/${legacy.id}/claim`, { method: "POST", headers: authHeader("mallory", "superadmin") });
+    expect(claim.status).toBe(404);
   });
 
   it("gates dashboards and returns an empty list for an accessible agent", async () => {

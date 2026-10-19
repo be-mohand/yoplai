@@ -456,6 +456,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <i class="fa-solid fa-comments nav-icon" aria-hidden="true" />
               <span class="nav-full">Agents</span>
             </A>
+            <A href="/dashboards" class="nav-link" classList={{ active: stripBase(location.pathname).startsWith("/dashboards") }} title="Dashboards">
+              <i class="fa-solid fa-chart-line nav-icon" aria-hidden="true" />
+              <span class="nav-full">Dashboards</span>
+            </A>
             <Show when={capabilities.multiUser && capabilities.forkedAgents}>
               <A
                 href="/teams"

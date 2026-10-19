@@ -23,6 +23,7 @@ import {
   type TeamMemberProfile,
 } from "../api/teams";
 import { fetchUsers, type AdminUser } from "../api/admin";
+import { UserPicker } from "../components/UserPicker";
 import { useSession } from "../auth/client";
 import { isSuperadmin as hasSuperadminRole } from "../lib/roles";
 
@@ -597,25 +598,13 @@ function TeamDetail(props: {
           </Show>
           <Show when={props.isAdmin && !draftAll()}>
             <div class="team-detail__add">
-              <select
+              <UserPicker
                 class="team-field__input"
                 value={selectedUser()}
                 disabled={busy() || addableUsers().length === 0}
-                onChange={(event) => setSelectedUser(event.currentTarget.value)}
-              >
-                <option value="">
-                  {addableUsers().length === 0
-                    ? "No users to add"
-                    : "Select a user…"}
-                </option>
-                <For each={addableUsers()}>
-                  {(user) => (
-                    <option value={user.id}>
-                      {userLabel(user.id, directory())}
-                    </option>
-                  )}
-                </For>
-              </select>
+                onChange={setSelectedUser}
+                users={addableUsers().map((user) => ({ id: user.id, label: userLabel(user.id, directory()) }))}
+              />
               <button
                 type="button"
                 class="team-button team-button--primary"

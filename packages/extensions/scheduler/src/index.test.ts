@@ -9,7 +9,8 @@ import { clearSchedulerContext, getScheduler, setSchedulerContext, stopScheduler
 
 const creatorLookup = vi.hoisted(() => vi.fn());
 const agentAccess = vi.hoisted(() => vi.fn(async () => true));
-vi.mock("@yoplai/extension-multi-user", () => ({
+vi.mock("@yoplai/extension-multi-user", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@yoplai/extension-multi-user")>(),
   getMultiUserRuntime: () => ({ db: { prepare: () => ({ get: creatorLookup }) } }),
   getRequestAuthContext: (c: Context) => c.get("multiUserAuthContext"),
   hasAgentAccess: agentAccess,
@@ -73,6 +74,7 @@ describe("scheduler routes", () => {
   });
 
   it("gates history and authorizes past runs against the job's current Mine/Team mode", async () => {
+    creatorLookup.mockReturnValue({ id: "alice", name: "Alice", email: "alice@example.test", approved: 1, role: "user", banned: 0 });
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-runs-routes-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
     const config: GatewayConfig = {

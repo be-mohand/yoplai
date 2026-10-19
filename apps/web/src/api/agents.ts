@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import type { Suggestion, WsActiveTurnSnapshot } from "@yoplai/shared/types";
 import { API_BASE, apiFetch as fetch } from "./core";
+import type { DashboardRow } from "./dashboards";
 
 export async function fetchAgents(): Promise<Agent[]> {
   const res = await fetch(`${API_BASE}/agents`);
@@ -38,14 +39,7 @@ export async function fetchAgent(agentId: string): Promise<Agent> {
   return res.json();
 }
 
-export type AgentDashboard = {
-  title: string;
-  slug: string;
-  updatedAt: string;
-  link: string;
-  params: string[];
-  linksTo: string[];
-};
+export type AgentDashboard = DashboardRow;
 
 export async function fetchAgentDashboards(agentId: string): Promise<AgentDashboard[]> {
   const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/dashboards`);

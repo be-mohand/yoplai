@@ -8,7 +8,7 @@ export async function getExtensionSystemPromptContributions(
   config: GatewayConfig = loadConfig(),
   runtime: ExtensionRuntime = getExtensionRuntime(),
   userId?: string,
-  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId">
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind">
 ): Promise<string[]> {
   return runtime.getPromptContributions(agent, config, userId, identity);
 }

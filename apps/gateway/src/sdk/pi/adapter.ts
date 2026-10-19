@@ -150,6 +150,8 @@ async function createPiExtensionTools(
           env,
           sessionId: params.sessionId,
           userId: params.userId,
+          actorUserId: params.actorUserId,
+          actorKind: params.actorKind,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
           signal: signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal,

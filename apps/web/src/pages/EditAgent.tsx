@@ -34,6 +34,10 @@ import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensi
 import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName, fetchMcpServers, type McpScope, type McpServer } from "../api/mcp-servers";
 import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
 import { onOAuthReturn, reserveOAuthPopup } from "../lib/oauth-popup";
+import { claimDashboard } from "../api/dashboards";
+import { DashboardListActions, DashboardListRow, ownershipLabel } from "../components/DashboardListRow";
+import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -221,34 +225,15 @@ export function EditAgent() {
       : params.agentId
   );
   const [tab, setTab] = createSignal<"extensions" | "connections" | "dashboards" | "schedules">("extensions");
-  const [dashboards] = createResource(
+  const [dashboards, { refetch: refetchDashboards }] = createResource(
     () => tab() === "dashboards" ? dashboardAgentId() : null,
     fetchAgentDashboards
   );
-  const [copiedSlug, setCopiedSlug] = createSignal<string | null>(null);
+  const [accessDashboard, setAccessDashboard] = createSignal<AgentDashboard>();
+  const [claimTarget, setClaimTarget] = createSignal<AgentDashboard>();
+  const [claimError, setClaimError] = createSignal<string>();
   const sections = createMemo(() => dashboardSections(dashboards.loading || dashboards.error ? [] : dashboards() ?? []));
-  const copyDashboardLink = async (slug: string, link: string) => {
-    try {
-      await navigator.clipboard.writeText(new URL(link, window.location.origin).href);
-      setCopiedSlug(slug);
-    } catch {
-      setCopiedSlug(null);
-    }
-  };
-  const DashboardRow = (props: { dashboard: AgentDashboard }) => (
-    <div class="edit-agent-dashboard-row">
-      <div>
-        <strong>{props.dashboard.title}</strong>
-        <span>Updated {new Date(props.dashboard.updatedAt).toLocaleString()}</span>
-      </div>
-      <div class="edit-agent-dashboard-actions">
-        <a href={props.dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
-        <button type="button" onClick={() => void copyDashboardLink(props.dashboard.slug, props.dashboard.link)}>
-          {copiedSlug() === props.dashboard.slug ? "Copied" : "Copy link"}
-        </button>
-      </div>
-    </div>
-  );
+  const openClaim = (dashboard: AgentDashboard) => { setClaimError(undefined); setClaimTarget(dashboard); };
 
   const [extensions, { refetch: refetchExtensions }] =
     createResource(() => dashboardAgentId() ?? (isAdmin() ? params.agentId : null), fetchAgentExtensions);
@@ -471,7 +456,7 @@ export function EditAgent() {
             </Show>
             <Show when={!dashboards.error}>
               <ul class="edit-agent-dashboard-list">
-                <For each={sections().top}>{(dashboard) => <li class="edit-agent-dashboard"><DashboardRow dashboard={dashboard} /></li>}</For>
+                <For each={sections().top}>{(dashboard) => <li class="edit-agent-dashboard"><DashboardListRow dashboard={dashboard} onManage={() => setAccessDashboard(dashboard)} onClaim={() => openClaim(dashboard)} /></li>}</For>
               </ul>
               <Show when={sections().sub.length}>
                 <div class="edit-agent-subpages">
@@ -488,6 +473,10 @@ export function EditAgent() {
                             <>{i() > 0 ? ", " : ""}<a href={parent.link} target="_blank" rel="noopener noreferrer">{parent.title}</a></>
                           )}</For>
                         </Show>
+                        <span>{" · "}{ownershipLabel(item.dashboard)}</span>
+                        <span class="edit-agent-subpage-actions">
+                          <DashboardListActions dashboard={item.dashboard} onManage={() => setAccessDashboard(item.dashboard)} onClaim={() => openClaim(item.dashboard)} />
+                        </span>
                       </li>
                     )}</For>
                   </ul>
@@ -495,6 +484,11 @@ export function EditAgent() {
               </Show>
             </Show>
           </section>
+          <Show when={accessDashboard()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} onClose={() => setAccessDashboard(undefined)} onSaved={async () => { await refetchDashboards(); }} />}</Show>
+          <Show when={claimTarget()}>{(dashboard) => <ConfirmDialog title="Claim dashboard" description="This publishes the current HTML and makes the dashboard private to you. Previous viewers lose access until you share it." confirmLabel="Claim dashboard" error={claimError()} onCancel={() => setClaimTarget(undefined)} onConfirm={async () => {
+            try { await claimDashboard(dashboard().id); await refetchDashboards(); setClaimTarget(undefined); }
+            catch (cause) { setClaimError(cause instanceof Error ? cause.message : "Unable to claim dashboard."); }
+          }} />}</Show>
         </Show>
 
         <Show when={agent() && tab() === "extensions"}>
@@ -667,33 +661,13 @@ export function EditAgent() {
           padding: 0;
         }
 
-        .edit-agent-dashboard-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 16px;
-          padding: 14px 0;
-          border-bottom: 1px solid var(--border-default);
-        }
-
         .edit-agent-subpages { margin-top: 20px; font-size: 13px; color: var(--text-secondary); }
         .edit-agent-subpages p { margin: 4px 0 8px; font-size: 12px; }
         .edit-agent-subpages ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+        .edit-agent-subpages li { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+        .edit-agent-subpage-actions { margin-left: auto; }
         .edit-agent-subpages strong { color: var(--text-primary); }
         .edit-agent-subpages span { font-size: 12px; }
-
-        .edit-agent-dashboard strong, .edit-agent-dashboard span { display: block; }
-        .edit-agent-dashboard strong { color: var(--text-primary); }
-        .edit-agent-dashboard span { margin-top: 4px; font-size: 12px; }
-        .edit-agent-dashboard-actions { display: flex; gap: 12px; white-space: nowrap; }
-        .edit-agent-dashboard-actions a, .edit-agent-dashboard-actions button {
-          border: 0;
-          background: none;
-          color: var(--accent, #3b82f6);
-          cursor: pointer;
-          font: inherit;
-          text-decoration: none;
-        }
 
         .edit-agent-back {
           display: inline-block;

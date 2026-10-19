@@ -1,51 +1,77 @@
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
-import { dashboardBaseUrl, listDashboardSlugs, normalizeDashboardSlug, openDashboardFile } from "./dashboard-files.js";
+import { dashboardBaseUrl, normalizeDashboardSlug, openDashboardFile } from "./dashboard-files.js";
 import { attributes } from "./sql.js";
-import { DashboardRegistry } from "./store.js";
+import { DashboardRegistry, type DashboardRegistration } from "./store.js";
+import { dashboardAccessPolicy, type DashboardActor } from "./policy.js";
+
+export type DashboardListContext = {
+  actor: DashboardActor;
+  ownerName?(id: string): Promise<string>;
+};
+
+export async function dashboardHtml(
+  agent: AgentConfig,
+  registry: DashboardRegistry,
+  entry: DashboardRegistration,
+  actor: DashboardActor
+): Promise<{ html: string; updatedAt: string | null }> {
+  if (entry.ownerUserId && !dashboardAccessPolicy.canWrite(entry, actor)) {
+    return { html: await registry.readPublished(entry.id), updatedAt: entry.publishedAt ?? null };
+  }
+  const file = await openDashboardFile(agent, normalizeDashboardSlug(entry.slug));
+  try {
+    return { html: await file.readFile("utf8"), updatedAt: (await file.stat()).mtime.toISOString() };
+  } finally { await file.close(); }
+}
 
 export async function listAgentDashboards(
   agent: AgentConfig,
   registry: DashboardRegistry,
-  config: GatewayConfig
+  config: GatewayConfig,
+  context: DashboardListContext = { actor: { eligible: true, hasAgentAccess: true } }
 ) {
-  const names = await listDashboardSlugs(agent);
-
+  const entries = await registry.list(agent.id);
+  const visible = dashboardAccessPolicy.filterVisible(entries, context.actor);
+  const visibleSlugs = new Set(visible.map((entry) => entry.slug));
   const dashboards = [];
-  for (const slug of names) {
+  for (const entry of visible) {
+    let html = "";
+    let updatedAt: string | null = entry.publishedAt ?? null;
     try {
-      const file = await openDashboardFile(agent, slug);
-      try {
-        const [stat, html] = await Promise.all([file.stat(), file.readFile("utf8")]);
-        const title = html.match(/<title(?:\s[^>]*)?>([\s\S]*?)<\/title\s*>/i)?.[1]
-          ?.replace(/<[^>]*>/g, "")
-          .trim() || slug;
-        let params: string[] = [];
-        for (const meta of html.matchAll(/<meta\b([^>]*)>/gi)) {
-          const metaAttributes = attributes(meta[1]);
-          if (metaAttributes.get("name") !== "yoplai:params") continue;
-          params = (metaAttributes.get("content") || "")
-            .split(",")
-            .map((param) => param.trim())
-            .filter(Boolean);
-          break;
-        }
-        const linksTo = new Set<string>();
-        for (const match of html.matchAll(/YOPLAI\.link\(\s*["']([^"']+)["']/g)) {
-          try {
-            const target = normalizeDashboardSlug(match[1]);
-            if (target !== slug) linksTo.add(target);
-          } catch {
-            // Invalid links cannot identify a child dashboard.
-          }
-        }
-        const entry = await registry.link(agent.id, slug);
-        dashboards.push({ title, slug, params, linksTo: [...linksTo], updatedAt: stat.mtime.toISOString(), link: `${dashboardBaseUrl(config)}/d/${entry.id}` });
-      } finally {
-        await file.close();
-      }
+      ({ html, updatedAt } = await dashboardHtml(agent, registry, entry, context.actor));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" ||
+        (entry.ownerUserId && !dashboardAccessPolicy.canWrite(entry, context.actor))) throw error;
+      // A missing draft does not remove its durable registration.
     }
+    const title = html.match(/<title(?:\s[^>]*)?>([\s\S]*?)<\/title\s*>/i)?.[1]
+      ?.replace(/<[^>]*>/g, "").trim() || entry.slug;
+    let params: string[] = [];
+    for (const meta of html.matchAll(/<meta\b([^>]*)>/gi)) {
+      const values = attributes(meta[1]);
+      if (values.get("name") !== "yoplai:params") continue;
+      params = (values.get("content") || "").split(",").map((value) => value.trim()).filter(Boolean);
+      break;
+    }
+    const linksTo = new Set<string>();
+    for (const match of html.matchAll(/YOPLAI\.link\(\s*["']([^"']+)["']/g)) {
+      try {
+        const target = normalizeDashboardSlug(match[1]);
+        if (target !== entry.slug && visibleSlugs.has(target)) linksTo.add(target);
+      } catch { /* Invalid targets do not identify registered dashboards. */ }
+    }
+    const isOwner = !!entry.ownerUserId && entry.ownerUserId === context.actor.userId;
+    dashboards.push({
+      id: entry.id, agentId: agent.id, agentName: agent.name,
+      title, slug: entry.slug, params, linksTo: [...linksTo], updatedAt,
+      link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
+      publishedAt: entry.publishedAt ?? null, legacy: !entry.ownerUserId, isOwner,
+      shared: !!entry.ownerUserId && !isOwner && !!context.actor.userId &&
+        !!entry.shares?.some((share) => share.kind === "all" || share.id === context.actor.userId),
+      ownerName: entry.ownerUserId ? await context.ownerName?.(entry.ownerUserId) ?? entry.ownerUserId : null,
+      mode: dashboardAccessPolicy.canWrite(entry, context.actor) ? "write" as const : "read" as const,
+      ...(isOwner ? { shares: entry.shares ?? [] } : {}),
+    });
   }
-  return dashboards;
+  return dashboards.sort((a, b) => a.slug.localeCompare(b.slug));
 }

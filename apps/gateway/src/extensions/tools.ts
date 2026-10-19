@@ -9,7 +9,7 @@ export async function getExtensionAgentTools(
   config: GatewayConfig = loadConfig(),
   runtime: ExtensionRuntime = getExtensionRuntime(),
   userId?: string,
-  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId">
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind">
 ): Promise<LoadedExtensionAgentTool[]> {
   const tools = await runtime.getTools(agent, config, userId, identity);
   return tools.map((tool) => ({
@@ -40,7 +40,7 @@ export async function executeExtensionAgentTool(
   userId?: string,
   emitProgress?: ExtensionAgentToolContext["emitProgress"],
   signal?: AbortSignal,
-  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles">
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind" | "conversationFiles">
 ): Promise<{ found: boolean; result?: unknown }> {
   return runtime.executeTool(
     agent,

@@ -65,6 +65,15 @@ describe("SchedulerService run ledger", () => {
     await expect(fs.stat(path.join(alpha.workspace, "cron/runs"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("uses the common local dashboard owner for single-user jobs without selecting personal credentials", async () => {
+    const { runAgent } = await setup(false);
+    const job = await add();
+    expect((await scheduler.runNow("alpha", job.id)).status).toBe("ok");
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      actorKind: "local", actorUserId: "local", userId: undefined,
+    }));
+  });
+
   it("persists running state before invoking the agent and finishes the same record after monitoring turns off", async () => {
     let finish!: (value: { payloads: { text: string }[]; meta: { durationMs: number; sessionId: string } }) => void;
     const runAgent = vi.fn(() => new Promise<{ payloads: { text: string }[]; meta: { durationMs: number; sessionId: string } }>((resolve) => { finish = resolve; }));
@@ -359,6 +368,22 @@ describe("SchedulerService.runNow", () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("refuses explicit owner jobs without a saved owner before running even a script-only payload", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-missing-owner-"));
+    const alpha = agent("alpha", path.join(tmpDir, "alpha"));
+    await fs.mkdir(path.join(alpha.workspace, "cron"), { recursive: true });
+    await fs.writeFile(path.join(alpha.workspace, "mark.sh"), "#!/bin/bash\nprintf unauthorized > unauthorized.txt\n");
+    await fs.writeFile(path.join(alpha.workspace, "cron/jobs.json"), JSON.stringify({ version: 1, jobs: [{ id: "missing-owner", name: "Missing owner", credentialMode: "owner", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { script: "mark.sh", noAgent: true } }] }));
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 }, agentFab: false };
+    const runAgent = vi.fn();
+    setSchedulerContext(context(config, runAgent));
+    const scheduler = new SchedulerService();
+    expect(await scheduler.runNow("alpha", "missing-owner")).toMatchObject({ status: "error", error: expect.stringContaining("owner is missing") });
+    await expect(fs.stat(path.join(alpha.workspace, "unauthorized.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(runAgent).not.toHaveBeenCalled();
+    await scheduler.stop();
+  });
+
   it("separates team ownership from the immutable creator across mode changes and reload", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-sharing-"));
     const alpha = agent("alpha", path.join(tmpDir, "alpha"));
@@ -401,6 +426,11 @@ describe("SchedulerService.runNow", () => {
     await scheduler.update("alpha", "legacy", { name: "Renamed" }, "alice");
     expect(legacy?.ownerUserId).toBeUndefined();
     expect(legacy?.createdByUserId).toBeUndefined();
+    await scheduler.update("alpha", "legacy", { credentialMode: "owner" }, "alice");
+    await scheduler.refreshFromDisk();
+    const claimed = (await scheduler.list("alpha")).find((job) => job.id === "legacy");
+    expect(claimed).toMatchObject({ credentialMode: "owner", ownerUserId: "alice" });
+    expect(claimed?.createdByUserId).toBeUndefined();
     await scheduler.stop();
   });
 

@@ -22,6 +22,7 @@ import { accessLogger } from "./access-log.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
 import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
 import { getDashboardRegistry } from "../canvas/store.js";
+import { resolveDashboardHttpActor, listDashboardRecipients, dashboardOwnerName, authenticateDashboardRequest } from "../canvas/http-auth.js";
 
 type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
@@ -111,14 +112,15 @@ app.route(
   createDashboardRoutes({
     getConfig: loadConfig,
     getAgent,
+    resolveActor: resolveDashboardHttpActor,
+    listRecipients: listDashboardRecipients,
+    getOwnerName: dashboardOwnerName,
     registry: getDashboardRegistry(
       path.join(CONFIG_DIR, "canvas", "registry.json")
     ),
     async authenticate(request) {
       if (!currentExtensionRuntime().isEnabled("multiUser")) return {};
-      const { validateWebSocketRequest } =
-        await loadMultiUserMiddlewareModule();
-      return validateWebSocketRequest(request);
+      return authenticateDashboardRequest(request);
     },
     async hasAgentAccess(auth, agentId) {
       if (!currentExtensionRuntime().isEnabled("multiUser")) return true;

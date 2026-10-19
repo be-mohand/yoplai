@@ -11,18 +11,21 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Agents no longer name other users' private dashboards when they list dashboards. Every run now gets a short rule: `dashboard_link` is the only source for the user's dashboards, and the agent does not mention or hint at others. Also, `dashboard_link` with no slug returns `{ dashboards, note }`.
 - A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").
 - With codemode on, a script call with wrong arguments now adds the tool's signature to the codemode result. The model then uses the correct parameter names on the next try. A call to a deferred tool that is not loaded now tells the model to use `tool_search`.
 - Langfuse traces now show the system prompt that the model got, including the `deferred-tools` section and later changes from loaded tools.
 
 ### Changed
 
+- The agent Dashboards tab and the Dashboards page use one aligned row layout: title, an access pill (Private, Can view, Can edit, people count or Everyone) and fixed icon actions. "Manage access" opens a new Share dialog with "People with access" and "General access". Superadmins see "Owned by" for dashboards that nobody shared with them.
 - Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
 - Threadit masking now hides JSON secret values with escaped quotes whole; tool names that are raw commands (Codex style) are labelled `Running: …` and masked.
 - Project create/rename/delete and chat rename/delete now use in-app dialogs instead of native prompts; project page redesigned with chats list and context cards (Instructions, Files, References, Notes) in a right rail. Instructions and Notes render as markdown and are edited in a modal (Edit button; Esc cancels, ⌘/Ctrl+Enter saves). In project chats, the header shows the project as a pill next to the agent name and the back button returns to the project.
 
 ### Added
 
+- Private-by-default owned dashboards, selected-user/platform-wide read/write sharing, a Dashboards home, private legacy claiming, and durable published HTML separate from live drafts/history. Viewing/management is independent of agent access; publication still requires agent execution. Create/update publish explicitly; `dashboard_link` only returns readable links.
 - Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
 - Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.
 - Per-agent Pi codemode for host and container runs, with nested tool calls grouped in chat and parented tracing spans.

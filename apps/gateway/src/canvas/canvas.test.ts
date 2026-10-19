@@ -75,9 +75,10 @@ describe("dashboard registry and tool", () => {
       file,
       "<html><head><title>Sales Overview</title></head></html>"
     );
+    await registry.link("agent-1", "sales.html");
     const first = await listAgentDashboards(agent(), registry, config);
     const second = await listAgentDashboards(agent(), registry, config);
-    expect(first).toEqual([
+    expect(first).toMatchObject([
       {
         title: "Sales Overview",
         slug: "sales.html",
@@ -110,6 +111,9 @@ describe("dashboard registry and tool", () => {
       path.join(workspace, "data", "dashboards", "empty.html"),
       '<meta name="yoplai:params" content=" , ">'
     );
+    await registry.link("agent-1", "client.html");
+    await registry.link("agent-1", "empty.html");
+    await registry.link("agent-1", "qbr.html");
     const dashboards = await listAgentDashboards(agent(), registry, config);
     expect(dashboards[0]).toMatchObject({
       slug: "client.html",
@@ -126,29 +130,28 @@ describe("dashboard registry and tool", () => {
       getDataDir: () => root,
     } as never);
     const tools = await canvasExtension.getAgentTools!(agent(), { config });
-    const tool = tools[0];
+    const tool = tools.find((tool) => tool.name === "dashboard_create")!;
 
     const first = (await tool.execute({ slug: "hello.html" }, {} as never)) as {
       link: string;
       updatedAt: string;
     };
     await fs.writeFile(file, "<h1>two</h1>");
-    const second = (await tool.execute(
+    const second = (await tools.find((tool) => tool.name === "dashboard_update")!.execute(
       { slug: "hello.html" },
       {} as never
     )) as {
       link: string;
     };
-    const listed = (await tool.execute({}, {} as never)) as Array<{
-      link: string;
-      slug: string;
-    }>;
+    const listed = (await tools.find((tool) => tool.name === "dashboard_link")!.execute({}, {} as never)) as {
+      dashboards: Array<{ link: string; slug: string }>;
+    };
 
     expect(first.link).toMatch(
       /^https:\/\/yoplai\.test\/d\/[A-Za-z0-9_-]{32}$/
     );
     expect(second.link).toBe(first.link);
-    expect(listed).toEqual([
+    expect(listed.dashboards).toEqual([
       expect.objectContaining({ slug: "hello.html", link: first.link }),
     ]);
   });
@@ -156,14 +159,14 @@ describe("dashboard registry and tool", () => {
   it("lists observed edits, restores content, keeps the link, and prunes old versions", async () => {
     const file = path.join(workspace, "data", "dashboards", "hello.html");
     await canvasExtension.start({ getDataDir: () => root } as never);
-    const [linkTool, versionsTool] = await canvasExtension.getAgentTools!(
-      agent(),
-      { config }
-    );
+    const tools = await canvasExtension.getAgentTools!(agent(), { config });
+    const linkTool = tools.find((tool) => tool.name === "dashboard_create")!;
+    const updateTool = tools.find((tool) => tool.name === "dashboard_update")!;
+    const versionsTool = tools.find((tool) => tool.name === "dashboard_versions")!;
     let link = "";
     for (let index = 0; index < DASHBOARD_VERSION_LIMIT + 2; index += 1) {
       await fs.writeFile(file, `<h1>${index}</h1>`);
-      const result = (await linkTool.execute(
+      const result = (await (index === 0 ? linkTool : updateTool).execute(
         { slug: "hello.html" },
         {} as never
       )) as { link: string };
@@ -218,14 +221,14 @@ describe("dashboard registry and tool", () => {
     const firstContent = `first-${"a".repeat(200_000)}`;
     const secondContent = `second-${"b".repeat(200_000)}`;
     await canvasExtension.start({ getDataDir: () => root } as never);
-    const [linkTool, versionsTool] = await canvasExtension.getAgentTools!(
-      agent(),
-      { config }
-    );
+    const tools = await canvasExtension.getAgentTools!(agent(), { config });
+    const linkTool = tools.find((tool) => tool.name === "dashboard_create")!;
+    const updateTool = tools.find((tool) => tool.name === "dashboard_update")!;
+    const versionsTool = tools.find((tool) => tool.name === "dashboard_versions")!;
     await fs.writeFile(file, firstContent);
     await linkTool.execute({ slug: "hello.html" }, {} as never);
     await fs.writeFile(file, secondContent);
-    await linkTool.execute({ slug: "hello.html" }, {} as never);
+    await updateTool.execute({ slug: "hello.html" }, {} as never);
     const listed = (await versionsTool.execute(
       { slug: "hello.html" },
       {} as never
@@ -252,10 +255,9 @@ describe("dashboard registry and tool", () => {
       "<h1>git</h1>"
     );
     await canvasExtension.start({ getDataDir: () => root } as never);
-    const [linkTool, versionsTool] = await canvasExtension.getAgentTools!(
-      agent(),
-      { config }
-    );
+    const tools = await canvasExtension.getAgentTools!(agent(), { config });
+    const linkTool = tools.find((tool) => tool.name === "dashboard_create")!;
+    const versionsTool = tools.find((tool) => tool.name === "dashboard_versions")!;
     await linkTool.execute({ slug: "hello.html" }, {} as never);
     await expect(
       versionsTool.execute({ slug: "hello.html" }, {} as never)
@@ -264,7 +266,7 @@ describe("dashboard registry and tool", () => {
     );
   });
 
-  it("discovers and links dashboard files when listing", async () => {
+  it("does not discover or register drafts when listing", async () => {
     await fs.writeFile(
       path.join(workspace, "data", "dashboards", "hello.html"),
       "<h1>hello</h1>"
@@ -273,31 +275,27 @@ describe("dashboard registry and tool", () => {
       getDataDir: () => root,
     } as never);
     const tools = await canvasExtension.getAgentTools!(agent(), { config });
-    const tool = tools[0];
+    const tool = tools.find((tool) => tool.name === "dashboard_link")!;
 
-    const first = (await tool.execute({}, {} as never)) as Array<{
-      link: string;
-      slug: string;
-    }>;
-    const second = (await tool.execute({}, {} as never)) as Array<{
-      link: string;
-      slug: string;
-    }>;
+    const first = (await tool.execute({}, {} as never)) as {
+      dashboards: Array<{ link: string; slug: string }>;
+    };
+    const second = (await tool.execute({}, {} as never)) as {
+      dashboards: Array<{ link: string; slug: string }>;
+    };
 
-    expect(first).toEqual([
-      expect.objectContaining({ slug: "hello.html", link: expect.any(String) }),
-    ]);
+    expect(first.dashboards).toEqual([]);
     expect(second).toEqual(first);
   });
 
-  it("reports query errors through dashboard_link", async () => {
+  it("reports query errors through dashboard_create", async () => {
     new Database(path.join(workspace, "data", "bad.db")).close();
     await fs.writeFile(
       path.join(workspace, "data", "dashboards", "bad.html"),
       `<script type="application/sql" data-name="broken" data-db="data/bad.db">select * from missing</script>`
     );
     await canvasExtension.start({ getDataDir: () => root } as never);
-    const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
+    const tool = (await canvasExtension.getAgentTools!(agent(), { config })).find((tool) => tool.name === "dashboard_create")!;
     const result = (await tool.execute({ slug: "bad.html" }, {} as never)) as {
       queryErrors: Array<{ name: string; error: string }>;
     };
@@ -306,7 +304,7 @@ describe("dashboard registry and tool", () => {
     ]);
   });
 
-  it("returns lint problems and empty-query warnings through dashboard_link", async () => {
+  it("returns lint problems and empty-query warnings through dashboard_create", async () => {
     const db = new Database(path.join(workspace, "data", "empty.db"));
     db.exec("create table items(id integer)");
     db.close();
@@ -315,7 +313,7 @@ describe("dashboard registry and tool", () => {
       `<script type="application/sql" data-name="items" data-db="data/empty.db">select id from items</script><script>const top = 1;</script>`
     );
     await canvasExtension.start({ getDataDir: () => root } as never);
-    const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
+    const tool = (await canvasExtension.getAgentTools!(agent(), { config })).find((tool) => tool.name === "dashboard_create")!;
     const result = (await tool.execute({ slug: "lint.html" }, {} as never)) as {
       problems: string[];
       queryErrors: unknown[];
@@ -335,7 +333,7 @@ describe("dashboard registry and tool", () => {
       `<script type="module">YOPLAI.link("exists.html"); YOPLAI.link("client.html", { id: 1 });</script>`
     );
     await canvasExtension.start({ getDataDir: () => root } as never);
-    const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
+    const tool = (await canvasExtension.getAgentTools!(agent(), { config })).find((tool) => tool.name === "dashboard_create")!;
     const result = (await tool.execute(
       { slug: "links.html" },
       {} as never
@@ -361,11 +359,9 @@ describe("dashboard registry and tool", () => {
     await canvasExtension.start({
       getDataDir: () => root,
     } as never);
-    const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
+    const tool = (await canvasExtension.getAgentTools!(agent(), { config })).find((tool) => tool.name === "dashboard_link")!;
 
-    await expect(tool.execute({}, {} as never)).resolves.toEqual([
-      expect.objectContaining({ slug: "hello.html" }),
-    ]);
+    await expect(tool.execute({}, {} as never)).resolves.toMatchObject({ dashboards: [] });
   });
 
   it("deduplicates concurrent links", async () => {
@@ -416,7 +412,7 @@ describe("dashboard registry and tool", () => {
       `<script type="application/sql" data-name="items" data-db="data/x.db">select id from items</script>`
     );
     await canvasExtension.start({ getDataDir: () => root } as never);
-    const [tool] = await canvasExtension.getAgentTools!(sandboxed, { config });
+    const tool = (await canvasExtension.getAgentTools!(sandboxed, { config })).find((tool) => tool.name === "dashboard_create")!;
     const result = (await tool.execute({ slug: "box.html" }, {} as never)) as {
       queryErrors: unknown[];
     };
@@ -458,14 +454,16 @@ describe("dashboard registry and tool", () => {
       const toolRegistry = getDashboardRegistry(
         path.join(root, "canvas", "registry.json")
       );
-      const [linkTool, versionsTool, deleteTool] =
-        await canvasExtension.getAgentTools!(configuredAgent, { config });
+      const tools = await canvasExtension.getAgentTools!(configuredAgent, { config });
+      const linkTool = tools.find((tool) => tool.name === "dashboard_create")!;
+      const updateTool = tools.find((tool) => tool.name === "dashboard_update")!;
+      const deleteTool = tools.find((tool) => tool.name === "dashboard_delete")!;
       const first = (await linkTool.execute(
         { slug: "hello.html" },
         {} as never
       )) as { link: string };
       await fs.writeFile(file, "<h1>second</h1>");
-      await versionsTool.execute({ slug: "hello.html" }, {} as never);
+      await updateTool.execute({ slug: "hello.html" }, {} as never);
       const registration = (await toolRegistry.list(configuredAgent.id))[0];
       const versionsDirectory = path.join(
         root,
@@ -531,7 +529,7 @@ describe("dashboard registry and tool", () => {
     await fs.writeFile(path.join(outside, "hello.html"), "outside");
     await canvasExtension.start({ getDataDir: () => root } as never);
     const tools = await canvasExtension.getAgentTools!(agent(), { config });
-    await tools[0].execute({ slug: "hello.html" }, {} as never);
+    await tools.find((tool) => tool.name === "dashboard_create")!.execute({ slug: "hello.html" }, {} as never);
 
     const realpath = fs.realpath.bind(fs);
     let directoryChecks = 0;
@@ -544,7 +542,7 @@ describe("dashboard registry and tool", () => {
     });
 
     await expect(
-      tools[2].execute({ slug: "hello.html" }, {} as never)
+      tools.find((tool) => tool.name === "dashboard_delete")!.execute({ slug: "hello.html" }, {} as never)
     ).rejects.toThrow("Dashboard not found");
     expect(await fs.readFile(path.join(outside, "hello.html"), "utf8")).toBe(
       "outside"
@@ -831,7 +829,7 @@ describe("dashboard viewer", () => {
     expect(await (await routes.request(`/${entry.id}`)).text()).toContain(
       "edited"
     );
-    expect(await registry.listVersions(entry.id)).toHaveLength(2);
+    expect(await registry.listVersions(entry.id)).toHaveLength(0);
   });
 
   it("injects live query data, viewer bindings, params, and dashboard links before page scripts", async () => {
@@ -850,6 +848,7 @@ describe("dashboard viewer", () => {
       path.join(workspace, "data", "dashboards", "detail.html"),
       "<h1>detail</h1>"
     );
+    await registry.link("agent-1", "detail.html");
     const { app: routes, entry } = await app(
       { user: { email: "viewer@example.com", name: "Viewer" } },
       true

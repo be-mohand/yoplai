@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { requestSlackPairingLink } from "@yoplai/shared";
 import type {
   AgentConfig,
   Extension,
   ExtensionContext,
+  ExtensionAgentToolContext,
   GatewayConfig,
 } from "@yoplai/shared";
 import {
@@ -14,11 +16,12 @@ import {
 } from "./store.js";
 import { lintDashboardHtml } from "./lint.js";
 import { executeDashboardQueries } from "./sql.js";
+import { dashboardAccessPolicy } from "./policy.js";
+import { resolveDashboardActor } from "./actor.js";
 import {
   dashboardBaseUrl,
   dashboardDirectory,
   deleteDashboardFile,
-  listDashboardSlugs,
   normalizeDashboardSlug,
   openDashboardFile,
   writeDashboardFile,
@@ -98,7 +101,6 @@ async function dashboardInfo(
   try {
     const stat = await file.stat();
     const html = await file.readFile("utf8");
-    await recordDashboardVersion(agent, entry, html);
     return {
       slug: entry.slug,
       updatedAt: stat.mtime.toISOString(),
@@ -110,33 +112,40 @@ async function dashboardInfo(
   }
 }
 
-async function discoverDashboards(agent: AgentConfig, config: GatewayConfig) {
-  const files = await listDashboardSlugs(agent);
+function toolContext(
+  context: ExtensionAgentToolContext,
+  config: GatewayConfig
+): ExtensionAgentToolContext {
+  return { ...context, config };
+}
 
-  const results = [];
-  for (const slug of files) {
-    let file: fs.FileHandle | undefined;
-    try {
-      file = await openDashboardFile(agent, slug);
-      const [entry, stat] = await Promise.all([
-        registry().link(agent.id, slug),
-        file.stat(),
-      ]);
-      const html = await file.readFile("utf8");
-      await recordDashboardVersion(agent, entry, html);
-      results.push({
-        slug,
-        updatedAt: stat.mtime.toISOString(),
-        link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
-        ...(await dashboardDiagnostics(agent, html)),
-      });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    } finally {
-      await file?.close();
-    }
-  }
-  return results;
+async function registeredDashboard(
+  agent: AgentConfig,
+  slug: string
+): Promise<DashboardRegistration> {
+  const entry = await registry().find(agent.id, slug);
+  if (!entry) throw new Error("Dashboard not found");
+  return entry;
+}
+
+async function withAuthorizedDashboard<T>(
+  agent: AgentConfig,
+  slug: string,
+  context: ExtensionAgentToolContext,
+  permission: "write" | "manage",
+  operation: (entry: DashboardRegistration) => Promise<T>
+): Promise<T> {
+  const entry = await registeredDashboard(agent, slug);
+  return registry().withRegistration(entry.id, async (current) => {
+    const actor = await resolveDashboardActor(context, agent.id);
+    const allowed =
+      permission === "write"
+        ? dashboardAccessPolicy.canWrite(current, actor)
+        : dashboardAccessPolicy.canManage(current, actor);
+    if (!actor.hasAgentAccess || !allowed)
+      throw new Error("Dashboard not found");
+    return operation(current);
+  });
 }
 
 export const canvasExtension: Extension = {
@@ -160,27 +169,125 @@ export const canvasExtension: Extension = {
     extensionRegistry = undefined;
   },
   capabilities: () => [],
+  getSystemPromptContributions(_agent, hook) {
+    if (hook?.config.canvas?.enabled === false) return undefined;
+    return "Dashboards: dashboard_link is the only source for the current user's dashboards, not files, memory or notes. Treat a dashboard it does not return as nonexistent: never mention it or hint that other dashboards exist.";
+  },
   getAgentTools(agent, hook) {
     if (hook?.config.canvas?.enabled === false) return [];
     return [
       {
         name: "dashboard_link",
         description:
-          "Link one HTML dashboard from data/dashboards/<slug>.html, or list all dashboards when slug is omitted. SQL data-db paths are relative to the workspace root, e.g. data/app.db. Fix every entry in `problems` and `queryErrors`, then call again, before sharing the link. (Queries using :viewer_email or URL params run with them null, so they may report 0 rows.)",
+          "Return a readable registered dashboard URL, or list readable dashboard URLs. Does not register, publish, or record history; use dashboard_create once and dashboard_update to publish changes.",
         parameters: {
           type: "object",
           properties: { slug: { type: "string" } },
         },
-        async execute(raw) {
+        async execute(raw, context) {
           const args = z.object({ slug: z.string().optional() }).parse(raw);
+          const actor = await resolveDashboardActor(
+            toolContext(context, hook!.config),
+            agent.id
+          );
+          if (!actor.hasAgentAccess) throw new Error("Dashboard not found");
           if (args.slug) {
             const slug = normalizeDashboardSlug(args.slug);
-            const file = await openDashboardFile(agent, slug);
-            await file.close();
-            const entry = await registry().link(agent.id, slug);
-            return dashboardInfo(agent, entry, hook!.config);
+            const entry = await registeredDashboard(agent, slug);
+            if (!dashboardAccessPolicy.canRead(entry, actor))
+              throw new Error("Dashboard not found");
+            return {
+              slug,
+              link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
+            };
           }
-          return discoverDashboards(agent, hook!.config);
+          const dashboards = dashboardAccessPolicy
+            .filterVisible(await registry().list(agent.id), actor)
+            .map((entry) => ({
+              slug: entry.slug,
+              link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
+            }));
+          return {
+            dashboards,
+            note: "This is the complete dashboard list for this user. Show only these. Never mention or hint at other dashboards from files, memory or notes.",
+          };
+        },
+      },
+      {
+        name: "dashboard_create",
+        description:
+          "Register an unregistered data/dashboards/<slug>.html as private, owned by the requester, and publish its initial HTML. Fix returned problems and queryErrors before sharing. Existing registrations cannot be taken over.",
+        parameters: {
+          type: "object",
+          properties: { slug: { type: "string" } },
+          required: ["slug"],
+        },
+        async execute(raw, context) {
+          const { slug: rawSlug } = z.object({ slug: z.string() }).parse(raw);
+          const slug = normalizeDashboardSlug(rawSlug);
+          const actor = await resolveDashboardActor(
+            toolContext(context, hook!.config),
+            agent.id
+          );
+          if (!actor.userId) {
+            const link = await requestSlackPairingLink(context);
+            if (link)
+              return {
+                isError: true,
+                error: "slack_pairing_required",
+                link,
+                message: `Pair your Slack account at ${link}, then ask again. No dashboard was registered.`,
+              };
+          }
+          if (!actor.userId || !actor.eligible || !actor.hasAgentAccess)
+            throw new Error("Dashboard not found");
+          const file = await openDashboardFile(agent, slug);
+          let html: string;
+          try {
+            html = await file.readFile("utf8");
+          } finally {
+            await file.close();
+          }
+          const entry = await registry().createOwned(
+            agent.id,
+            slug,
+            actor.userId,
+            html
+          );
+          await recordDashboardVersion(agent, entry, html);
+          return dashboardInfo(agent, entry, hook!.config);
+        },
+      },
+      {
+        name: "dashboard_update",
+        description:
+          "Publish the current working HTML of a registered dashboard you can write. Keeps its owner and shares; returns lint and query diagnostics. Writers see drafts live before publication, readers see this published copy.",
+        parameters: {
+          type: "object",
+          properties: { slug: { type: "string" } },
+          required: ["slug"],
+        },
+        async execute(raw, context) {
+          const { slug: rawSlug } = z.object({ slug: z.string() }).parse(raw);
+          const slug = normalizeDashboardSlug(rawSlug);
+          return withAuthorizedDashboard(
+            agent,
+            slug,
+            toolContext(context, hook!.config),
+            "write",
+            async (entry) => {
+              const file = await openDashboardFile(agent, slug);
+              let html: string;
+              try {
+                html = await file.readFile("utf8");
+              } finally {
+                await file.close();
+              }
+              if (entry.ownerUserId) await registry().publish(entry.id, html);
+              await recordDashboardVersion(agent, entry, html);
+              return dashboardInfo(agent, entry, hook!.config);
+            }
+          );
         },
       },
       {
@@ -195,43 +302,45 @@ export const canvasExtension: Extension = {
           },
           required: ["slug"],
         },
-        async execute(raw) {
+        async execute(raw, context) {
           const args = z
             .object({ slug: z.string(), restore: z.string().optional() })
             .parse(raw);
           const slug = normalizeDashboardSlug(args.slug);
-          const file = await openDashboardFile(agent, slug);
-          let html: string;
-          try {
-            html = await file.readFile("utf8");
-          } finally {
-            await file.close();
-          }
-          const entry = await registry().link(agent.id, slug);
-          const managed = !(await hasGitHistory(agent));
-          if (!managed) {
-            return {
-              slug,
-              link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
-              managed: false,
-              versions: [],
-            };
-          }
-
-          const restoredContent = args.restore
-            ? await registry().readVersion(entry.id, args.restore)
-            : undefined;
-          await registry().recordVersion(entry.id, html);
-          if (args.restore) {
-            await writeDashboardFile(agent, slug, restoredContent!);
-          }
-          return {
+          return withAuthorizedDashboard(
+            agent,
             slug,
-            link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
-            managed: true,
-            restored: args.restore,
-            versions: await registry().listVersions(entry.id),
-          };
+            toolContext(context, hook!.config),
+            "write",
+            async (entry) => {
+              const managed = !(await hasGitHistory(agent));
+              if (!managed) {
+                return {
+                  slug,
+                  link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
+                  managed: false,
+                  versions: [],
+                };
+              }
+
+              const restoredContent = args.restore
+                ? await registry().readVersion(entry.id, args.restore)
+                : undefined;
+              if (args.restore) {
+                await writeDashboardFile(agent, slug, restoredContent!);
+                if (entry.ownerUserId)
+                  await registry().publish(entry.id, restoredContent!);
+                await registry().recordVersion(entry.id, restoredContent!);
+              }
+              return {
+                slug,
+                link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
+                managed: true,
+                restored: args.restore,
+                versions: await registry().listVersions(entry.id),
+              };
+            }
+          );
         },
       },
       {
@@ -243,23 +352,44 @@ export const canvasExtension: Extension = {
           properties: { slug: { type: "string" } },
           required: ["slug"],
         },
-        async execute(raw) {
+        async execute(raw, context) {
           const args = z.object({ slug: z.string() }).parse(raw);
           const slug = normalizeDashboardSlug(args.slug);
-          const file = await deleteDashboardFile(agent, slug);
-          const removed = await registry().delete(agent.id, slug);
-          const result = {
-            file,
-            registry: Boolean(removed.registration),
-            versions: removed.versions,
-          };
-          return {
+          if (!(await registry().find(agent.id, slug))) {
+            const actor = await resolveDashboardActor(
+              toolContext(context, hook!.config),
+              agent.id
+            );
+            if (!actor.eligible || !actor.hasAgentAccess)
+              throw new Error("Dashboard not found");
+            return {
+              slug,
+              removed: { file: false, registry: false, versions: false },
+              message: "Nothing to delete",
+            };
+          }
+          return withAuthorizedDashboard(
+            agent,
             slug,
-            removed: result,
-            message: Object.values(result).some(Boolean)
-              ? "Dashboard deleted"
-              : "Nothing to delete",
-          };
+            toolContext(context, hook!.config),
+            "manage",
+            async (entry) => {
+              const file = await deleteDashboardFile(agent, slug);
+              const removed = await registry().deleteId(entry.id);
+              const result = {
+                file,
+                registry: Boolean(removed.registration),
+                versions: removed.versions,
+              };
+              return {
+                slug,
+                removed: result,
+                message: Object.values(result).some(Boolean)
+                  ? "Dashboard deleted"
+                  : "Nothing to delete",
+              };
+            }
+          );
         },
       },
     ];

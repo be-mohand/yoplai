@@ -32,4 +32,13 @@ describe("getEligibleAccount", () => {
   it("matches roles exactly: unapproved comma-joined roles are not eligible", () => {
     expect(getEligibleAccount(db, "combo")).toBeUndefined();
   });
+
+  it("requires approved admins for dashboard access while retaining the superadmin bypass", () => {
+    expect(getEligibleAccount(db, "admin", { approvalBypass: "superadmin" })).toBeUndefined();
+    expect(getEligibleAccount(db, "root", { approvalBypass: "superadmin" })?.id).toBe("root");
+    expect(getEligibleAccount(db, "ok", { approvalBypass: "superadmin" })?.id).toBe("ok");
+    db.prepare("UPDATE user SET banned = 1 WHERE id = 'root'").run();
+    expect(getEligibleAccount(db, "root", { approvalBypass: "superadmin" })).toBeUndefined();
+    expect(getEligibleAccount(db, "admin")?.id).toBe("admin");
+  });
 });

@@ -36,9 +36,21 @@ afterEach(async () => {
 });
 
 describe("dashboard file enumeration", () => {
-  it("list API: sorted regular .html files only", async () => {
+  it("list API: sorted registrations exclude unregistered drafts", async () => {
+    await registry.link("agent-1", "a.html");
+    await registry.link("agent-1", "b.html");
     const list = await listAgentDashboards(agent(), registry, config);
     expect(list.map((d) => d.slug)).toEqual(["a.html", "b.html"]);
+  });
+
+  it("list API: shared is true only for recipients, not superadmins or owners", async () => {
+    const entry = await registry.link("agent-1", "a.html");
+    await registry.claim(entry.id, "owner-1", "<h1>a</h1>");
+    await registry.replaceShares(entry.id, [{ kind: "user", id: "reader-1", mode: "read" }]);
+    const rows = (actor: object) => listAgentDashboards(agent(), registry, config, { actor: { eligible: true, ...actor } });
+    expect((await rows({ userId: "reader-1" }))[0]!.shared).toBe(true);
+    expect((await rows({ userId: "admin-1", superadmin: true }))[0]!.shared).toBe(false);
+    expect((await rows({ userId: "owner-1" }))[0]!.shared).toBe(false);
   });
 
   it("list API: missing directory yields empty list", async () => {
@@ -46,22 +58,30 @@ describe("dashboard file enumeration", () => {
     expect(await listAgentDashboards(agent(), registry, config)).toEqual([]);
   });
 
-  it("dashboard_link discovery: sorted regular .html files only", async () => {
+  it("dashboard_link does not discover or register drafts", async () => {
     await canvasExtension.start({ getDataDir: () => root } as never);
     const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
-    const result = (await tool.execute({}, {} as never)) as { slug: string }[];
-    expect(result.map((d) => d.slug)).toEqual(["a.html", "b.html"]);
+    const result = (await tool.execute({}, {} as never)) as { dashboards: { slug: string }[] };
+    expect(result.dashboards.map((d) => d.slug)).toEqual([]);
   });
 
   it("dashboard_link discovery: missing directory yields empty list", async () => {
     await fs.rm(dir, { recursive: true });
     await canvasExtension.start({ getDataDir: () => root } as never);
     const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
-    expect(await tool.execute({}, {} as never)).toEqual([]);
+    expect(await tool.execute({}, {} as never)).toMatchObject({ dashboards: [] });
+  });
+
+  it("tells every run to list dashboards only through dashboard_link", async () => {
+    expect(await canvasExtension.getSystemPromptContributions!(agent(), { config } as never)).toContain("dashboard_link");
+    expect(
+      await canvasExtension.getSystemPromptContributions!(agent(), { config: { ...config, canvas: { enabled: false } } } as never)
+    ).toBeUndefined();
   });
 
   it("viewer link map: only regular .html files, not directories", async () => {
     const entry = await registry.link("agent-1", "a.html");
+    await registry.link("agent-1", "b.html");
     const routes = createDashboardRoutes({
       getConfig: () => config,
       getAgent: () => agent(),

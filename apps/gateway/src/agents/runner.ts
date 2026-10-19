@@ -42,6 +42,7 @@ import { getContainerAdapter } from "../sdk/container/adapter.js";
 import { getSdkAdapter, getDefaultSdkId } from "../sdk/registry.js";
 import type { SdkId, HistoryEvent } from "../sdk/types.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
+import { requireActorExecution, resolveRunActor } from "../extensions/runtime.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
 import { getTask, pauseTaskForControlCommand } from "../tasks/store.js";
 import {
@@ -109,6 +110,11 @@ export async function runAgent(
   if (!agent) {
     throw new Error(`Agent not found: ${params.agentId}`);
   }
+
+  const actorConfig = loadConfig();
+  const actor = resolveRunActor(actorConfig, params.userId, params);
+  await requireActorExecution(agent.id, actorConfig, params.userId, actor);
+  params = { ...params, ...actor };
 
   const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
 
@@ -429,6 +435,8 @@ export async function runAgent(
       agentId: params.agentId,
       agent,
       userId: params.userId,
+      actorUserId: params.actorUserId,
+      actorKind: params.actorKind,
       sessionOwnerId: sessionOwnerId ?? null,
       requesterId: params.requesterId,
       sessionId,

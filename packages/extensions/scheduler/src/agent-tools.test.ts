@@ -27,7 +27,7 @@ function context(config: GatewayConfig): ExtensionContext {
     isAgentActive: () => true,
     isAgentStreaming: () => false,
     resolveWorkspaceDir: (candidate) => candidate.workspaceDir ?? candidate.workspace,
-    runAgent: vi.fn(),
+    runAgent: vi.fn(async () => ({ payloads: [], meta: { durationMs: 0, sessionId: "session" } })),
     getSubagentTemplates: () => [],
     resolveSessionId: vi.fn(),
     getSessionEntry: vi.fn(),
@@ -108,6 +108,11 @@ describe("scheduler agent tools", () => {
 
     const run = await byName.get("scheduler.run_job")!.execute({ jobId }, { agent: alpha, config }) as { ok: boolean; status?: string };
     expect(run).toMatchObject({ ok: true, status: "accepted" });
+    await vi.waitFor(async () => {
+      const finished = await byName.get("scheduler.list_jobs")!.execute({}, { agent: alpha, config }) as { jobs: Array<{ state?: { lastStatus?: string; runningForMs?: number } }> };
+      expect(finished.jobs[0]?.state?.lastStatus).toBe("ok");
+      expect(finished.jobs[0]?.state?.runningForMs).toBeUndefined();
+    });
     const betaRun = await byName.get("scheduler.run_job")!.execute({ jobId }, { agent: beta, config }) as { ok: boolean };
     expect(betaRun.ok).toBe(false);
 

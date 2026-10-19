@@ -171,7 +171,16 @@ async function replaceDashboardFile(
   content: string
 ): Promise<void> {
   const directory = dashboardDirectory(agent);
-  const readable = await openDashboardFile(agent, slug);
+  await fs.mkdir(directory, { recursive: true });
+  let readable: fs.FileHandle | undefined;
+  try { readable = await openDashboardFile(agent, slug); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // Only an absent pathname may be recreated; never replace a rejected symlink.
+    await fs.lstat(path.join(directory, slug)).then(() => { throw error; }, (missing: NodeJS.ErrnoException) => {
+      if (missing.code !== "ENOENT") throw missing;
+    });
+  }
   const candidate = path.join(directory, slug);
   const temporary = path.join(
     directory,
@@ -180,10 +189,13 @@ async function replaceDashboardFile(
   let writable: fs.FileHandle | undefined;
   try {
     const [expected, expectedDirectory, realDirectory] = await Promise.all([
-      readable.stat(),
+      readable?.stat(),
       fs.lstat(directory),
       fs.realpath(directory),
     ]);
+    if (!expectedDirectory.isDirectory()) {
+      throw new DashboardNotFoundError(`Dashboard not found: ${slug}`);
+    }
     writable = await fs.open(
       temporary,
       constants.O_WRONLY |
@@ -198,13 +210,16 @@ async function replaceDashboardFile(
     writable = undefined;
 
     const [actual, actualDirectory, currentRealDirectory] = await Promise.all([
-      fs.lstat(candidate),
+      fs.lstat(candidate).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return undefined;
+      }),
       fs.lstat(directory),
       fs.realpath(directory),
     ]);
     if (
-      expected.dev !== actual.dev ||
-      expected.ino !== actual.ino ||
+      expected?.dev !== actual?.dev ||
+      expected?.ino !== actual?.ino ||
       expectedDirectory.dev !== actualDirectory.dev ||
       expectedDirectory.ino !== actualDirectory.ino ||
       realDirectory !== currentRealDirectory
@@ -214,7 +229,7 @@ async function replaceDashboardFile(
     await fs.rename(temporary, candidate);
   } finally {
     await writable?.close();
-    await readable.close();
+    await readable?.close();
     await fs.rm(temporary, { force: true });
   }
 }

@@ -14,7 +14,25 @@ import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { getConversationFiles } from "../media/conversation-files.js";
 
-type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles">;
+type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind">;
+
+export function resolveRunActor(config: GatewayConfig, userId?: string, identity?: RunIdentity): Pick<ExtensionAgentToolContext, "actorUserId" | "actorKind"> {
+  if (identity?.actorKind === "eval") return { actorKind: "eval", actorUserId: identity.actorUserId };
+  if (!config.extensions?.multiUser?.enabled) return { actorKind: "local", actorUserId: "local" };
+  const actorUserId = identity?.actorKind === "service" ? undefined : identity?.actorUserId ?? userId;
+  return { actorKind: actorUserId ? "user" : "service", actorUserId };
+}
+
+export async function requireActorExecution(agentId: string, config: GatewayConfig, userId?: string, identity?: RunIdentity): Promise<void> {
+  const actor = resolveRunActor(config, userId, identity);
+  if (actor.actorKind !== "user") return;
+  const { getMultiUserRuntime, getEligibleAccount, hasAgentAccess } = await import("@yoplai/extension-multi-user");
+  const runtime = getMultiUserRuntime();
+  const account = runtime && actor.actorUserId && getEligibleAccount(runtime.db, actor.actorUserId, { approvalBypass: "superadmin" });
+  if (!account || !(await hasAgentAccess({ user: { id: account.id, email: account.email, role: account.role, approved: true }, session: { id: "agent-execution", userId: account.id } }, agentId))) {
+    throw new Error("Agent access denied");
+  }
+}
 
 function buildHookContext(
   agent: AgentConfig,
@@ -26,6 +44,7 @@ function buildHookContext(
     config,
     env: resolveAgentEnv(agent, config),
     userId,
+    ...resolveRunActor(config, userId, identity),
     sessionOwnerId: identity?.sessionOwnerId,
     requesterId: identity?.requesterId,
     resolveOAuth: (
@@ -246,7 +265,10 @@ export class ExtensionRuntime {
             extensionId: extension.id,
             extensionDescription: extension.description,
             // Rebuild at call time: credentials, and for OAuth the grant deciding personal vs team settings, may have changed.
-            execute: withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute),
+            execute: async (args: unknown, context: ExtensionAgentToolContext) => {
+              await requireActorExecution(context.agent.id, context.config, context.userId, context);
+              return withOAuthConnectLink(extension, needsCallTimeRebind(extension) ? rebindAtCallTime(extension, tool) : tool.execute)(args, context);
+            },
           }));
         } catch (error) {
           console.warn("Skipping extension tools", {
@@ -304,6 +326,7 @@ export class ExtensionRuntime {
         env,
         sessionId,
         userId,
+        ...resolveRunActor(config, userId, identity),
         sessionOwnerId: identity?.sessionOwnerId,
         requesterId: identity?.requesterId,
         emitProgress,

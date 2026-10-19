@@ -163,7 +163,7 @@ export default defineConfig({
         target: gatewayTarget,
         ws: true,
       },
-      "/d": {
+      "^/d(?:/|-assets/)": {
         target: gatewayTarget,
       },
     },

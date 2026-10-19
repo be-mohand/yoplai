@@ -27,6 +27,7 @@ import { ExtensionDetails } from "./pages/ExtensionDetails";
 import { McpServerDetails } from "./pages/McpServerDetails";
 import { ChatProject } from "./pages/ChatProject";
 import { Teams } from "./pages/Teams";
+import { Dashboards } from "./pages/Dashboards";
 import { AccountConnections } from "./pages/AccountConnections";
 import { SessionArchive } from "./pages/SessionArchive";
 import {
@@ -430,6 +431,10 @@ export default function App() {
             <AgentsRouteShell />
           </GuardedRoute>
         )}
+      />
+      <Route
+        path="/dashboards"
+        component={() => <GuardedRoute><LeftNavShell><Dashboards /></LeftNavShell></GuardedRoute>}
       />
       <Route
         path="/teams"

@@ -31,6 +31,16 @@ export interface CredentialConnectHost {
 }
 
 let linkProvider: ((context: ExtensionAgentToolContext, target: CredentialConnectTarget) => Promise<string | undefined>) | undefined;
+let pairingLinkProvider: ((context: ExtensionAgentToolContext) => Promise<string | undefined>) | undefined;
+
+/** Identity-only pairing; does not start a credential connection. */
+export function registerSlackPairingLinkProvider(provider: NonNullable<typeof pairingLinkProvider>): () => void {
+  pairingLinkProvider = provider;
+  return () => { if (pairingLinkProvider === provider) pairingLinkProvider = undefined; };
+}
+export async function requestSlackPairingLink(context: ExtensionAgentToolContext): Promise<string | undefined> {
+  return pairingLinkProvider?.(context);
+}
 export function registerCredentialConnectLinkProvider(provider: NonNullable<typeof linkProvider>): () => void {
   linkProvider = provider;
   return () => { if (linkProvider === provider) linkProvider = undefined; };

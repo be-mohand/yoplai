@@ -1,13 +1,21 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { writeJsonAtomic } from "../util/atomic-write.js";
+import { writeFileAtomic, writeJsonAtomic } from "../util/atomic-write.js";
 import { serializeByKey } from "../util/serialize.js";
+
+export type DashboardShare =
+  | { kind: "user"; id: string; mode: "read" | "write" }
+  | { kind: "all"; mode: "read" | "write" };
 
 export type DashboardRegistration = {
   id: string;
   agentId: string;
   slug: string;
+  ownerUserId?: string;
+  shares?: DashboardShare[];
+  publishedAt?: string;
+  publishedHash?: string;
   versions?: DashboardVersion[];
 };
 
@@ -22,6 +30,7 @@ export const DASHBOARD_VERSION_LIMIT = 20;
 type Registry = { dashboards: DashboardRegistration[] };
 
 const pendingWrites = new Map<string, Promise<void>>();
+const pendingOperations = new Map<string, Promise<void>>();
 
 export class DashboardRegistry {
   constructor(private readonly file: string) {}
@@ -45,6 +54,162 @@ export class DashboardRegistry {
     return (await this.read()).dashboards.find((entry) => entry.id === id);
   }
 
+  async all(): Promise<DashboardRegistration[]> {
+    return (await this.read()).dashboards;
+  }
+
+  async find(
+    agentId: string,
+    slug: string
+  ): Promise<DashboardRegistration | undefined> {
+    return (await this.list(agentId)).find((entry) => entry.slug === slug);
+  }
+
+  withRegistration<T>(
+    id: string,
+    operation: (entry: DashboardRegistration) => Promise<T>
+  ): Promise<T> {
+    return serializeByKey(pendingOperations, `${this.file}:${id}`, async () => {
+      const entry = await this.get(id);
+      if (!entry) throw new Error("Dashboard not found");
+      return operation(entry);
+    });
+  }
+
+  private publishedFile(id: string, hash: string): string {
+    if (!/^[A-Za-z0-9_-]{32}$/.test(id) || !/^[a-f0-9]{64}$/.test(hash)) {
+      throw new Error("Invalid dashboard publication identity");
+    }
+    return path.join(path.dirname(this.file), "published", id, `${hash}.html`);
+  }
+
+  private async writePublication(
+    entry: DashboardRegistration,
+    html: string
+  ): Promise<void> {
+    const hash = createHash("sha256").update(html).digest("hex");
+    await writeFileAtomic(this.publishedFile(entry.id, hash), html);
+    entry.publishedHash = hash;
+    entry.publishedAt = new Date().toISOString();
+  }
+
+  private async prunePublications(entry: DashboardRegistration): Promise<void> {
+    const current = this.publishedFile(entry.id, entry.publishedHash!);
+    const directory = path.dirname(current);
+    for (const name of await fs.readdir(directory)) {
+      if (name !== path.basename(current)) {
+        await fs.rm(path.join(directory, name), { force: true });
+      }
+    }
+  }
+
+  async createOwned(
+    agentId: string,
+    slug: string,
+    ownerUserId: string,
+    html: string
+  ): Promise<DashboardRegistration> {
+    return this.mutate(async () => {
+      const data = await this.read();
+      if (
+        data.dashboards.some(
+          (entry) => entry.agentId === agentId && entry.slug === slug
+        )
+      ) {
+        throw new Error("Dashboard not found");
+      }
+      const entry: DashboardRegistration = {
+        id: randomBytes(24).toString("base64url"),
+        agentId,
+        slug,
+        ownerUserId,
+        shares: [],
+      };
+      await this.writePublication(entry, html);
+      data.dashboards.push(entry);
+      await this.write(data);
+      await this.prunePublications(entry);
+      return entry;
+    });
+  }
+
+  async readPublished(id: string): Promise<string> {
+    return this.mutate(async () => {
+      const entry = await this.get(id);
+      if (!entry?.publishedHash)
+        throw new Error("Dashboard publication not found");
+      return fs.readFile(this.publishedFile(id, entry.publishedHash), "utf8");
+    });
+  }
+
+  async publish(id: string, html: string): Promise<void> {
+    await this.mutate(async () => {
+      const data = await this.read();
+      const entry = data.dashboards.find((candidate) => candidate.id === id);
+      if (!entry) throw new Error("Dashboard not found");
+      await this.writePublication(entry, html);
+      await this.write(data);
+      await this.prunePublications(entry);
+    });
+  }
+
+  async claim(
+    id: string,
+    ownerUserId: string,
+    html: string
+  ): Promise<DashboardRegistration> {
+    return this.mutate(async () => {
+      const data = await this.read();
+      const entry = data.dashboards.find((candidate) => candidate.id === id);
+      if (!entry || entry.ownerUserId)
+        throw new Error("Dashboard already claimed or not found");
+      await this.writePublication(entry, html);
+      entry.ownerUserId = ownerUserId;
+      entry.shares = [];
+      await this.write(data);
+      await this.prunePublications(entry);
+      return entry;
+    });
+  }
+
+  async replaceShares(id: string, shares: DashboardShare[]): Promise<void> {
+    await this.mutate(async () => {
+      const data = await this.read();
+      const entry = data.dashboards.find((candidate) => candidate.id === id);
+      if (!entry?.ownerUserId) throw new Error("Dashboard not found");
+      entry.shares = shares;
+      await this.write(data);
+    });
+  }
+
+  async deleteId(
+    id: string
+  ): Promise<{ registration?: DashboardRegistration; versions: boolean }> {
+    return this.mutate(async () => {
+      const data = await this.read();
+      const index = data.dashboards.findIndex((entry) => entry.id === id);
+      if (index === -1) return { versions: false };
+      const [registration] = data.dashboards.splice(index, 1);
+      if (!/^[A-Za-z0-9_-]{32}$/.test(id))
+        throw new Error("Invalid dashboard registration id");
+      const directory = path.join(path.dirname(this.file), "versions", id);
+      const versions = await fs.lstat(directory).then(
+        () => true,
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return false;
+        }
+      );
+      await this.write(data);
+      await fs.rm(directory, { recursive: true, force: true });
+      await fs.rm(path.join(path.dirname(this.file), "published", id), {
+        recursive: true,
+        force: true,
+      });
+      return { registration, versions };
+    });
+  }
+
   async list(agentId: string): Promise<DashboardRegistration[]> {
     return (await this.read()).dashboards.filter(
       (entry) => entry.agentId === agentId
@@ -55,34 +220,9 @@ export class DashboardRegistry {
     agentId: string,
     slug: string
   ): Promise<{ registration?: DashboardRegistration; versions: boolean }> {
-    let registration: DashboardRegistration | undefined;
-    let versions = false;
-    await this.mutate(async () => {
-      const registry = await this.read();
-      const index = registry.dashboards.findIndex(
-        (entry) => entry.agentId === agentId && entry.slug === slug
-      );
-      if (index === -1) return;
-
-      [registration] = registry.dashboards.splice(index, 1);
-      if (!/^[A-Za-z0-9_-]{32}$/.test(registration!.id)) {
-        throw new Error("Invalid dashboard registration id");
-      }
-      const directory = path.join(
-        path.dirname(this.file),
-        "versions",
-        registration!.id
-      );
-      try {
-        await fs.lstat(directory);
-        versions = true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
-      await fs.rm(directory, { recursive: true, force: true });
-      await this.write(registry);
-    });
-    return { registration, versions };
+    const entry = await this.find(agentId, slug);
+    if (!entry) return { versions: false };
+    return this.withRegistration(entry.id, () => this.deleteId(entry.id));
   }
 
   async link(agentId: string, slug: string): Promise<DashboardRegistration> {

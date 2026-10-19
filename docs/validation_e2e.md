@@ -294,3 +294,85 @@ Build the agent image and record its size and increase over the prior image. In 
 Exercise light and dark rendering, `resize 420 800`, a kit tab via `snapshot` then `click eN`, and `clients` → `client?id=…` drill-down. Capture PNGs and DOM snapshots under `validation/`; check `console` for page/query errors, including an intentionally broken query/page. Confirm the owning token gets its page, another agent's slug returns 404, and missing/invalid tokens return 401. Keep live tokens out of saved transcripts.
 
 Run a hung-page navigation with a finite Playwright navigation timeout and an explicit Bash tool timeout. Verify the CLI times out and the agent still responds without a container kill. Confirm browser commands write no state into the read-only workspace and `close` releases the browser. Restart the gateway with the default image and confirm the changed Dockerfile hash triggers its automatic rebuild. Report PASS/FAIL per behavior and document any harness gap explicitly.
+
+## Private dashboards (ALG-475)
+
+Use separate isolated homes for the main multi-user scenario, single-user,
+upgrade, fresh-install and eval cases. Never reset the main multi-user home.
+Run `pnpm test:shared`, `pnpm test:gateway`, `pnpm test:web` serially, plus exact
+changed extension test paths. Keep cookies/credentials outside `validation/`.
+
+Create superadmin, owner Alice, reader Bob, writer Carol, agent-member stranger
+Dave, eligible non-member Eve, pending, banned and unapproved-admin accounts.
+Use actual browser login, chat tool execution and scheduler dispatch; model,
+Slack/container prerequisites that are unavailable are NOT RUN gaps.
+
+Implemented dashboard-scoped contracts, outside the agent-gated subtree:
+
+| Request | Body | Success |
+| --- | --- | --- |
+| `GET /api/dashboards` | — | `{ owned: DashboardRow[], shared: DashboardRow[] }` |
+| `GET /api/dashboards/recipients` | — | `{ users: { id, name, email }[] }` |
+| `PATCH /api/dashboards/:id/sharing` | `{ shares: Share[] }` | `{ dashboard: DashboardRow }` |
+| `POST /api/dashboards/:id/claim` | `{}` | `{ dashboard: DashboardRow }` |
+| `DELETE /api/dashboards/:id` | — | `{ ok: true }` |
+
+`Share` is `{kind:"user",id,mode:"read"|"write"}` or
+`{kind:"all",mode:"read"|"write"}`; no teams/duplicates/ineligible recipients.
+`DashboardRow` includes registration id, agent id/name, title, slug, link,
+params/linksTo, updatedAt/publishedAt, legacy/isOwner/shared, ownerName/mode and
+owner-only shares. Validation/auth errors use `{error:string}`: unauthenticated
+API 401, ineligible API 403, invalid shares 400. Unavailable/unauthorized
+dashboard responses use Hono's plain-text 404; publication/IO failures use its
+plain-text 500. Clients handle these by status, without assuming JSON errors.
+Viewer unauthenticated requests redirect to login; denied viewers return404.
+Missing publication is an error and must never return draft HTML.
+
+Capture numbered PNG + DOM files and redacted API/tool/job/persisted evidence:
+
+1. **01 — Create/link:** actual Alice chat calls `dashboard_create`, owns a
+   private registration with PUBLISHED-1; Dave/Eve list/view/tool access denied;
+   registered-slug takeover denied; `dashboard_link` changes no publication,
+   registration or history.
+2. **02 — Share/publish:** Alice grants Bob read, Carol write, Eve read; use
+   Manage access in the browser. Alice/Carol see DRAFT-2, Bob/Eve PUBLISHED-1;
+   actual writer update publishes without ACL changes. SQL changes stay live.
+   Readers cannot publish; writers cannot manage/delete. Revoke applies fresh.
+3. **03 — Roles/eligibility:** platform read/write, logged-out/pending/banned/
+   unapproved-admin exclusion, scoped non-admin picker includes teamless Eve,
+   malformed/team/duplicate/ineligible grants rejected without mutation.
+   Superadmin reads without write/manage. Agent loss keeps owner management and
+   writer draft access while denying chat/job publication.
+4. **04 — Relationships:** shared parent, private parameterized child and legacy
+   child; inspect runtime links AND row linksTo for member/non-member; each
+   target uses its own authorization. Reader title/params come from publication.
+5. **05 — Scheduler:** real owner/reader/Team publication runs, platform-write
+   success, revoke denial, missing mode Team, owner-without-owner failure,
+   creatorless Team converted to owner survives reload, owner agent loss fails.
+6. **06 — Actors:** single-user channels/jobs local identity, host/container
+   transport, real synthetic-owned evals, unpaired Slack pairing then re-ask,
+   unsupported multi-user userless creation refusal. Preserve credentials.
+7. **07 — Durability:** ordinary/Git/sandbox publication, same-content update,
+   >20 history versions, no history-pruning loss, missing publication fails
+   closed, failed replacement preserves complete old page and subsequent retry.
+   Exercise finite timeout/failure and prove unrelated work progresses.
+8. **08 — Upgrade:** prior registered and disk-only ordinary/sandbox dashboards
+   migrate once before runs/traffic; marker commits only on success. Interrupted
+   retry has no duplicates. Restart/later agent/draft additions do not import.
+   Fresh home without prior runtime state initializes without discovery.
+9. **09 — Claim:** browser claim preserves URL, publishes current HTML and
+   makes claimant owner/private; former members and Team job denied. Concurrent
+   claims yield one owner; subsequent deliberate grants permit recipients.
+10. **10 — Lifecycle:** remove draft only, reader still reads publication;
+    retained history restore recreates draft/republishes and preserves ACLs;
+    restart persists owner/grants/link; owner HTTP/tool delete clears dashboard
+    artifacts and retains DB; recreate has fresh identity/private owner. Verify
+    revoke/update and delete/recreate races through real dispatch regressions.
+11. **11 — Home:** sidebar Agents → Dashboards → Teams with active state;
+    owned grouped by agent including inaccessible agents, shared owner/mode,
+    empty states, parameterized pages without broken Open, owner access/delete
+    from home, non-member direct-link login, single-user sidebar.
+
+Record implementation revision, isolated homes/ports, exact commands and
+PASS/FAIL/NOT RUN per scenario/AC in `validation/notes.md`, with evidence links.
+Screenshots alone do not establish denied server-side mutation.

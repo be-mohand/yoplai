@@ -166,7 +166,7 @@ async function dispatchInternalTool(
   userId?: string,
   emitProgress?: ContainerTokenContext["emitProgress"],
   signal?: AbortSignal,
-  identity?: Pick<ContainerTokenContext, "sessionOwnerId" | "requesterId" | "conversationFiles">
+  identity?: Pick<ContainerTokenContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind">
 ): Promise<unknown> {
   signal?.throwIfAborted();
   const config = deps.getConfig();

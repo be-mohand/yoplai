@@ -28,6 +28,8 @@ export type SdkRunParams = {
   agentId: string;
   agent: AgentConfig;
   userId?: string;
+  actorUserId?: string;
+  actorKind?: "user" | "service" | "local" | "eval";
   sessionOwnerId?: string | null;
   requesterId?: string;
   sessionId: string;

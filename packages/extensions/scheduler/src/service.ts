@@ -657,6 +657,22 @@ export class SchedulerService {
       model: agent.model.model,
     };
 
+    let authorityError: string | undefined;
+    if (credentialMode === "owner") {
+      if (!ownerUserId) {
+        authorityError = "Scheduled job owner is missing; assign an owner before running it.";
+      } else if (config.extensions?.multiUser?.enabled) {
+        const { getMultiUserRuntime, getEligibleAccount, hasAgentAccess } = await import("@yoplai/extension-multi-user");
+        const runtime = getMultiUserRuntime();
+        const account = runtime && getEligibleAccount(runtime.db, ownerUserId, { approvalBypass: "superadmin" });
+        if (!account || !(await hasAgentAccess({ user: { id: account.id, email: account.email, role: account.role, approved: true }, session: { id: "scheduler-owner", userId: account.id } }, agent.id))) authorityError = "Agent access denied";
+      }
+    }
+    if (authorityError) {
+      const message = authorityError;
+      return this.completeAndRelease(key, { ledgerRun, payload, job, scheduledRunAt, agent, workspaceDir, model: outputModel, firedAt, status: "error", statusLabel: "error", error: new Error(message), errorMessage: message });
+    }
+
     let prompt = payload.message ?? "";
     let gateOutput: string | undefined;
     let runKind: SchedulerRunKind | undefined;
@@ -765,11 +781,11 @@ export class SchedulerService {
     // actually settles — even if executeJob returns early due to timeout —
     // so the next scheduled fire cannot overlap with a still-aborting run.
     let missingCredentialError: string | undefined;
-    const runPromise = credentialMode === "owner" && !ownerUserId
-      ? Promise.reject(new Error("Scheduled job owner is missing; reconnect the owner's credentials after assigning an owner."))
-      : ctx.runAgent({
+    const runPromise = ctx.runAgent({
       agentId: job.agentId,
       userId: credentialMode === "owner" ? ownerUserId : undefined,
+      actorUserId: config.extensions?.multiUser?.enabled ? (credentialMode === "owner" ? ownerUserId : undefined) : "local",
+      actorKind: config.extensions?.multiUser?.enabled ? (credentialMode === "owner" ? "user" : "service") : "local",
       message: prompt,
       sessionId,
       model: job.model,

@@ -1230,6 +1230,9 @@ export type AgentTraceContext = {
 
 export type RunAgentParams = {
   agentId: string;
+  /** Trusted dashboard authority, independent of credential selection. */
+  actorUserId?: string;
+  actorKind?: "user" | "service" | "local" | "eval";
   /** Trusted requester resolved by the host or messaging transport; absent when unpaired. */
   userId?: string;
   /** Session store owner; undefined follows requester, null selects shared storage. */
@@ -1478,6 +1481,8 @@ export type ExtensionAgentToolContext = {
   env?: Record<string, string>;
   sessionId?: string;
   userId?: string;
+  actorUserId?: string;
+  actorKind?: "user" | "service" | "local" | "eval";
   sessionOwnerId?: string | null;
   requesterId?: string;
   signal?: AbortSignal;
@@ -1525,6 +1530,8 @@ export type ExtensionHookContext = {
   config: GatewayConfig;
   env?: Record<string, string>;
   userId?: string;
+  actorUserId?: string;
+  actorKind?: "user" | "service" | "local" | "eval";
   sessionOwnerId?: string | null;
   requesterId?: string;
   resolveOAuth?: OAuthTokenResolver;
@@ -2583,6 +2590,8 @@ export const ContainerInputSchema = z.object({
   // namespaces existed.
   runId: z.string().optional(),
   userId: z.string().optional(),
+  actorUserId: z.string().optional(),
+  actorKind: z.enum(["user", "service", "local", "eval"]).optional(),
   message: z.string(),
   attachments: z.array(FileAttachmentSchema).optional(),
   imageInputSupported: z.boolean().optional(),

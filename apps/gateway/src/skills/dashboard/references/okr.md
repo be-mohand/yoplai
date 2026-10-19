@@ -1,6 +1,6 @@
 # OKR dashboards
 
-Templates: `okr-teams` (public), `okr-me` (private), `okr-reports` (manager). Data lives in its own `data/okr.db`, built from `templates/okr/data/migrations/001_okr.sql` and `templates/okr/data/okr_sample.sql` (named `okr_sample.sql`, not `sample.sql`, so copying it never clobbers the HR family's `data/sample.sql` when both are seeded into the same workspace), following the same copy-then-`sqlite3`-load steps as any other family (see the main `SKILL.md` "Start from a template" section).
+Templates: `okr-teams` (platform rollup), `okr-me` (personal), `okr-reports` (manager). Every new page is private to its creator; these labels describe data, not automatic sharing. Owners deliberately share each page from **Dashboards** with selected users or eligible platform accounts; there is no team grant. Data lives in its own `data/okr.db`, built from `templates/okr/data/migrations/001_okr.sql` and `templates/okr/data/okr_sample.sql` (named `okr_sample.sql`, not `sample.sql`, so copying it never clobbers the HR family's `data/sample.sql` when both are seeded into the same workspace), following the same copy-then-`sqlite3`-load steps as any other family (see the main `SKILL.md` "Start from a template" section).
 
 ## Data model and formulas
 
@@ -27,6 +27,8 @@ Updates happen by chat: the agent edits `okr_items` rows and their `updated_at`.
 To DM someone their private link, the agent needs their Slack user id. Look it up once with `slack.list_users` (by display name), confirm the match with the person before storing it, then set `employees.slack_user_id`. Skip the DM (don't guess an id) for anyone whose `slack_user_id` is still `NULL`.
 
 ## Weekly check-in recipe
+
+Create/publish each page once with `dashboard_create`; use `dashboard_update` for HTML changes and `dashboard_link` only for readable URLs. Sharing a rollup never shares its personal/manager detail pages. A Team-mode job can read platform-wide or legacy pages and publish only platform-wide write or legacy pages; use a saved eligible owner with agent access for private/individual-share jobs. Live SQL updates do not require HTML republication. Single-user jobs use the local owner; isolated evals use their synthetic owner.
 
 Schedule a weekly job with `scheduler.create_job` (Monday morning, agent's timezone). Use its `deliver` option — not a `slack.send_message` call — for the team-wide post, because `deliver` runs at the runtime level after the job resolves and posting yourself via `slack.send_message` would duplicate it. Have the job's `message` instruct the agent to reply with only the team rollup and the `okr-teams.html` link (never item titles), since whatever the agent replies is exactly what `deliver` posts:
 

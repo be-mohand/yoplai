@@ -5,6 +5,7 @@ const sectionRoutes: Array<[RegExp, string]> = [
   [/^\/agents\/[^/]+\/extensions\/[^/]+$/, "Extension"],
   [/^\/agents\/[^/]+\/edit$/, "Edit Agent"],
   [/^\/agents$/, "Agents"],
+  [/^\/dashboards(?:\/.*)?$/, "Dashboards"],
   [/^\/teams$/, "Teams"],
   [/^\/admin\/users$/, "Users"],
   [/^\/login$/, "Sign in"],
