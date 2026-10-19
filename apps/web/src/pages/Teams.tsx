@@ -567,6 +567,7 @@ function TeamDetail(props: {
                 value={selectedUser()}
                 disabled={busy() || users.loading || addableUsers().length === 0}
                 onChange={setSelectedUser}
+                onEnter={handleAdd}
                 users={addableUsers().map((user) => ({
                   id: user.id,
                   label: user.name && user.email ? `${user.name} (${user.email})` : userLabel(user.id, directory()),

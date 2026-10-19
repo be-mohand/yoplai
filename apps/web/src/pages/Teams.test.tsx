@@ -139,7 +139,7 @@ describe("team organization", () => {
     expect(rows.find((row) => row.textContent?.includes("Henry"))?.textContent).toContain("Private");
   });
 
-  it("adds a searched member, stages All users, and saves from the footer", async () => {
+  it("adds a searched member with Enter, stages All users, and saves from the footer", async () => {
     const { setTeamMembers } = await import("../api/teams");
     vi.mocked(setTeamMembers).mockResolvedValue({ teamId: team.id, allUsers: false, members: [] });
     mocks.fetchUsers.mockResolvedValue([{ id: "user-2", name: "Dana", email: "dana@example.test", role: "user", approved: true }]);
@@ -156,8 +156,9 @@ describe("team organization", () => {
     expect(save().disabled).toBe(true);
     search.value = "dana@";
     search.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    await vi.waitFor(() => dialog().querySelector<HTMLElement>('[role="option"]')!.click());
-    await click("Add");
+    await vi.waitFor(() => expect(dialog().querySelector('[role="option"]')).not.toBeNull());
+    search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(search.value).toBe("");
     expect(dialog().textContent).toContain("dana@example.test");
     const allUsers = dialog().querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(allUsers.closest("label")?.textContent).toContain("All users");

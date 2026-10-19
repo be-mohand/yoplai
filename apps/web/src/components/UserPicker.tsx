@@ -2,11 +2,13 @@ import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untr
 
 const MAX_RESULTS = 50;
 
-/** Searchable user combobox: type part of a name or email, then pick with the mouse or arrow keys + Enter. */
+/** Searchable user combobox: type part of a name or email, then pick with the mouse or arrow keys + Enter. Enter also calls `onEnter` after a pick. */
 export function UserPicker(props: {
   users: { id: string; label: string }[];
   value: string;
   onChange: (id: string) => void;
+  /** Called after Enter picks a user, or on Enter when a user is already picked. */
+  onEnter?: () => void;
   disabled?: boolean;
   class?: string;
 }) {
@@ -38,6 +40,10 @@ export function UserPicker(props: {
     } else if (event.key === "Enter" && open() && matches()[active()]) {
       event.preventDefault();
       pick(matches()[active()]!);
+      props.onEnter?.();
+    } else if (event.key === "Enter" && !open() && props.value) {
+      event.preventDefault();
+      props.onEnter?.();
     } else if (event.key === "Escape" && open()) {
       // Close only the list, not the surrounding modal.
       event.stopPropagation();
