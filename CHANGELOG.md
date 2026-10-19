@@ -19,6 +19,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Changed
 
 - The agent Dashboards tab and the Dashboards page use one aligned row layout: title, an access pill (Private, Can view, Can edit, people count or Everyone) and fixed icon actions. "Manage access" opens a new Share dialog with "People with access" and "General access". Superadmins see "Owned by" for dashboards that nobody shared with them.
+- The Dashboards page shows each agent group with the agent avatar and puts the dashboard rows in a bordered panel. More space separates the sections.
 - Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
 - Threadit masking now hides JSON secret values with escaped quotes whole; tool names that are raw commands (Codex style) are labelled `Running: …` and masked.
 - Project create/rename/delete and chat rename/delete now use in-app dialogs instead of native prompts; project page redesigned with chats list and context cards (Instructions, Files, References, Notes) in a right rail. Instructions and Notes render as markdown and are edited in a modal (Edit button; Esc cancels, ⌘/Ctrl+Enter saves). In project chats, the header shows the project as a pill next to the agent name and the back button returns to the project.

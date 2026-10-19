@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { fetchAgents } from "../api/agents";
 import { deleteDashboard, fetchDashboards, type DashboardRow } from "../api/dashboards";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { DashboardListRow } from "../components/DashboardListRow";
@@ -6,14 +7,16 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 
 export function Dashboards() {
   const [dashboards, { refetch }] = createResource(fetchDashboards);
+  const [agents] = createResource(() => fetchAgents().catch(() => []));
+  const avatarOf = (agentId: string) => agents()?.find((agent) => agent.id === agentId)?.avatar;
   const [managing, setManaging] = createSignal<DashboardRow>();
   const [deleting, setDeleting] = createSignal<DashboardRow>();
   const [deleteError, setDeleteError] = createSignal<string>();
   const data = () => dashboards.error ? undefined : dashboards();
   const groups = createMemo(() => {
-    const result = new Map<string, { name: string; rows: DashboardRow[] }>();
+    const result = new Map<string, { id: string; name: string; rows: DashboardRow[] }>();
     for (const row of data()?.owned ?? []) {
-      const group = result.get(row.agentId) ?? { name: row.agentName, rows: [] };
+      const group = result.get(row.agentId) ?? { id: row.agentId, name: row.agentName, rows: [] };
       group.rows.push(row);
       result.set(row.agentId, group);
     }
@@ -30,7 +33,17 @@ export function Dashboards() {
       <Show when={dashboards.loading}><p>Loading dashboards…</p></Show>
       <section><h2>My dashboards</h2>
         <For each={groups()} fallback={<Show when={!dashboards.loading && !dashboards.error}><p>You do not own any dashboards yet.</p></Show>}>{(group) => (
-          <section><h3>{group.name}</h3><ul><For each={group.rows}>{row}</For></ul></section>
+          <section class="dashboards-group">
+            <h3>
+              <span class="dashboards-group__avatar" aria-hidden="true">
+                <Show when={avatarOf(group.id)} fallback={group.name.slice(0, 1).toUpperCase()}>
+                  {(avatar) => <Show when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())} fallback={avatar()}><img src={avatar()} alt="" /></Show>}
+                </Show>
+              </span>
+              {group.name}
+            </h3>
+            <ul class="dashboards-list"><For each={group.rows}>{row}</For></ul>
+          </section>
         )}</For>
       </section>
       <Show when={managing()}>{(dashboard) => <DashboardAccessDialog dashboard={dashboard()} onClose={() => setManaging(undefined)} onSaved={async () => { await refetch(); }} />}</Show>
@@ -39,17 +52,23 @@ export function Dashboards() {
         catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Unable to delete dashboard."); }
       }} />}</Show>
       <section><h2>Shared with me</h2>
-        <ul><For each={data()?.shared ?? []} fallback={<Show when={!dashboards.loading && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => (
+        <ul class="dashboards-list"><For each={data()?.shared ?? []} fallback={<Show when={!dashboards.loading && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => (
           <li><DashboardListRow dashboard={dashboard} showAgent reserveDelete /></li>
         )}</For></ul>
       </section>
       <style>{`
         .dashboards-page { flex: 1; min-width: 0; overflow: auto; padding: 32px; color: var(--text-primary); }
-        .dashboards-page > section { margin-top: 32px; }
+        .dashboards-page > section { margin-top: 48px; }
         .dashboards-page h1 { font-size: 24px; }
-        .dashboards-page h2 { font-size: 19px; }
-        .dashboards-page h3 { font-size: 15px; color: var(--text-secondary); }
-        .dashboards-page ul { list-style: none; padding: 0; }
+        .dashboards-page h2 { margin: 0 0 16px; font-size: 19px; }
+        .dashboards-group + .dashboards-group { margin-top: 24px; }
+        .dashboards-page h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+        .dashboards-group__avatar { display: inline-grid; place-items: center; width: 20px; height: 20px; flex-shrink: 0; overflow: hidden; border-radius: 999px; background: var(--accent-bg, rgba(59, 130, 246, 0.14)); color: var(--accent, #3b82f6); font-size: 11px; font-weight: 700; }
+        .dashboards-group__avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .dashboards-page ul { list-style: none; padding: 0; margin: 0; }
+        .dashboards-page .dashboards-list { padding: 0 16px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-surface); }
+        .dashboards-list > li:last-child .dashboard-list-row { border-bottom: 0; }
+        .dashboards-list > li:only-child:not(:has(.dashboard-list-row)) { padding: 12px 0; color: var(--text-secondary); }
       `}</style>
     </main>
   );
