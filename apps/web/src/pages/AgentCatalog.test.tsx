@@ -14,7 +14,9 @@ const {
   useSessionMock,
   fetchMainAgentPreferenceMock,
   saveMainAgentPreferenceMock,
+  navigateMock,
 } = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
   fetchMainAgentPreferenceMock: vi.fn(),
   saveMainAgentPreferenceMock: vi.fn(),
   fetchAgentsMock: vi.fn(),
@@ -57,6 +59,7 @@ vi.mock("@solidjs/router", () => ({
     }
     return a;
   },
+  useNavigate: () => navigateMock,
 }));
 
 import { AgentCatalog } from "./AgentCatalog";
@@ -273,6 +276,33 @@ describe("AgentCatalog action states", () => {
     await mountCatalog();
     dispose();
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+});
+
+describe("AgentCatalog card click", () => {
+  it("opens a chat with the fork agent from anywhere on the card except its icons", async () => {
+    navigateMock.mockReset();
+    setSession("user");
+    fetchPoolMock.mockResolvedValue([agent("scribe")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("scribe", "chat", "scribe-fork")]);
+    fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
+    await mountCatalog();
+
+    container.querySelector<HTMLButtonElement>('button[aria-label="Make scribe your main agent"]')!.click();
+    expect(navigateMock).not.toHaveBeenCalled();
+    Array.from(container.querySelectorAll("div")).find((node) => node.textContent === "scribe")!.click();
+    expect(navigateMock).toHaveBeenCalledWith("/chat/scribe-fork");
+  });
+
+  it("does not open a chat from a card the user cannot chat", async () => {
+    navigateMock.mockReset();
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent("scribe")]);
+    fetchPoolActionsMock.mockResolvedValue([entry("scribe", "assign_to_team")]);
+    await mountCatalog();
+
+    Array.from(container.querySelectorAll("div")).find((node) => node.textContent === "scribe")!.click();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });
 

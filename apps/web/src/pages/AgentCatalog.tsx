@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
-import { A } from "@solidjs/router";
+import { A, useNavigate } from "@solidjs/router";
 import { fetchAgents, fetchPool } from "../api";
 import { startNewChat } from "../api/chat";
 import {
@@ -30,6 +30,7 @@ function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
 export function AgentCatalog() {
   const [mainAgent, { mutate: setMainAgent }] = createResource(() => fetchMainAgentPreference().catch(() => null));
   const [savingMain, setSavingMain] = createSignal<string | null>(null);
+  const navigate = useNavigate();
   const [pendingMain, setPendingMain] = createSignal<{ chatAgentId: string; name: string } | null>(null);
   const [mainAgentError, setMainAgentError] = createSignal("");
   const [agents] = createResource(() =>
@@ -124,7 +125,18 @@ export function AgentCatalog() {
         <div class="catalog-grid" data-tour="agent-grid">
           <For each={sortedAgents()}>
             {(agent, index) => (
-              <div class="catalog-card" classList={{ "is-main": isMainCard(agent.id) }} data-tour={index() === 0 ? "agent-card" : undefined}>
+              <div
+                class="catalog-card"
+                classList={{ "is-main": isMainCard(agent.id), "is-chattable": !!mainAgentIdFor(agent.id) }}
+                data-tour={index() === 0 ? "agent-card" : undefined}
+                // Whole-card click starts a chat; the Chat link stays the keyboard path.
+                onClick={(event) => {
+                  const chatAgentId = mainAgentIdFor(agent.id);
+                  if (!chatAgentId || (event.target as Element).closest("a, button")) return;
+                  startNewChat(chatAgentId);
+                  navigate(`/chat/${chatAgentId}`);
+                }}
+              >
                 <Show when={canEditAgent(actionByPool().get(agent.id))}>
                   <A
                     href={`/agents/${agent.id}/edit`}
@@ -272,6 +284,8 @@ export function AgentCatalog() {
           border-radius: 12px;
           transition: border-color 0.2s ease, background 0.2s ease;
         }
+
+        .catalog-card.is-chattable { cursor: pointer; }
 
         .catalog-card:hover,
         .catalog-card:focus-within {
