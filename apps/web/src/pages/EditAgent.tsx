@@ -35,6 +35,7 @@ import { addMcpServer, cachedMcpServers, fetchMcpPersonalStatus, mcpDisplayName,
 import { hasStaffRole as hasAdminRole, isSuperadmin as isSuperadminRole } from "../lib/roles";
 import { onOAuthReturn, reserveOAuthPopup } from "../lib/oauth-popup";
 import { claimDashboard } from "../api/dashboards";
+import { DashboardListActions, DashboardListRow, ownershipLabel } from "../components/DashboardListRow";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 
@@ -231,39 +232,8 @@ export function EditAgent() {
   const [accessDashboard, setAccessDashboard] = createSignal<AgentDashboard>();
   const [claimTarget, setClaimTarget] = createSignal<AgentDashboard>();
   const [claimError, setClaimError] = createSignal<string>();
-  const DashboardAccess = (props: { dashboard: AgentDashboard }) => (
-    <>
-      <Show when={props.dashboard.legacy} fallback={<span>{props.dashboard.isOwner ? "Owned by you" : `Shared by ${props.dashboard.ownerName ?? "Unknown user"}`}</span>}>
-        <button type="button" onClick={() => { setClaimError(undefined); setClaimTarget(props.dashboard); }}>Claim dashboard</button>
-      </Show>
-      <Show when={props.dashboard.isOwner}><button type="button" onClick={() => setAccessDashboard(props.dashboard)}>Manage access</button></Show>
-    </>
-  );
-  const [copiedSlug, setCopiedSlug] = createSignal<string | null>(null);
   const sections = createMemo(() => dashboardSections(dashboards.loading || dashboards.error ? [] : dashboards() ?? []));
-  const copyDashboardLink = async (slug: string, link: string) => {
-    try {
-      await navigator.clipboard.writeText(new URL(link, window.location.origin).href);
-      setCopiedSlug(slug);
-    } catch {
-      setCopiedSlug(null);
-    }
-  };
-  const DashboardRow = (props: { dashboard: AgentDashboard }) => (
-    <div class="edit-agent-dashboard-row">
-      <div>
-        <strong>{props.dashboard.title}</strong>
-        <span>Updated {props.dashboard.updatedAt ? new Date(props.dashboard.updatedAt).toLocaleString() : "—"}</span>
-      </div>
-      <div class="edit-agent-dashboard-actions">
-        <a href={props.dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
-        <button type="button" onClick={() => void copyDashboardLink(props.dashboard.slug, props.dashboard.link)}>
-          {copiedSlug() === props.dashboard.slug ? "Copied" : "Copy link"}
-        </button>
-        <DashboardAccess dashboard={props.dashboard} />
-      </div>
-    </div>
-  );
+  const openClaim = (dashboard: AgentDashboard) => { setClaimError(undefined); setClaimTarget(dashboard); };
 
   const [extensions, { refetch: refetchExtensions }] =
     createResource(() => dashboardAgentId() ?? (isAdmin() ? params.agentId : null), fetchAgentExtensions);
@@ -486,7 +456,7 @@ export function EditAgent() {
             </Show>
             <Show when={!dashboards.error}>
               <ul class="edit-agent-dashboard-list">
-                <For each={sections().top}>{(dashboard) => <li class="edit-agent-dashboard"><DashboardRow dashboard={dashboard} /></li>}</For>
+                <For each={sections().top}>{(dashboard) => <li class="edit-agent-dashboard"><DashboardListRow dashboard={dashboard} onManage={() => setAccessDashboard(dashboard)} onClaim={() => openClaim(dashboard)} /></li>}</For>
               </ul>
               <Show when={sections().sub.length}>
                 <div class="edit-agent-subpages">
@@ -503,7 +473,10 @@ export function EditAgent() {
                             <>{i() > 0 ? ", " : ""}<a href={parent.link} target="_blank" rel="noopener noreferrer">{parent.title}</a></>
                           )}</For>
                         </Show>
-                        <DashboardAccess dashboard={item.dashboard} />
+                        <span>{" · "}{ownershipLabel(item.dashboard)}</span>
+                        <span class="edit-agent-subpage-actions">
+                          <DashboardListActions dashboard={item.dashboard} onManage={() => setAccessDashboard(item.dashboard)} onClaim={() => openClaim(item.dashboard)} />
+                        </span>
                       </li>
                     )}</For>
                   </ul>
@@ -688,33 +661,13 @@ export function EditAgent() {
           padding: 0;
         }
 
-        .edit-agent-dashboard-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 16px;
-          padding: 14px 0;
-          border-bottom: 1px solid var(--border-default);
-        }
-
         .edit-agent-subpages { margin-top: 20px; font-size: 13px; color: var(--text-secondary); }
         .edit-agent-subpages p { margin: 4px 0 8px; font-size: 12px; }
         .edit-agent-subpages ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+        .edit-agent-subpages li { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+        .edit-agent-subpage-actions { margin-left: auto; }
         .edit-agent-subpages strong { color: var(--text-primary); }
         .edit-agent-subpages span { font-size: 12px; }
-
-        .edit-agent-dashboard strong, .edit-agent-dashboard span { display: block; }
-        .edit-agent-dashboard strong { color: var(--text-primary); }
-        .edit-agent-dashboard span { margin-top: 4px; font-size: 12px; }
-        .edit-agent-dashboard-actions { display: flex; gap: 12px; white-space: nowrap; }
-        .edit-agent-dashboard-actions a, .edit-agent-dashboard-actions button {
-          border: 0;
-          background: none;
-          color: var(--accent, #3b82f6);
-          cursor: pointer;
-          font: inherit;
-          text-decoration: none;
-        }
 
         .edit-agent-back {
           display: inline-block;

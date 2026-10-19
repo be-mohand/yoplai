@@ -1,8 +1,8 @@
 import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { deleteDashboard, fetchDashboards, type DashboardRow } from "../api/dashboards";
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
+import { DashboardListRow } from "../components/DashboardListRow";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
-import { Button } from "../components/ui/Button";
 
 export function Dashboards() {
   const [dashboards, { refetch }] = createResource(fetchDashboards);
@@ -20,14 +20,8 @@ export function Dashboards() {
     return [...result.values()];
   });
   const row = (dashboard: DashboardRow) => (
-    <li class="dashboard-row">
-      <div><strong>{dashboard.title}</strong><p>Published {dashboard.publishedAt ? new Date(dashboard.publishedAt).toLocaleString() : "—"} · {dashboard.shares?.length ? dashboard.shares.some((share) => share.kind === "all") ? "Everyone on the platform" : `${dashboard.shares.length} selected users` : "Private"}</p></div>
-      <Show when={dashboard.params.length === 0} fallback={<span>Needs parameters: {dashboard.params.join(", ")}</span>}>
-        <a href={dashboard.link} target="_blank" rel="noopener noreferrer">Open</a>
-      </Show>
-      <Button variant="secondary" onClick={() => setManaging(dashboard)}>Manage access</Button>
-      <Button variant="danger" onClick={() => { setDeleteError(undefined); setDeleting(dashboard); }}>Delete</Button>
-    </li>
+    <li><DashboardListRow dashboard={dashboard} onManage={() => setManaging(dashboard)}
+      onDelete={() => { setDeleteError(undefined); setDeleting(dashboard); }} /></li>
   );
   return (
     <main class="dashboards-page">
@@ -46,9 +40,7 @@ export function Dashboards() {
       }} />}</Show>
       <section><h2>Shared with me</h2>
         <ul><For each={data()?.shared ?? []} fallback={<Show when={!dashboards.loading && !dashboards.error}><li>No dashboards have been shared with you.</li></Show>}>{(dashboard) => (
-          <li class="dashboard-row"><div><strong>{dashboard.title}</strong><p>{dashboard.ownerName} · {dashboard.mode} · {dashboard.agentName}</p></div>
-            <Show when={dashboard.params.length === 0} fallback={<span>Needs parameters: {dashboard.params.join(", ")}</span>}><a href={dashboard.link} target="_blank" rel="noopener noreferrer">Open</a></Show>
-          </li>
+          <li><DashboardListRow dashboard={dashboard} showAgent reserveDelete /></li>
         )}</For></ul>
       </section>
       <style>{`
@@ -58,10 +50,6 @@ export function Dashboards() {
         .dashboards-page h2 { font-size: 19px; }
         .dashboards-page h3 { font-size: 15px; color: var(--text-secondary); }
         .dashboards-page ul { list-style: none; padding: 0; }
-        .dashboard-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--border-default); }
-        .dashboard-row > div:first-child { flex: 1; min-width: 180px; }
-        .dashboard-row p { font-size: 13px; color: var(--text-secondary); margin: 6px 0 0; }
-        .dashboard-row a { color: var(--text-primary); }
       `}</style>
     </main>
   );

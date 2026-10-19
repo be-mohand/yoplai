@@ -43,6 +43,16 @@ describe("dashboard file enumeration", () => {
     expect(list.map((d) => d.slug)).toEqual(["a.html", "b.html"]);
   });
 
+  it("list API: shared is true only for recipients, not superadmins or owners", async () => {
+    const entry = await registry.link("agent-1", "a.html");
+    await registry.claim(entry.id, "owner-1", "<h1>a</h1>");
+    await registry.replaceShares(entry.id, [{ kind: "user", id: "reader-1", mode: "read" }]);
+    const rows = (actor: object) => listAgentDashboards(agent(), registry, config, { actor: { eligible: true, ...actor } });
+    expect((await rows({ userId: "reader-1" }))[0]!.shared).toBe(true);
+    expect((await rows({ userId: "admin-1", superadmin: true }))[0]!.shared).toBe(false);
+    expect((await rows({ userId: "owner-1" }))[0]!.shared).toBe(false);
+  });
+
   it("list API: missing directory yields empty list", async () => {
     await fs.rm(dir, { recursive: true });
     expect(await listAgentDashboards(agent(), registry, config)).toEqual([]);

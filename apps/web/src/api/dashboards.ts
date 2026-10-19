@@ -17,6 +17,7 @@ export type DashboardRow = {
   publishedAt: string | null;
   legacy: boolean;
   isOwner: boolean;
+  shared: boolean;
   ownerName: string | null;
   mode: "read" | "write";
   shares?: DashboardShare[];

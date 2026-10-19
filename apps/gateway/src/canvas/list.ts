@@ -66,6 +66,8 @@ export async function listAgentDashboards(
       title, slug: entry.slug, params, linksTo: [...linksTo], updatedAt,
       link: `${dashboardBaseUrl(config)}/d/${entry.id}`,
       publishedAt: entry.publishedAt ?? null, legacy: !entry.ownerUserId, isOwner,
+      shared: !!entry.ownerUserId && !isOwner && !!context.actor.userId &&
+        !!entry.shares?.some((share) => share.kind === "all" || share.id === context.actor.userId),
       ownerName: entry.ownerUserId ? await context.ownerName?.(entry.ownerUserId) ?? entry.ownerUserId : null,
       mode: dashboardAccessPolicy.canWrite(entry, context.actor) ? "write" as const : "read" as const,
       ...(isOwner ? { shares: entry.shares ?? [] } : {}),

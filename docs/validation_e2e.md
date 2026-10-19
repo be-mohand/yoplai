@@ -320,7 +320,7 @@ Implemented dashboard-scoped contracts, outside the agent-gated subtree:
 `Share` is `{kind:"user",id,mode:"read"|"write"}` or
 `{kind:"all",mode:"read"|"write"}`; no teams/duplicates/ineligible recipients.
 `DashboardRow` includes registration id, agent id/name, title, slug, link,
-params/linksTo, updatedAt/publishedAt, legacy/isOwner, ownerName/mode and
+params/linksTo, updatedAt/publishedAt, legacy/isOwner/shared, ownerName/mode and
 owner-only shares. Validation/auth errors use `{error:string}`: unauthenticated
 API 401, ineligible API 403, invalid shares 400. Unavailable/unauthorized
 dashboard responses use Hono's plain-text 404; publication/IO failures use its
