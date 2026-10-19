@@ -51,15 +51,22 @@ describe("dashboard file enumeration", () => {
   it("dashboard_link does not discover or register drafts", async () => {
     await canvasExtension.start({ getDataDir: () => root } as never);
     const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
-    const result = (await tool.execute({}, {} as never)) as { slug: string }[];
-    expect(result.map((d) => d.slug)).toEqual([]);
+    const result = (await tool.execute({}, {} as never)) as { dashboards: { slug: string }[] };
+    expect(result.dashboards.map((d) => d.slug)).toEqual([]);
   });
 
   it("dashboard_link discovery: missing directory yields empty list", async () => {
     await fs.rm(dir, { recursive: true });
     await canvasExtension.start({ getDataDir: () => root } as never);
     const [tool] = await canvasExtension.getAgentTools!(agent(), { config });
-    expect(await tool.execute({}, {} as never)).toEqual([]);
+    expect(await tool.execute({}, {} as never)).toMatchObject({ dashboards: [] });
+  });
+
+  it("tells every run to list dashboards only through dashboard_link", async () => {
+    expect(await canvasExtension.getSystemPromptContributions!(agent(), { config } as never)).toContain("dashboard_link");
+    expect(
+      await canvasExtension.getSystemPromptContributions!(agent(), { config: { ...config, canvas: { enabled: false } } } as never)
+    ).toBeUndefined();
   });
 
   it("viewer link map: only regular .html files, not directories", async () => {

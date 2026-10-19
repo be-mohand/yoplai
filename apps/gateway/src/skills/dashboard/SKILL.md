@@ -17,7 +17,7 @@ Create a dashboard when the answer is recurring, data-heavy, or will be revisite
 
 These hold on every page; the platform, sharing, and data safety depend on them.
 
-1. Discover readable pages with `dashboard_link` without a slug. Never reveal unavailable dashboards, their titles or links. Inspect the relevant `data/` and `data/migrations/`; update accessible existing files in place.
+1. Discover readable pages with `dashboard_link` without a slug, never from `data/dashboards/`, memory or notes. Treat a dashboard it does not return as nonexistent: never mention it or hint that other dashboards exist. Inspect the relevant `data/` and `data/migrations/`; update accessible existing files in place.
 2. Pages live at `data/dashboards/<slug>.html`. Load only platform assets (`/d-assets/v2/…`); Canvas CSP blocks everything else. Follow [canvas.md](references/canvas.md) for SQL blocks and the runtime. Link only to pages that exist in `data/dashboards/`: `YOPLAI.link` throws on an unknown slug and breaks the page, so create the drill-down page (e.g. copy the template's `client.html`) or leave the link out.
 3. Put all page code in one `<script type="module">`; a classic script breaks on names like `top` or `location`. Use `addEventListener`, not inline `on*=` handlers. Publication tools return static/query validation; use the visual recipe below for browser checks.
 4. Keep derived SQLite databases under `data/`, schema in `data/migrations/`, every mutable table with `updated_at`. If markdown or another source is authoritative, keep the database rebuildable from it. See [data.md](references/data.md).

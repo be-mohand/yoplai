@@ -143,16 +143,15 @@ describe("dashboard registry and tool", () => {
     )) as {
       link: string;
     };
-    const listed = (await tools.find((tool) => tool.name === "dashboard_link")!.execute({}, {} as never)) as Array<{
-      link: string;
-      slug: string;
-    }>;
+    const listed = (await tools.find((tool) => tool.name === "dashboard_link")!.execute({}, {} as never)) as {
+      dashboards: Array<{ link: string; slug: string }>;
+    };
 
     expect(first.link).toMatch(
       /^https:\/\/yoplai\.test\/d\/[A-Za-z0-9_-]{32}$/
     );
     expect(second.link).toBe(first.link);
-    expect(listed).toEqual([
+    expect(listed.dashboards).toEqual([
       expect.objectContaining({ slug: "hello.html", link: first.link }),
     ]);
   });
@@ -278,16 +277,14 @@ describe("dashboard registry and tool", () => {
     const tools = await canvasExtension.getAgentTools!(agent(), { config });
     const tool = tools.find((tool) => tool.name === "dashboard_link")!;
 
-    const first = (await tool.execute({}, {} as never)) as Array<{
-      link: string;
-      slug: string;
-    }>;
-    const second = (await tool.execute({}, {} as never)) as Array<{
-      link: string;
-      slug: string;
-    }>;
+    const first = (await tool.execute({}, {} as never)) as {
+      dashboards: Array<{ link: string; slug: string }>;
+    };
+    const second = (await tool.execute({}, {} as never)) as {
+      dashboards: Array<{ link: string; slug: string }>;
+    };
 
-    expect(first).toEqual([]);
+    expect(first.dashboards).toEqual([]);
     expect(second).toEqual(first);
   });
 
@@ -364,7 +361,7 @@ describe("dashboard registry and tool", () => {
     } as never);
     const tool = (await canvasExtension.getAgentTools!(agent(), { config })).find((tool) => tool.name === "dashboard_link")!;
 
-    await expect(tool.execute({}, {} as never)).resolves.toEqual([]);
+    await expect(tool.execute({}, {} as never)).resolves.toMatchObject({ dashboards: [] });
   });
 
   it("deduplicates concurrent links", async () => {

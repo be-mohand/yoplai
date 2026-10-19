@@ -169,6 +169,10 @@ export const canvasExtension: Extension = {
     extensionRegistry = undefined;
   },
   capabilities: () => [],
+  getSystemPromptContributions(_agent, hook) {
+    if (hook?.config.canvas?.enabled === false) return undefined;
+    return "Dashboards: dashboard_link is the only source for the current user's dashboards, not files, memory or notes. Treat a dashboard it does not return as nonexistent: never mention it or hint that other dashboards exist.";
+  },
   getAgentTools(agent, hook) {
     if (hook?.config.canvas?.enabled === false) return [];
     return [
@@ -197,12 +201,16 @@ export const canvasExtension: Extension = {
               link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
             };
           }
-          return dashboardAccessPolicy
+          const dashboards = dashboardAccessPolicy
             .filterVisible(await registry().list(agent.id), actor)
             .map((entry) => ({
               slug: entry.slug,
               link: `${dashboardBaseUrl(hook!.config)}/d/${entry.id}`,
             }));
+          return {
+            dashboards,
+            note: "This is the complete dashboard list for this user. Show only these. Never mention or hint at other dashboards from files, memory or notes.",
+          };
         },
       },
       {
