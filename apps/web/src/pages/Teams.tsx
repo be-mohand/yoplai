@@ -398,7 +398,7 @@ function TeamDetail(props: {
   const [pool] = createResource(fetchPool);
   const poolAgent = (poolId: string) => (pool.error ? undefined : pool())?.find((agent) => agent.id === poolId);
   const [agentBusy, setAgentBusy] = createSignal(false);
-  const [removeTarget, setRemoveTarget] = createSignal<{ poolId: string; name: string; lastTeam: boolean } | null>(null);
+  const [removeTarget, setRemoveTarget] = createSignal<{ poolId: string; name: string; lastTeam: boolean; public: boolean } | null>(null);
 
   const handleUnassign = async (poolId: string) => {
     if (agentBusy()) return;
@@ -684,7 +684,7 @@ function TeamDetail(props: {
                             aria-label={`Remove ${name()} from team`}
                             title="Remove from team"
                             disabled={agentBusy()}
-                            onClick={() => setRemoveTarget({ poolId: fork.sourcePoolId, name: name(), lastTeam: fork.assignment.teamIds.length <= 1 })}
+                            onClick={() => setRemoveTarget({ poolId: fork.sourcePoolId, name: name(), lastTeam: fork.assignment.teamIds.length <= 1, public: fork.public })}
                           >
                             <i class="fa-solid fa-xmark" aria-hidden="true" />
                           </button>
@@ -723,7 +723,7 @@ function TeamDetail(props: {
         {(target) => (
           <ConfirmDialog
             title={`Remove ${target().name} from ${props.team.name}?`}
-            description={teamRemovalWarning(target().name, "this team", target().lastTeam)}
+            description={teamRemovalWarning(target().name, "this team", target().lastTeam, target().public)}
             confirmLabel="Remove"
             danger
             onConfirm={async () => {

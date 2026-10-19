@@ -603,7 +603,7 @@ describe("EditAgent", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const confirm = container.querySelector<HTMLElement>('[role="alertdialog"]')!;
-    expect(confirm.textContent).toContain("If you remove scribe from Red, members of Red can no longer chat with scribe");
+    expect(confirm.textContent).toContain("If you remove scribe from Red, members of Red can no longer chat with scribe.");
     expect(setForkTeamsMock).not.toHaveBeenCalled();
     [...confirm.querySelectorAll("button")].find((item) => item.textContent === "Remove")!.click();
     await vi.waitFor(() => expect(setForkTeamsMock).toHaveBeenCalledWith("scribe", { mode: "list", teamIds: ["t2"] }));

@@ -156,7 +156,7 @@ function TeamAssignment(props: {
       <Show when={confirmRemoval()}>
         <ConfirmDialog
           title={`Remove ${props.agentName} from ${removedTeams().map((team) => team.name).join(", ")}?`}
-          description={teamRemovalWarning(props.agentName, removedTeams().map((team) => team.name).join(", "), selected().length === 0)}
+          description={teamRemovalWarning(props.agentName, removedTeams().map((team) => team.name).join(", "), selected().length === 0, props.fork?.public === true)}
           confirmLabel="Remove"
           danger
           onConfirm={async () => {
