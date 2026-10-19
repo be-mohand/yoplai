@@ -7,7 +7,7 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
-import { A, useParams } from "@solidjs/router";
+import { A, useLocation, useParams } from "@solidjs/router";
 import { normalizeMcpServerUrl } from "@yoplai/shared/mcp-url";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
 import { fetchAgentDashboards, fetchAgents, fetchPool } from "../api";
@@ -170,6 +170,12 @@ function TeamAssignment(props: {
 
 export function EditAgent() {
   const params = useParams<{ agentId: string }>();
+  // The chat cog passes its page in history state so Back returns there.
+  const location = useLocation<{ backTo?: string }>();
+  const backTo = () => {
+    const target = location.state?.backTo;
+    return typeof target === "string" && target.startsWith("/") && !target.startsWith("//") ? target : undefined;
+  };
   const session = useSession();
   const isAdmin = createMemo(() =>
     hasAdminRole(
@@ -373,8 +379,8 @@ export function EditAgent() {
   return (
     <Show when={!session().isPending}>
       <div class="edit-agent">
-        <A href="/agents" class="edit-agent-back" data-tour="back-to-agents">
-          ← Back to agents
+        <A href={backTo() ?? "/agents"} class="edit-agent-back" data-tour="back-to-agents">
+          {backTo() ? "← Back to chat" : "← Back to agents"}
         </A>
 
         <Show when={agents.loading}>

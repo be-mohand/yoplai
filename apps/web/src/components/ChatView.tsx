@@ -3086,6 +3086,7 @@ export function ChatView() {
           {(poolId) => (
             <A
               href={`/agents/${encodeURIComponent(poolId())}/edit`}
+              state={{ backTo: `${location.pathname}${location.search}` }}
               class="agent-settings-btn"
               aria-label={`${agent()?.name ?? "Agent"} settings`}
               title="Agent settings"

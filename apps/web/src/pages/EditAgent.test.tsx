@@ -30,6 +30,7 @@ const {
   useSessionMock,
   useParamsMock,
   navigateMock,
+  useLocationMock,
   fetchTopExtensionsMock,
 } = vi.hoisted(() => ({
   fetchPoolMock: vi.fn(),
@@ -49,6 +50,7 @@ const {
   patchAgentExtensionMock: vi.fn(),
   useSessionMock: vi.fn(),
   useParamsMock: vi.fn(),
+  useLocationMock: vi.fn((): { state?: { backTo?: string } } => ({ state: undefined })),
   navigateMock: vi.fn(),
   fetchTopExtensionsMock: vi.fn(),
 }));
@@ -118,6 +120,7 @@ vi.mock("@solidjs/router", () => ({
     return a;
   },
   useParams: () => useParamsMock(),
+  useLocation: () => useLocationMock(),
   useNavigate: () => navigateMock,
 }));
 
@@ -189,6 +192,7 @@ beforeEach(() => {
   useSessionMock.mockReset();
   useParamsMock.mockReset();
   navigateMock.mockReset();
+  useLocationMock.mockReset().mockReturnValue({ state: undefined });
   fetchTopExtensionsMock.mockReset().mockResolvedValue({ extensions: [], mcp: [] });
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -204,6 +208,23 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("EditAgent", () => {
+  it("links back to the agents list by default", async () => {
+    setSession("admin");
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe", name: "Scribe" })]);
+    await mountEdit("scribe");
+    const back = Array.from(container.querySelectorAll("a")).find((link) => link.textContent?.includes("Back to agents"));
+    expect(back?.getAttribute("href")).toBe("/agents");
+  });
+
+  it("links back to the chat that opened the settings", async () => {
+    setSession("admin");
+    useLocationMock.mockReturnValue({ state: { backTo: "/chat/scribe?session=abc" } });
+    fetchPoolMock.mockResolvedValue([agent({ id: "scribe", name: "Scribe" })]);
+    await mountEdit("scribe");
+    const back = Array.from(container.querySelectorAll("a")).find((link) => link.textContent?.includes("Back to chat"));
+    expect(back?.getAttribute("href")).toBe("/chat/scribe?session=abc");
+  });
+
   it("renders the target agent name and role for an admin", async () => {
     setSession("admin");
     fetchPoolMock.mockResolvedValue([
