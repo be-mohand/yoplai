@@ -568,6 +568,7 @@ function TeamDetail(props: {
                 class="team-field__input"
                 value={selectedUser()}
                 disabled={busy() || users.loading || addableUsers().length === 0}
+                placeholder={!users.loading && addableUsers().length === 0 ? "All users are already in this team" : undefined}
                 onChange={setSelectedUser}
                 onEnter={handleAdd}
                 users={addableUsers().map((user) => ({

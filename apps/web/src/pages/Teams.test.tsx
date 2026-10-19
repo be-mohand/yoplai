@@ -193,6 +193,18 @@ describe("team organization", () => {
     await vi.waitFor(() => expect(container.querySelector('[role="dialog"]')).toBeNull());
   });
 
+  it("says why member search is disabled when every user is in the team", async () => {
+    mocks.fetchUsers.mockResolvedValue([{ id: "user-1", name: "Member", email: null, role: "user", approved: true }]);
+    await vi.waitFor(() => expect(container.textContent).toContain("Research"));
+    const research = [...container.querySelectorAll("article")].find((card) => card.textContent?.includes("Research"))!;
+    [...research.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Members")!.click();
+    await vi.waitFor(() => {
+      const search = container.querySelector<HTMLInputElement>('[role="dialog"] [role="combobox"]')!;
+      expect(search.disabled).toBe(true);
+      expect(search.placeholder).toBe("All users are already in this team");
+    });
+  });
+
   it("asks before closing with unsaved member changes", async () => {
     await vi.waitFor(() => expect(container.textContent).toContain("Research"));
     const research = [...container.querySelectorAll("article")].find((card) => card.textContent?.includes("Research"))!;
