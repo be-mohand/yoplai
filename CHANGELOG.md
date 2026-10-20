@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Pin owned or shared dashboards to a personal Pinned section on the Dashboards page; pins persist across reloads and restarts.
 - Slack agents can add emoji reactions with `slack.add_reaction`, targeting the current inbound message or an explicit message.
 - Superadmins can mark an agent workspace skill as System on **Admin → Skills** in multi-user mode. System agent skills are hidden from the **Skills** page. Agents still load them.
 - Superadmins can transfer a user skill to another user on **Admin → Skills**. This restores a skill whose owner is banned, rejected or removed. The list shows an **Owner inactive** label.
