@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Slack agents can add emoji reactions with `slack.add_reaction`, targeting the current inbound message or an explicit message.
 - Superadmins can mark an agent workspace skill as System on **Admin → Skills** in multi-user mode. System agent skills are hidden from the **Skills** page. Agents still load them.
 - Superadmins can transfer a user skill to another user on **Admin → Skills**. This restores a skill whose owner is banned, rejected or removed. The list shows an **Owner inactive** label.
 - Superadmins can move an agent workspace skill to the default skills with **Make default** on **Admin → Skills**. All agents and users get it, always on. A name that another skill already uses is blocked. The dialog lists the paths outside the skill folder that the skill refers to, and asks you to confirm.
@@ -19,6 +20,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Non-allowlisted proactive Slack DM replies and reactions now use a separate session per DM conversation, preserving requester ownership and thread delivery.
 - Multi-user instances without an agent pool let approved users and admins use plain agents, including chat, avatars and capability self-enable. Existing fork restrictions also apply to agent lists.
 - Agents no longer name other users' private dashboards when they list dashboards. Every run now gets a short rule: `dashboard_link` is the only source for the user's dashboards, and the agent does not mention or hint at others. Also, `dashboard_link` with no slug returns `{ dashboards, note }`.
 - A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").
