@@ -9,25 +9,86 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+## v0.26.0 — Chat projects, Skills directory + owned dashboards
+
+Chat gets personal projects with shared instructions, files, references and notes, plus pinned and archived chats, full-text search, a personal main agent, and copy buttons for replies and code blocks. A new **Skills** page lets each user upload, share, import and roll back skills, and superadmins can promote skills to defaults. Dashboards now have owners: new pages are private, owners share them with selected users or the whole platform, and users can pin them. Agents get opt-in codemode, deferred tool loading, structured tool results, per-conversation writable files, a `session_history` tool, and browser previews in sandboxes. Scheduled jobs gain opt-in run history with live traces. A new Threadit extension connects agents to a Threadit board, and Slack agents can add reactions. Agents have Public/Private visibility, separate from team ownership.
+
+### Upgrade notes
+
+- **Agent visibility replaces "All teams".** Agents assigned to All teams migrate once to Public agents with no team. Public agents are open to every approved user. Private agents need a shared team. API writes with team mode `all` now return 400.
+- **Sign-up no longer adds users to teams.** `extensions.multiUser.autoJoinPublicTeams` is ignored, and the team Private field has no effect. Use **Teams → No team** to put new users in teams.
+- **New dashboards are private to their creator.** Dashboards that existed before the upgrade keep the old agent access checks until an owner claims them on the **Dashboards** page.
+- **The orchestration Projects navigation is now named Board.** **Projects** now means personal chat projects.
+
 ### Added
 
+#### Chat and sessions
+
 - Copy complete agent replies as formatted HTML and clean text, or copy individual code blocks, from the main web chat in simple and full views, with accessible mobile controls and clipboard feedback.
-- Pin owned or shared dashboards to a personal Pinned section on the Dashboards page; pins persist across reloads and restarts.
-- Slack agents can add emoji reactions with `slack.add_reaction`, targeting the current inbound message or an explicit message.
+- Search your chat titles and full user/assistant transcripts from the sidebar or Cmd/Ctrl+K, with highlighted snippets and keyboard navigation. Replaces the inline session filter, Board project palette and embedded-chat Cmd+K reset.
+- A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from a star in the chat header or on Agents page cards (with confirmation; main agent listed first and highlighted), plus a settings cog in the chat header whose Back link returns to that chat. A click anywhere on an Agents card opens a chat with that agent. Available in single-user and multi-user installs; blank home visits do not create saved sessions.
+- Archive sessions: put chats away with reversible archive from the sidebar row menu (hidden for MAIN session). Archived chats disappear from the sidebar, reachable from the new `/archive` page (link in sidebar footer in single-user, account menu in multi-user) with Open, Restore, and Delete actions. Archiving preserves pin and project membership so restoring returns the chat where it was. Opening an archived session shows a clear banner "This chat is archived. Sending a message will restore it." with a Restore button; sending a message automatically unarchives. Archive, restore, and delete actions now show success toasts ("Chat archived", "Chat restored", "Chat deleted"). Sidebar session and project row menus now close on outside click and Escape key, and opening one menu closes any other open menu. `PATCH /api/agents/:agentId/sessions/:sessionId` accepts `archived: boolean` (rejects MAIN with 400); `GET /api/agents/sessions` excludes archived by default, pass `?includeArchived=1` to include them. Persisted as append-only `meta` entry (`key: "archived"`, value: timestamp or `null`).
+- Multi-user account menu: clicking the avatar/name/email row in the sidebar footer opens a popover menu with Account connections, Archive, and Logout (with icons and separator before Logout). Menu closes on outside click, Escape, route change, or item selection. Single-user mode has no account panel; the `/archive` link appears in the sidebar footer (below theme toggle) in single-user mode, while multi-user accesses it via the account menu.
+- Sidebar row menu now shows icons (Pin `fa-thumbtack`, Move to project `fa-folder`, Remove from project `fa-folder-minus`, Rename `fa-pen`, Archive `fa-box-archive`, Delete `fa-trash`) and a separator before Delete to visually distinguish the destructive action.
+- Pin sessions from the sidebar row menu; pinned chats stay above Recent, remain searchable, and persist across reloads.
+- Show a safe, localized, persisted assistant notice when a run fails; optionally notify a configured admin channel for provider quota exhaustion, throttled per provider/model to once per hour.
+
+#### Chat projects
+
+- Project create/rename/delete and chat rename/delete now use in-app dialogs instead of native prompts; project page redesigned with chats list and context cards (Instructions, Files, References, Notes) in a right rail. Instructions and Notes render as markdown and are edited in a modal (Edit button; Esc cancels, ⌘/Ctrl+Enter saves). In project chats, the header shows the project as a pill next to the agent name and the back button returns to the project.
+- `session_history` now also reads other agents' sessions in the current chat Project (listed as `agent/session`), and the project prompt tells the agent so. Same-user only; follows `sessionHistory.enabled`.
+- Agents now receive saved project reference paths alongside title/description so they can read referenced wiki files directly; the reference API and UI still hide paths.
+- Create project modal asks for the project's purpose and drafts starting instructions from it via a separate `POST /chat-projects/:id/instructions/draft` call (maintenance model, falls back to the raw text; retries never duplicate the project), and accepts optional files to upload on creation.
+- Share memory across agents in a personal chat project: agent-added wiki references with private paths, removable references, and editable dated project notes refreshed each turn.
+- Personal chat project files: upload, list, and delete documents/images, with bounded extracted context and read-only sandbox access.
+- Set instructions for a chat project and start a new chat with your chosen agent; project chats receive the latest instructions and a prompt to suggest useful wiki references on every turn.
+- Create personal chat projects, move chats between them, and browse project chats above Pinned and Recent; deleting a project keeps its chats. The orchestration Projects navigation is now labelled Board.
+
+#### Skills
+
 - Superadmins can mark an agent workspace skill as System on **Admin → Skills** in multi-user mode. System agent skills are hidden from the **Skills** page. Agents still load them.
 - Superadmins can transfer a user skill to another user on **Admin → Skills**. This restores a skill whose owner is banned, rejected or removed. The list shows an **Owner inactive** label.
 - Superadmins can move an agent workspace skill to the default skills with **Make default** on **Admin → Skills**. All agents and users get it, always on. A name that another skill already uses is blocked. The dialog lists the paths outside the skill folder that the skill refers to, and asks you to confirm.
-- Search your chat titles and full user/assistant transcripts from the sidebar or Cmd/Ctrl+K, with highlighted snippets and keyboard navigation. Replaces the inline session filter, Board project palette and embedded-chat Cmd+K reset.
+- Skills directory with private uploads, per-user enablement across Pi agents, named read/write and platform-wide read sharing, import tokens, ten-version rollback, and chat-driven creation with `skill_save`; host and sandbox runs resolve the same managed skills each turn.
+
+#### Dashboards
+
+- Pin owned or shared dashboards to a personal Pinned section on the Dashboards page; pins persist across reloads and restarts.
+- Private-by-default owned dashboards, selected-user/platform-wide read/write sharing, a Dashboards home, private legacy claiming, and durable published HTML separate from live drafts/history. Viewing/management is independent of agent access; publication still requires agent execution. Create/update publish explicitly; `dashboard_link` only returns readable links.
+- Add preinstalled Chromium and `playwright-cli` to sandbox agents, with authenticated dashboard previews and a visual-check recipe for themes, mobile layouts, and drill-downs.
+
+#### Agent runtime and tools
+
+- Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
+- Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.
+- Per-agent Pi codemode for host and container runs, with nested tool calls grouped in chat and parented tracing spans.
+- Per-conversation writable files for extension downloads and edits, available at `/workspace/files` in sandboxes, with local Pi `send_file` support and requester-private output downloads.
+- `sandbox.gatewayTransport: "socket"` lets sandboxed runs reach the gateway through a read-only mounted Unix socket that serves only `/internal`, instead of `host.docker.internal`. Fixes every gateway tool (`dashboard_link`, scheduler tools, `extract_document`, extension and MCP tools) and OAuth renewal failing with `fetch failed` whenever containers have no route to the host, as under rootless Docker.
+- Add a core `session_history` agent tool to list, search, and read the agent's own past sessions as condensed text (tool calls merged, thinking dropped, long text truncated with drill-down). Enabled by default; disable with `sessionHistory.enabled: false`.
+
+#### Scheduler
+
+- With cron monitoring enabled, Scheduled jobs refresh every two seconds and show a pulsing Running badge with elapsed time until execution finishes.
+- Scheduled run history refreshes automatically, and running traces show live thinking, tool results, and output while following the bottom until you scroll up.
+- Scheduled run traces show the prompt, thinking, tool calls and results, and final output, preserving the run's original storage identity after sharing a job.
+- Opt-in cron monitoring (`enableCronMonitoring: true`) records scheduler run history and links scheduled job titles to status, duration, script output, and error details.
+- The `create_job` and `update_job` agent tools accept a per-job model override.
+
+#### Channels and extensions
+
+- Slack agents can add emoji reactions with `slack.add_reaction`, targeting the current inbound message or an explicit message.
+- Threadit masking now hides JSON secret values with escaped quotes whole; tool names that are raw commands (Codex style) are labelled `Running: …` and masked.
+- Threadit `activity: "safe" | "detailed"` setting (root or per agent). `detailed` is the default: it posts `task.checkpoint` labels and tool targets to the activity pane of the board. Labels show the full first bash command line, file paths, or one identifying argument, with light secret masking. Set `activity: "safe"` to post no tool targets.
+- Threadit agent tools (`threadit.*`). Agents use the board through the gateway, so the sandbox needs no token. `threadit.register` makes an agent account and saves the token. It never shows the token. The poller starts with a new token and waits for approval of a new account. Threadit works with only a `baseUrl`.
+- Extensions can save their own per-agent config and secrets through `ctx.updateAgentExtensionConfig`.
+- Threadit extension (`threadit`): an agent signs in to a Threadit board with an agent account token (`extensions.threadit.token`), answers mentions and replies, shows tool progress as board activities, honors stop requests, and resumes or safely finishes in-flight items after a restart.
+- Slack `threadUnlock` can now be set at the top level of the Slack config (`extensions.slack.threadUnlock` or `agent.slack.threadUnlock`) as a default for all channels; a per-channel `threadUnlock` value still overrides it.
+
+#### Admin and multi-user
+
 - Set `branding.icon` to a square PNG in `$YOPLAI_HOME` to give the instance its own favicon and app icon. Safari "Add to Dock", iOS "Add to Home Screen", and the web app manifest use it.
-
-### Fixed
-
-- Non-allowlisted proactive Slack DM replies and reactions now use a separate session per DM conversation, preserving requester ownership and thread delivery.
-- Multi-user instances without an agent pool let approved users and admins use plain agents, including chat, avatars and capability self-enable. Existing fork restrictions also apply to agent lists.
-- Agents no longer name other users' private dashboards when they list dashboards. Every run now gets a short rule: `dashboard_link` is the only source for the user's dashboards, and the agent does not mention or hint at others. Also, `dashboard_link` with no slug returns `{ dashboards, note }`.
-- A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").
-- With codemode on, a script call with wrong arguments now adds the tool's signature to the codemode result. The model then uses the correct parameter names on the next try. A call to a deferred tool that is not loaded now tells the model to use `tool_search`.
-- Langfuse traces now show the system prompt that the model got, including the `deferred-tools` section and later changes from loaded tools.
+- Superadmins can mark global system extensions and HTTP MCP servers in Admin Extensions, hiding them from users and admins on agent configuration pages while preserving runtime behavior. System flags remove Top stars in multi-user mode and appear in the settings audit log.
+- Public/Private agent visibility separates chat access from team ownership, with team-scoped management, scheduler access checks, and a staff No team view for placing newcomers; sign-up no longer joins teams and legacy All teams agents migrate to Public.
 
 ### Changed
 
@@ -40,55 +101,17 @@ Breaking changes are marked **⚠ BREAKING**.
 - Removing an agent from a team, in the team Members dialog or with the team buttons on the agent settings page, now asks for confirmation. If a Private agent has no team left, the message says that only a superadmin can assign it again. For a Public agent, it says that any admin can.
 - The Agents page no longer shows admins the agents that they cannot chat, for example a Private agent of another team. Admins still see unforked agents so that they can assign them. Superadmins still see every agent.
 - The Dashboards page shows each agent group with the agent avatar and puts the dashboard rows in a bordered panel. More space separates the sections.
-- Threadit `activity` now defaults to `detailed`, and detailed tool labels show the full first bash command line and simpler targets with light secret masking. Set `activity: "safe"` to keep the old behaviour.
-- Threadit masking now hides JSON secret values with escaped quotes whole; tool names that are raw commands (Codex style) are labelled `Running: …` and masked.
-- Project create/rename/delete and chat rename/delete now use in-app dialogs instead of native prompts; project page redesigned with chats list and context cards (Instructions, Files, References, Notes) in a right rail. Instructions and Notes render as markdown and are edited in a modal (Edit button; Esc cancels, ⌘/Ctrl+Enter saves). In project chats, the header shows the project as a pill next to the agent name and the back button returns to the project.
-
-### Added
-
-- Skills directory with private uploads, per-user enablement across Pi agents, named read/write and platform-wide read sharing, import tokens, ten-version rollback, and chat-driven creation with `skill_save`; host and sandbox runs resolve the same managed skills each turn.
-- Superadmins can mark global system extensions and HTTP MCP servers in Admin Extensions, hiding them from users and admins on agent configuration pages while preserving runtime behavior. System flags remove Top stars in multi-user mode and appear in the settings audit log.
-- Public/Private agent visibility separates chat access from team ownership, with team-scoped management, scheduler access checks, and a staff No team view for placing newcomers; sign-up no longer joins teams and legacy All teams agents migrate to Public.
-- A personal main agent: a character-select picker on home, fresh chats on return, and quick changes from a star in the chat header or on Agents page cards (with confirmation; main agent listed first and highlighted), plus a settings cog in the chat header whose Back link returns to that chat. A click anywhere on an Agents card opens a chat with that agent. Available in single-user and multi-user installs; blank home visits do not create saved sessions.
-- Private-by-default owned dashboards, selected-user/platform-wide read/write sharing, a Dashboards home, private legacy claiming, and durable published HTML separate from live drafts/history. Viewing/management is independent of agent access; publication still requires agent execution. Create/update publish explicitly; `dashboard_link` only returns readable links.
-- Optional tool output schemas for structured codemode results in host and container runs, including full large results and Slack history/replies; connection refusals and declared tool errors retain their data and signal errors.
-- Deferred tool loading for Pi host and container runs: searchable extension/MCP tools, bounded capability summaries, per-agent always-on overrides, and branch-aware restoration of loaded tools.
-- Per-agent Pi codemode for host and container runs, with nested tool calls grouped in chat and parented tracing spans.
-- Per-conversation writable files for extension downloads and edits, available at `/workspace/files` in sandboxes, with local Pi `send_file` support and requester-private output downloads.
-- With cron monitoring enabled, Scheduled jobs refresh every two seconds and show a pulsing Running badge with elapsed time until execution finishes.
-- Scheduled run history refreshes automatically, and running traces show live thinking, tool results, and output while following the bottom until you scroll up.
-- Scheduled run traces show the prompt, thinking, tool calls and results, and final output, preserving the run's original storage identity after sharing a job.
-- Opt-in cron monitoring (`enableCronMonitoring: true`) records scheduler run history and links scheduled job titles to status, duration, script output, and error details.
-- Archive sessions: put chats away with reversible archive from the sidebar row menu (hidden for MAIN session). Archived chats disappear from the sidebar, reachable from the new `/archive` page (link in sidebar footer in single-user, account menu in multi-user) with Open, Restore, and Delete actions. Archiving preserves pin and project membership so restoring returns the chat where it was. Opening an archived session shows a clear banner "This chat is archived. Sending a message will restore it." with a Restore button; sending a message automatically unarchives. Archive, restore, and delete actions now show success toasts ("Chat archived", "Chat restored", "Chat deleted"). Sidebar session and project row menus now close on outside click and Escape key, and opening one menu closes any other open menu. `PATCH /api/agents/:agentId/sessions/:sessionId` accepts `archived: boolean` (rejects MAIN with 400); `GET /api/agents/sessions` excludes archived by default, pass `?includeArchived=1` to include them. Persisted as append-only `meta` entry (`key: "archived"`, value: timestamp or `null`).
-- Multi-user account menu: clicking the avatar/name/email row in the sidebar footer opens a popover menu with Account connections, Archive, and Logout (with icons and separator before Logout). Menu closes on outside click, Escape, route change, or item selection. Single-user mode has no account panel; the `/archive` link appears in the sidebar footer (below theme toggle) in single-user mode, while multi-user accesses it via the account menu.
-
-- Sidebar row menu now shows icons (Pin `fa-thumbtack`, Move to project `fa-folder`, Remove from project `fa-folder-minus`, Rename `fa-pen`, Archive `fa-box-archive`, Delete `fa-trash`) and a separator before Delete to visually distinguish the destructive action.
-
-- `session_history` now also reads other agents' sessions in the current chat Project (listed as `agent/session`), and the project prompt tells the agent so. Same-user only; follows `sessionHistory.enabled`.
-
-- Agents now receive saved project reference paths alongside title/description so they can read referenced wiki files directly; the reference API and UI still hide paths.
-- Create project modal asks for the project's purpose and drafts starting instructions from it via a separate `POST /chat-projects/:id/instructions/draft` call (maintenance model, falls back to the raw text; retries never duplicate the project), and accepts optional files to upload on creation.
-- Share memory across agents in a personal chat project: agent-added wiki references with private paths, removable references, and editable dated project notes refreshed each turn.
-
-- Personal chat project files: upload, list, and delete documents/images, with bounded extracted context and read-only sandbox access.
-
-- Set instructions for a chat project and start a new chat with your chosen agent; project chats receive the latest instructions and a prompt to suggest useful wiki references on every turn.
-
-- Create personal chat projects, move chats between them, and browse project chats above Pinned and Recent; deleting a project keeps its chats. The orchestration Projects navigation is now labelled Board.
-
-- Pin sessions from the sidebar row menu; pinned chats stay above Recent, remain searchable, and persist across reloads.
-- Threadit `activity: "safe" | "detailed"` setting (root or per agent). `detailed` posts `task.checkpoint` labels and redacted tool targets (file paths, first bash line, one identifying argument) to the board's activity pane; `safe` stays the default and is unchanged.
-- Threadit agent tools (`threadit.*`). Agents use the board through the gateway, so the sandbox needs no token. `threadit.register` makes an agent account and saves the token. It never shows the token. The poller starts with a new token and waits for approval of a new account. Threadit works with only a `baseUrl`.
-- Extensions can save their own per-agent config and secrets through `ctx.updateAgentExtensionConfig`.
-- Threadit extension (`threadit`): an agent signs in to a Threadit board with an agent account token (`extensions.threadit.token`), answers mentions and replies, shows tool progress as board activities, honors stop requests, and resumes or safely finishes in-flight items after a restart.
-- Slack `threadUnlock` can now be set at the top level of the Slack config (`extensions.slack.threadUnlock` or `agent.slack.threadUnlock`) as a default for all channels; a per-channel `threadUnlock` value still overrides it.
-- Show a safe, localized, persisted assistant notice when a run fails; optionally notify a configured admin channel for provider quota exhaustion, throttled per provider/model to once per hour.
-- Add preinstalled Chromium and `playwright-cli` to sandbox agents, with authenticated dashboard previews and a visual-check recipe for themes, mobile layouts, and drill-downs.
-- `sandbox.gatewayTransport: "socket"` lets sandboxed runs reach the gateway through a read-only mounted Unix socket that serves only `/internal`, instead of `host.docker.internal`. Fixes every gateway tool (`dashboard_link`, scheduler tools, `extract_document`, extension and MCP tools) and OAuth renewal failing with `fetch failed` whenever containers have no route to the host, as under rootless Docker.
-- Add a core `session_history` agent tool to list, search, and read the agent's own past sessions as condensed text (tool calls merged, thinking dropped, long text truncated with drill-down). Enabled by default; disable with `sessionHistory.enabled: false`.
+- The Pi SDK packages are now at 1.3.0 in the gateway and the sandbox agent runner.
 
 ### Fixed
 
+- You can now attach `.pptx` files in the web chat. The gateway still refuses a `.pptx` name with a wrong MIME type.
+- Non-allowlisted proactive Slack DM replies and reactions now use a separate session per DM conversation, preserving requester ownership and thread delivery.
+- Multi-user instances without an agent pool let approved users and admins use plain agents, including chat, avatars and capability self-enable. Existing fork restrictions also apply to agent lists.
+- Agents no longer name other users' private dashboards when they list dashboards. Every run now gets a short rule: `dashboard_link` is the only source for the user's dashboards, and the agent does not mention or hint at others. Also, `dashboard_link` with no slug returns `{ dashboards, note }`.
+- A Pi run now switches to `fallback_model` when the primary provider is unreachable ("Connection error.").
+- With codemode on, a script call with wrong arguments now adds the tool's signature to the codemode result. The model then uses the correct parameter names on the next try. A call to a deferred tool that is not loaded now tells the model to use `tool_search`.
+- Langfuse traces now show the system prompt that the model got, including the `deferred-tools` section and later changes from loaded tools.
 - Preserve the original message before follow-ups during Pi startup, and honor early cancellation on host and sandbox runs without starting the cancelled prompt.
 - Pi startup cancellation remains an aborted run after the SDK 1.3 upgrade instead of becoming an agent error, on host and sandbox agents.
 - Gateway API forwarding works with Node.js 24's request validation, and fresh read-only sandbox workspaces create the conversation-files and IPC mount targets before launch.
