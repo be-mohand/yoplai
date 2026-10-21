@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- MCP server instructions from the initialize handshake now reach the agent as namespace instructions. A deferred MCP group without a description uses the first instructions line as its summary.
 - `yoplai gateway idle` tells you if any agent turn, subagent, or orchestrator worker is running. It exits 1 and lists them when busy.
 - `yoplai gateway restart` now refuses while work is running. Use `--force` to restart anyway.
 

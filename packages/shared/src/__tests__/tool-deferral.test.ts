@@ -46,3 +46,60 @@ describe("hintCodemodeSignatures", () => {
     expect(message.content).toHaveLength(1);
   });
 });
+
+describe("MCP namespace instructions", () => {
+  const mcpTool = (namespace: Record<string, string>) => ({
+    name: "mcp__recordings__get_transcript",
+    extensionId: "mcp",
+    namespace: { name: "recordings", ...namespace },
+  });
+  const build = (namespace: Record<string, string>) =>
+    createToolDeferralCatalog([mcpTool(namespace)], undefined, {
+      codemode: false,
+    });
+
+  it("passes trimmed instructions through to the deferred namespace", () => {
+    const { tools } = build({ instructions: "  Call search first.\nThen read.  " });
+    expect(tools.get("mcp__recordings__get_transcript")).toMatchObject({
+      namespace: { instructions: "Call search first.\nThen read." },
+    });
+  });
+
+  it("omits blank instructions", () => {
+    const { tools } = build({ instructions: "  \n " });
+    expect(tools.get("mcp__recordings__get_transcript")?.namespace).not.toHaveProperty("instructions");
+  });
+
+  it("uses the first instructions line, capped at 200 characters, when the description is missing", () => {
+    const first = "x".repeat(300);
+    const { summary } = build({ instructions: `\n${first}\nSecond line` });
+    expect(summary).toBe(`recordings: ${first}`.slice(0, 200));
+  });
+
+  it("prefers the description over instructions in the summary", () => {
+    const { summary } = build({
+      description: "Search meetings",
+      instructions: "Call search first.",
+    });
+    expect(summary).toBe("recordings: Search meetings");
+  });
+});
+
+describe("direct MCP tools", () => {
+  it("preserves namespace instructions for alwaysOnTools", () => {
+    const { tools } = createToolDeferralCatalog(
+      [
+        {
+          name: "mcp__recordings__get_transcript",
+          extensionId: "mcp",
+          namespace: { name: "recordings", instructions: "Use this for transcripts." },
+        },
+      ],
+      { alwaysOnTools: ["mcp__recordings__get_transcript"], alwaysOnExtensions: [] },
+      { codemode: false }
+    );
+    const entry = tools.get("mcp__recordings__get_transcript");
+    expect(entry?.exposure).toBe("direct");
+    expect(entry?.namespace?.instructions).toBe("Use this for transcripts.");
+  });
+});

@@ -19,7 +19,7 @@ type CatalogTool = {
 };
 type ToolMetadata = {
   exposure: "direct" | "deferred";
-  namespace?: { name: string; aliases?: string[]; description?: string };
+  namespace?: { name: string; aliases?: string[]; description?: string; instructions?: string };
 };
 
 // Pi does not list deferred tools in the codemode description. A script
@@ -66,7 +66,18 @@ export function createToolDeferralCatalog(
       policy.alwaysOnTools.includes(canonicalName) ||
       policy.alwaysOnExtensions.includes(tool.extensionId);
     if (direct) {
-      tools.set(tool.name, { exposure: "direct" });
+      const mcp = canonicalName.match(/^mcp__(.+?)__/);
+      const isMcp = tool.extensionId === "mcp" || Boolean(mcp);
+      const server = isMcp ? (tool.namespace?.name ?? mcp?.[1]) : undefined;
+      const instructions = isMcp ? tool.namespace?.instructions?.trim() || undefined : undefined;
+      const description = isMcp ? tool.namespace?.description?.trim() || undefined : undefined;
+      const namespace = isMcp && server ? {
+        name: `mcp__${server}`,
+        aliases: [server],
+        ...(description ? { description } : {}),
+        ...(instructions ? { instructions } : {}),
+      } : undefined;
+      tools.set(tool.name, { exposure: "direct", ...(namespace ? { namespace } : {}) });
       continue;
     }
     const mcp = canonicalName.match(/^mcp__(.+?)__/);
@@ -79,12 +90,15 @@ export function createToolDeferralCatalog(
         ? tool.namespace?.description
         : tool.extensionDescription
       )?.trim() || undefined;
+    const instructions =
+      (isMcp ? tool.namespace?.instructions?.trim() : undefined) || undefined;
     tools.set(tool.name, {
       exposure: "deferred",
       namespace: {
         name: namespaceName,
         ...(isMcp && server ? { aliases: [server] } : {}),
         ...(description ? { description } : {}),
+        ...(instructions ? { instructions } : {}),
       },
     });
     let group = namespaces.get(namespaceName);
@@ -92,7 +106,13 @@ export function createToolDeferralCatalog(
       group = { label, description, examples: [] };
       namespaces.set(namespaceName, group);
     }
-    group.description ??= description;
+    group.description ??=
+      description ??
+      instructions
+        ?.split("\n")
+        .map((line) => line.trim())
+        .find(Boolean)
+        ?.slice(0, 200);
     if (isMcp)
       group.displayName ??= tool.namespace?.displayName?.trim() || undefined;
     group.examples.push(

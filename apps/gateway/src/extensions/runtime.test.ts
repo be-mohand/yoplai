@@ -63,7 +63,7 @@ describe("ExtensionRuntime", () => {
       getAgentTools: async () => [{
         name: "mcp__recordings__get_transcript",
         description: "Get one transcript",
-        namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts" },
+        namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts", instructions: "Call search before get_transcript." },
         parameters: {},
         execute: async () => "transcript",
       }],
@@ -74,7 +74,7 @@ describe("ExtensionRuntime", () => {
     expect(tools).toMatchObject([{
       extensionId: "mcp",
       extensionDescription: "Connected external services",
-      namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts" },
+      namespace: { name: "recordings", displayName: "Meeting recordings", description: "Search recorded meetings and read transcripts", instructions: "Call search before get_transcript." },
     }]);
     await expect(tools[0]!.execute({}, { agent, config })).resolves.toBe("transcript");
   });

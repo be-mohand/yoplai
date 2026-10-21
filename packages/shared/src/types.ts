@@ -1515,6 +1515,7 @@ export const ToolNamespaceSchema = z.object({
   name: z.string(),
   displayName: z.string().optional(),
   description: z.string().optional(),
+  instructions: z.string().optional(),
 });
 export type ToolNamespace = z.infer<typeof ToolNamespaceSchema>;
 
