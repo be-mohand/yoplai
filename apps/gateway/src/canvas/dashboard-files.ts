@@ -25,8 +25,9 @@ export function normalizeDashboardSlug(value: string): string {
     path.posix.extname(value).toLowerCase() !== ".html" ||
     value === ".html"
   ) {
-    throw new Error(
-      "Dashboard slug must be one .html filename, e.g. pto-team.html"
+    throw Object.assign(
+      new Error("Dashboard slug must be one .html filename, e.g. pto-team.html"),
+      { code: "invalid_input" }
     );
   }
   return value;

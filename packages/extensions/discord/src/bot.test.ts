@@ -32,6 +32,7 @@ const mockSubscribe = vi.fn((event: string, handler: (payload: unknown) => void)
 });
 
 const mockExtensionContext = {
+  logger: { error: vi.fn() },
   runAgent: mockRunAgent,
   getSessionEntry: mockGetSessionEntry,
   subscribe: mockSubscribe,

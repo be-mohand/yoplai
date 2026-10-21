@@ -19,6 +19,7 @@ import {
 } from "./output.js";
 import {
   parseWakeAgent,
+  ScriptExecutionError,
   runScript,
   terminateRunningScripts,
   type RunScriptResult,
@@ -69,6 +70,8 @@ type JobWithState = ScheduleJob & {
   state?: SchedulerState;
   timeoutMs?: number;
 };
+
+type DetachedRun = { sessionId: string; previousNextRunAtMs?: number; runId?: string };
 
 type CompleteRunInput = {
   ledgerRun?: ScheduleRun;
@@ -393,10 +396,20 @@ export class SchedulerService {
     const sessionId =
       job.payload.sessionId ?? `scheduler:${job.id}:${uuidv7()}`;
     const previousNextRunAtMs = job.state?.nextRunAtMs;
+    const execution: DetachedRun = { sessionId, previousNextRunAtMs };
+    const failureFields = {
+      jobId: job.id,
+      jobName: job.name,
+      agentId: job.agentId,
+      kind: !job.payload.script ? "agent" : job.payload.noAgent ? "script" : "gated",
+    };
 
-    void this.executeJob(job, { sessionId, previousNextRunAtMs }).catch(
+    void this.executeJob(job, execution).catch(
       (error) => {
-        console.error(`[scheduler] Detached job failed: ${job.name}`, error);
+        const message = error instanceof Error ? error.message : String(error);
+        getSchedulerContext().logger.error("[scheduler] job failed", message.split("\n")[0], {
+          ...failureFields, runId: execution.runId,
+        });
       }
     );
 
@@ -554,7 +567,7 @@ export class SchedulerService {
 
   private async executeJob(
     job: JobWithState,
-    detached?: { sessionId: string; previousNextRunAtMs?: number },
+    detached?: DetachedRun,
     scheduledFiredAtMs?: number
   ): Promise<SchedulerRunResult> {
     const key = this.executionKey(job);
@@ -601,10 +614,17 @@ export class SchedulerService {
         pinnedSession: payload.sessionId !== undefined,
       }
       : undefined;
+    if (detached) detached.runId = ledgerRun?.id;
     if (ledgerRun) await this.saveRun(ledgerRun);
 
     if (!agent) {
-      console.error(`[scheduler] Agent not found: ${job.agentId}`);
+      ctx.logger.error("[scheduler] job failed", "Agent not found", {
+        jobId: job.id,
+        jobName: job.name,
+        agentId: job.agentId,
+        runId: ledgerRun?.id,
+        kind: !payload.script ? "agent" : payload.noAgent ? "script" : "gated",
+      });
       this.executingJobs.delete(key);
       this.runningJobStartedAtMs.delete(key);
       job.state = job.state ?? {};
@@ -670,6 +690,13 @@ export class SchedulerService {
     }
     if (authorityError) {
       const message = authorityError;
+      ctx.logger.error("[scheduler] job failed", message, {
+        jobId: job.id,
+        jobName: job.name,
+        agentId: job.agentId,
+        runId: ledgerRun?.id,
+        kind: !payload.script ? "agent" : payload.noAgent ? "script" : "gated",
+      });
       return this.completeAndRelease(key, { ledgerRun, payload, job, scheduledRunAt, agent, workspaceDir, model: outputModel, firedAt, status: "error", statusLabel: "error", error: new Error(message), errorMessage: message });
     }
 
@@ -691,7 +718,17 @@ export class SchedulerService {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[scheduler] Job script failed: ${job.name}`, err);
+        ctx.logger.error("[scheduler] job failed", message.split("\n")[0], {
+          jobId: job.id,
+          jobName: job.name,
+          agentId: job.agentId,
+          runId: ledgerRun?.id,
+          kind: payload.noAgent ? "script" : "gated",
+          phase: "script",
+          reason: err instanceof ScriptExecutionError ? err.reason : "spawn",
+          exitCode: err instanceof ScriptExecutionError ? err.exitCode : undefined,
+          stderrTail: err instanceof ScriptExecutionError ? err.stderrTail : "",
+        });
         return this.completeAndRelease(key, {
           ledgerRun,
           payload,
@@ -834,7 +871,14 @@ export class SchedulerService {
       runStatus = "error";
       errorValue = err;
       runError = err instanceof Error ? err.message : String(err);
-      console.error(`[scheduler] Job failed: ${job.name}`, err);
+      ctx.logger.error("[scheduler] job failed", runError.split("\n")[0], {
+        jobId: job.id,
+        jobName: job.name,
+        agentId: job.agentId,
+        runId: ledgerRun?.id,
+        kind: payload.script ? "gated" : "agent",
+        phase: "agent",
+      });
     } finally {
       clearTimeout(timeoutId);
     }

@@ -589,7 +589,7 @@ describe("handleTelegramMessage", () => {
 
   it("sends an error message when the run throws", async () => {
     const runAgent = vi.fn().mockRejectedValue(new Error("boom"));
-    setTelegramContext({ runAgent } as never);
+    setTelegramContext({ runAgent, logger: { error: vi.fn() } } as never);
     const send = vi.fn().mockResolvedValue(undefined);
 
     await handleTelegramMessage(
@@ -742,7 +742,7 @@ describe("handleTelegramMessage", () => {
     vi.useFakeTimers();
     try {
       const runAgent = vi.fn().mockRejectedValue(new Error("boom"));
-      setTelegramContext({ runAgent } as never);
+      setTelegramContext({ runAgent, logger: { error: vi.fn() } } as never);
       const send = vi.fn().mockResolvedValue(undefined);
       const sendTyping = vi.fn().mockResolvedValue(undefined);
 

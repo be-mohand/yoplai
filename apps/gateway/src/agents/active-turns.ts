@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ActiveWorkItem } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
+import { logWarn } from "../logging.js";
 
 export type ActiveTurnEntry = {
   kind: "turn" | "subagent" | "worker";
@@ -46,7 +47,9 @@ function write(): void {
     } catch {
       // The warning below covers it; a failed state write must not break a turn.
     }
-    console.warn("[active-turns] failed to write state file:", err);
+    logWarn("[active-turns] failed to write state file", {
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

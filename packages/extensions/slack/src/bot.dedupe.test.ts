@@ -96,6 +96,7 @@ let dataDir = "";
 
 vi.mock("./context.js", () => ({
   getSlackContext: vi.fn(() => ({
+    logger: { error: vi.fn() },
     runAgent: mockRunAgent,
     saveMediaFile: mockSaveMediaFile,
     readMediaFile: mockReadMediaFile,

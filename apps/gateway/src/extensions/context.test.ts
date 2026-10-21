@@ -17,9 +17,93 @@ describe("createExtensionContext media helpers", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (prevHomeDir === undefined) delete process.env.YOPLAI_HOME;
     else process.env.YOPLAI_HOME = prevHomeDir;
     await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("emits extension fields at the top level on one physical JSON line", async () => {
+    const { createExtensionContext } = await import("./context.js");
+    const logger = createExtensionContext({} as GatewayConfig).logger;
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    logger.info("started", { jobId: "job-1", message: "first\nsecond" });
+    logger.warn("refused", { agentId: "alpha", status: 404 });
+    logger.error("failed", "short failure", { runId: "run-1", channel: "slack" });
+
+    for (const [spy, expected] of [
+      [info, { level: "info", msg: "started", jobId: "job-1", message: "first\nsecond" }],
+      [warn, { level: "warn", msg: "refused", agentId: "alpha", status: 404 }],
+      [error, { level: "error", msg: "failed", message: "short failure", runId: "run-1", channel: "slack" }],
+    ] as const) {
+      expect(spy.mock.calls).toHaveLength(1);
+      const args = spy.mock.calls[0]!;
+      expect(args).toHaveLength(1);
+      expect(args[0]).toMatch(/^\{"level"/);
+      expect(args[0].split("\n")).toHaveLength(1);
+      expect(JSON.parse(args[0])).toEqual(expected);
+    }
+  });
+
+  it("preserves legacy details and error call shapes", async () => {
+    const { createExtensionContext } = await import("./context.js");
+    const logger = createExtensionContext({} as GatewayConfig).logger;
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = new Error("legacy failure");
+    class Detail { value = 1; }
+
+    logger.info("empty");
+    logger.info("multiple", { jobId: "job-1" }, "extra");
+    logger.info("array", [1, 2]);
+    logger.warn("error detail", failure);
+    logger.warn("class detail", new Detail());
+    logger.error("alone");
+    logger.error("failed", failure, "ignored", { ignored: true });
+
+    expect(info.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+      { level: "info", msg: "empty", details: [] },
+      { level: "info", msg: "multiple", details: [{ jobId: "job-1" }, "extra"] },
+      { level: "info", msg: "array", details: [[1, 2]] },
+    ]);
+    expect(warn.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+      { level: "warn", msg: "error detail", details: [{ message: "legacy failure", stack: failure.stack }] },
+      { level: "warn", msg: "class detail", details: [{ value: 1 }] },
+    ]);
+    expect(error.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+      { level: "error", msg: "alone", message: "alone" },
+      { level: "error", msg: "failed", message: "legacy failure", stack: failure.stack },
+    ]);
+  });
+
+  it("keeps explicit error diagnostic fields when the error is a short string", async () => {
+    const { createExtensionContext } = await import("./context.js");
+    const logger = createExtensionContext({} as GatewayConfig).logger;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    logger.error("failed", "Short failure", {
+      status: 503, endpoint: "https://api.example.test/items", requestId: "req-1",
+      details: { retry: true },
+    });
+    expect(JSON.parse(error.mock.calls[0]![0])).toEqual({
+      level: "error", msg: "failed", message: "Short failure",
+      status: 503, endpoint: "https://api.example.test/items", requestId: "req-1",
+      details: { retry: true },
+    });
+  });
+
+  it("preserves explicit null diagnostics extracted from legacy Error objects", async () => {
+    const { createExtensionContext } = await import("./context.js");
+    const logger = createExtensionContext({} as GatewayConfig).logger;
+    const output = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = Object.assign(new Error("Legacy failure"), { status: null, endpoint: null, requestId: null });
+    logger.error("failed", failure);
+    expect(JSON.parse(output.mock.calls[0]![0])).toMatchObject({
+      status: null, endpoint: null, requestId: null,
+    });
   });
 
   it("exposes encrypted personal and team credential resolution", async () => {

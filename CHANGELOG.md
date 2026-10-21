@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Emit structured scheduler and channel failures with job/session context, preserve full scheduler diagnostics on disk, and classify upstream tool 4xx and explicitly marked input errors as warnings.
+
 ### Added
 
 - MCP server instructions from the initialize handshake now reach the agent as namespace instructions. A deferred MCP group without a description uses the first instructions line as its summary.

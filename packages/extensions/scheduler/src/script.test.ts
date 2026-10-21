@@ -68,6 +68,30 @@ describe("runScript", () => {
     ).rejects.toThrow(/^script failed \(exit 3\)/);
   });
 
+  it("classifies a directory script path as a prelaunch failure", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
+    await fs.mkdir(path.join(tmpDir, "directory.sh"));
+
+    await expect(runScript({ workspaceDir: tmpDir, script: "directory.sh", timeoutMs: 5000 }))
+      .rejects.toMatchObject({ reason: "spawn", stderrTail: "", exitCode: undefined });
+  });
+
+  it("caps the rolling stderr tail at two KiB without splitting a UTF-8 character", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
+    await writeScript(tmpDir, "fail.sh", "printf '漢%.0s' {1..1000} >&2\nexit 9\n");
+
+    await expect(runScript({ workspaceDir: tmpDir, script: "fail.sh", timeoutMs: 5000 }))
+      .rejects.toMatchObject({ reason: "exit", exitCode: 9, stderrTail: "漢".repeat(682) });
+  });
+
+  it("keeps a four-byte stderr suffix within two KiB at an uneven byte boundary", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
+    await writeScript(tmpDir, "fail.sh", "printf '😀%.0s' {1..1000} >&2\nprintf '!\\n' >&2\nexit 9\n");
+
+    await expect(runScript({ workspaceDir: tmpDir, script: "fail.sh", timeoutMs: 5000 }))
+      .rejects.toMatchObject({ reason: "exit", exitCode: 9, stderrTail: `${"😀".repeat(511)}!` });
+  });
+
   it("kills the child (and its foreground grandchild) on timeout, no orphan left", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
     const pidFile = path.join(tmpDir, "sleep.pid");

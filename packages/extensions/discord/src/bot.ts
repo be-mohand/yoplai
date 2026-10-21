@@ -307,7 +307,9 @@ async function handleDiscordMessage(
       history: recentHistory.length > 0 ? recentHistory : undefined,
     });
   } catch (err) {
-    console.error(`${target.logPrefix} Error:`, err);
+    getDiscordContext().logger.error("[discord] agent reply failed", (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0], {
+      agentId: target.agent.id, channel: "discord", sessionKey,
+    });
     await ack?.remove();
     await sendDiscordError(client, data.channel_id, replyToMode, data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en"));
     return;
@@ -440,7 +442,9 @@ async function handleDiscordMessage(
       replyHandled = true;
       void ack?.remove();
       void display?.abort().catch((err) => console.error(`${target.logPrefix} Reply abort error:`, err));
-      console.error(`${target.logPrefix} Error:`, err);
+      getDiscordContext().logger.error("[discord] agent reply failed", (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0], {
+        agentId: target.agent.id, channel: "discord", sessionKey,
+      });
       sendDiscordError(client, data.channel_id, replyToMode, data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en")).catch(() => {});
     });
 }
@@ -645,6 +649,7 @@ async function handleForumThreadOpening(
     return noteChain;
   };
 
+  let sessionId: string | undefined;
   getDiscordContext()
     .runAgent({
       agentId: target.agent.id,
@@ -719,6 +724,7 @@ async function handleForumThreadOpening(
       },
     })
     .then((result) => {
+      sessionId = result.meta.sessionId;
       const store = createThreadSessionBindingStore(getDiscordContext().getDataDir());
       try {
         store.setBinding({
@@ -736,7 +742,10 @@ async function handleForumThreadOpening(
       replyHandled = true;
       void ack?.remove();
       void display?.abort().catch((err) => console.error(`${target.logPrefix} Forum thread reply abort error:`, err));
-      console.error(`${target.logPrefix} Forum thread error:`, err);
+      getDiscordContext().logger.error("[discord] agent reply failed", (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0], {
+        agentId: target.agent.id, channel: "discord", sessionKey,
+        ...(sessionId ? { sessionId } : {}),
+      });
       sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en")).catch(
         () => {}
       );
@@ -911,7 +920,9 @@ async function handleForumThreadReply(
       replyHandled = true;
       void ack?.remove();
       void display?.abort().catch((err) => console.error(`${target.logPrefix} Forum thread reply abort error:`, err));
-      console.error(`${target.logPrefix} Forum thread error:`, err);
+      getDiscordContext().logger.error("[discord] agent reply failed", (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0], {
+        agentId: target.agent.id, channel: "discord", sessionKey, sessionId,
+      });
       sendDiscordError(client, threadId, target.config.replyToMode ?? "off", data.id, runFailureMessage(classifyRunFailure(err), target.agent.language ?? "en")).catch(
         () => {}
       );

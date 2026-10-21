@@ -45,6 +45,46 @@ const config = GatewayConfigSchema.parse({
 });
 
 describe("ExtensionRuntime", () => {
+  it("warns on one JSON line for failed tool hooks while healthy tools remain available", async () => {
+    const runtime = new ExtensionRuntime();
+    runtime.load([
+      extension({ id: "broken", getAgentTools: () => { throw new Error("bad hook"); } }),
+      extension({ id: "healthy", getAgentTools: () => [{ name: "healthy_run", description: "Healthy", parameters: {}, execute: () => "ok" }] }),
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const tools = await runtime.getTools(agent, config);
+      expect(tools.map((tool) => tool.name)).toEqual(["healthy_run"]);
+      expect(await tools[0]!.execute({}, { agent, config })).toBe("ok");
+      expect(warn.mock.calls).toHaveLength(1);
+      expect(warn.mock.calls[0]).toHaveLength(1);
+      const line = warn.mock.calls[0]![0] as string;
+      expect(line.split("\n")).toHaveLength(1);
+      expect(JSON.parse(line)).toEqual({ level: "warn", msg: "Skipping extension tools", extensionId: "broken", agentId: "main", fields: ["config"] });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("warns on one JSON line for failed prompt hooks while healthy prompts remain available", async () => {
+    const runtime = new ExtensionRuntime();
+    runtime.load([
+      extension({ id: "broken", getSystemPromptContributions: () => { throw new Error("bad hook"); } }),
+      extension({ id: "healthy", getSystemPromptContributions: () => "Use healthy tools." }),
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await runtime.getPromptContributions(agent, config)).toEqual(["Use healthy tools."]);
+      expect(warn.mock.calls).toHaveLength(1);
+      expect(warn.mock.calls[0]).toHaveLength(1);
+      const line = warn.mock.calls[0]![0] as string;
+      expect(line.split("\n")).toHaveLength(1);
+      expect(JSON.parse(line)).toEqual({ level: "warn", msg: "Skipping extension prompt", extensionId: "broken", agentId: "main", fields: ["config"] });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("carries explicit eval authority through dispatch without selecting synthetic user credentials", async () => {
     const runtime = new ExtensionRuntime();
     runtime.load([extension({ id: "identity", getAgentTools: () => [{
@@ -386,7 +426,10 @@ describe("ExtensionRuntime", () => {
 
     await expect(runtime.getTools(agent, config)).resolves.toMatchObject([{ name: "ok" }]);
     await expect(runtime.getPromptContributions(agent, config)).resolves.toEqual(["healthy"]);
-    expect(warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ extensionId: "broken", agentId: "main", fields: ["token"] }));
+    expect(warn.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+      { level: "warn", msg: "Skipping extension tools", extensionId: "broken", agentId: "main", fields: ["token"] },
+      { level: "warn", msg: "Skipping extension prompt", extensionId: "broken", agentId: "main", fields: ["token"] },
+    ]);
     expect(JSON.stringify(warn.mock.calls)).not.toContain("super-secret");
     warn.mockRestore();
   });

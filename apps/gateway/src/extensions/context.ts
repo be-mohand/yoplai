@@ -46,6 +46,12 @@ import { recordSettingsChange } from "../audit/store.js";
 import { updateAgentExtensionConfig } from "./agent-config-writer.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 /** Bind extension-owned connector registration to the extension being started. */
 export function bindExtensionContext(context: ExtensionContext, extensionId: string): ExtensionContext {
   const credentialConnect = context.credentialConnect;
@@ -242,12 +248,12 @@ export function createExtensionContext(
     },
     logger: {
       info: (message: unknown, ...details: unknown[]) =>
-        logInfo(String(message), { details }),
+        logInfo(String(message), details.length === 1 && isPlainObject(details[0]) ? details[0] : { details }),
       warn: (message: unknown, ...details: unknown[]) =>
-        logWarn(String(message), { details }),
+        logWarn(String(message), details.length === 1 && isPlainObject(details[0]) ? details[0] : { details }),
       error: (...args: unknown[]) => {
-        const [msg, error] = args;
-        logError(String(msg), error ?? msg);
+        const [msg, error, fields] = args;
+        logError(String(msg), error ?? msg, isPlainObject(fields) ? fields : {});
       },
     },
   } satisfies ExtensionContext;
