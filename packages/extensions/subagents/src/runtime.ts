@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { expandPath } from "@yoplai/shared";
 import type {
+  ActiveWorkItem,
   SubagentChangedEvent,
   SubagentLogEvent,
   SubagentParent,
@@ -67,7 +68,21 @@ type StoredProgress = {
 type RuntimeOptions = {
   dataDir: string;
   emit: (event: SubagentChangedEvent) => void;
+  setActiveWork?: (items: ActiveWorkItem[]) => void;
 };
+
+function reportActiveWork(options: RuntimeOptions): void {
+  options.setActiveWork?.(
+    [...liveRunsById.values()]
+      .filter((run) => run.status === "starting" || run.status === "running")
+      .map((run) => ({
+        kind: "subagent" as const,
+        id: run.runId,
+        label: run.label,
+        startedAt: run.startedAt,
+      }))
+  );
+}
 
 export type LiveSubagentRunSummary = {
   runId: string;
@@ -796,6 +811,7 @@ async function spawnRunProcess(
     startedAt,
     updatedAt: new Date().toISOString(),
   });
+  reportActiveWork(options);
   await notifyChanged(options, runId, "running");
 
   let outputNotifyAt = 0;
@@ -928,6 +944,8 @@ async function finishRun(
       status: patch.status,
       updatedAt: finishedAt,
     });
+    // Report before the writes below, so a failed write cannot leave the run listed.
+    reportActiveWork(options);
   }
   await writeJson(paths.state, {
     ...(current ?? { startedAt: finishedAt }),
@@ -941,6 +959,7 @@ async function finishRun(
   });
   await notifyChanged(options, runId, patch.status);
   liveRunsById.delete(runId);
+  reportActiveWork(options);
 }
 
 export async function interruptSubagentRun(

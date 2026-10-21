@@ -41,6 +41,7 @@ Core TypeScript/Node.js process. Main ownership:
 Important seams:
 
 - `runAgent()` resolves agent/session, handles commands, selects adapter, and runs turns.
+- Restart gate: the gateway writes `$YOPLAI_HOME/run/active-turns.json` (`agents/active-turns.ts`, atomic temp+rename) on every streaming-session change, and clears it at startup. Extensions report running children with `ExtensionContext.setActiveWork(extensionId, items)` (subagents, project subagents, and orchestrator do this); each call replaces that extension's list. `yoplai gateway idle` and `yoplai gateway restart` read the file; a missing file or dead PID means idle. `restart --force` skips the check.
 - `SessionRunLifecycle` owns active state, aborts, queue/interrupt joins, buffered follow-ups, history events, and final flushing.
 - `RunAgentParams.userId` remains the requester for credentials and identity; `sessionOwnerId` selects persisted history/session storage (`undefined` defaults to requester, `null` means shared). Trusted `requesterId` distinguishes unpaired transport senders; different requesters queue separate turns with their own context, attachments, callbacks, and delivery target.
 - `normalizeRunRequest()` is the shared REST/WebSocket input normalization path.

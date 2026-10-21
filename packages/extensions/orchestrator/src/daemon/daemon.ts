@@ -35,6 +35,7 @@ export type OrchestratorNotifier = (message: string) => Promise<void>;
 
 type RunMeta = {
   runId: string;
+  startedAt: string;
   project: ProjectDescriptor;
   issue: TrackerIssue;
   workspace: string;
@@ -84,6 +85,21 @@ export class OrchestratorDaemon {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly runs = new Map<string, RunMeta>();
   private readonly retry = new RetryPolicy();
+
+  /** Tell the gateway which workers are still running so restarts can refuse. */
+  private reportActiveWork(): void {
+    this.deps.ctx.setActiveWork?.(
+      "orchestrator",
+      [...this.runs.values()]
+        .filter((run) => run.worker && !run.afterRunFired)
+        .map((run) => ({
+          kind: "worker" as const,
+          id: run.runId,
+          label: `${run.project.id}:${run.issue.identifier}`,
+          startedAt: run.startedAt,
+        }))
+    );
+  }
   private tickRunning = false;
   private tickPending = false;
   private readonly pendingProjectTicks = new Set<string | undefined>();
@@ -150,6 +166,7 @@ export class OrchestratorDaemon {
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
     this.deps.store.markActiveProcessStopped();
+    this.deps.ctx.setActiveWork?.("orchestrator", []);
     await this.hitl.flush();
   }
 
@@ -540,12 +557,14 @@ export class OrchestratorDaemon {
       });
       this.runs.set(`${project.id}:${issue.id}`, {
         runId,
+        startedAt: new Date().toISOString(),
         project,
         issue,
         workspace: workspace.path,
         worker,
         workflow: resolvedWorkflow,
       });
+      this.reportActiveWork();
       this.deps.store.setWorkerId(runId, worker.id);
       this.deps.store.setRunPid(runId, worker.pid);
       this.deps.store.appendEvent(
@@ -637,6 +656,7 @@ export class OrchestratorDaemon {
         status && status.status !== "running" ? status : undefined;
       if (!terminal) continue;
       run.afterRunFired = true;
+      this.reportActiveWork();
       if (!claim) continue;
       await runHook({
         command: run.workflow.config.hooks?.after_run,
@@ -777,6 +797,7 @@ export class OrchestratorDaemon {
     this.deps.store.release(issueId, projectId);
     this.deps.store.finishRun(claim.runId, outcome);
     this.runs.delete(`${projectId}:${issueId}`);
+    this.reportActiveWork();
     this.deps.ctx.emit("orchestrator.run.finished", {
       issueId,
       projectId,

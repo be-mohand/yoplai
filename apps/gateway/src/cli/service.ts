@@ -6,6 +6,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIG_DIR, loadConfig } from "../config/index.js";
 import { logError } from "../logging.js";
+import {
+  activeTurnsPath,
+  type ActiveTurnEntry,
+  type ActiveTurnsFile,
+} from "../agents/active-turns.js";
 
 const LABEL = "com.yoplai.gateway";
 // Pre-rename launchd label. It names an existing job and an existing plist
@@ -241,7 +246,67 @@ function startService(): void {
   console.log(`Started: ${label}`);
 }
 
-function restartService(): void {
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Work the running gateway reports as active. A missing or unparseable state
+ * file, or a dead gateway PID, means nothing is running.
+ */
+function readActiveTurns(): ActiveTurnEntry[] {
+  let state: ActiveTurnsFile;
+  try {
+    state = JSON.parse(fs.readFileSync(activeTurnsPath(), "utf-8"));
+  } catch {
+    return [];
+  }
+  if (!state || !Number.isInteger(state.pid) || !Array.isArray(state.turns)) {
+    return [];
+  }
+  if (!pidAlive(state.pid)) return [];
+  return state.turns;
+}
+
+function formatAge(startedAt: string): string {
+  const ms = Date.now() - Date.parse(startedAt);
+  if (!Number.isFinite(ms) || ms < 0) return "unknown age";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** Prints what is running and returns true when the gateway is idle. */
+function checkIdle(): boolean {
+  const turns = readActiveTurns();
+  if (turns.length === 0) {
+    console.log("Gateway is idle.");
+    return true;
+  }
+  console.log(`Gateway is busy: ${turns.length} running.`);
+  for (const t of turns) {
+    const parts: string[] = [t.kind];
+    if (t.agentId) parts.push(`agent=${t.agentId}`);
+    if (t.sessionId) parts.push(`session=${t.sessionId}`);
+    if (t.id) parts.push(`id=${t.id}`);
+    if (t.label) parts.push(`label=${t.label}`);
+    parts.push(`age=${formatAge(t.startedAt)}`);
+    console.log(`  ${parts.join(" ")}`);
+  }
+  return false;
+}
+
+function restartService(force: boolean): void {
+  if (!force && !checkIdle()) {
+    console.error("Restart refused. Wait for the work to finish, or use --force.");
+    process.exit(1);
+  }
   assertDarwin();
   const label = resolveActiveLabel();
   const plistPath = plistPathFor(label);
@@ -418,13 +483,21 @@ export function registerGatewayServiceCommands(gatewayCmd: Command): void {
   gatewayCmd
     .command("restart")
     .description("Restart the installed gateway service (stop + start)")
-    .action(() => {
+    .option("--force", "Restart even if turns, subagents, or workers are running")
+    .action((opts: { force?: boolean }) => {
       try {
-        restartService();
+        restartService(opts.force === true);
       } catch (err) {
         logError("restart failed", err);
         process.exit(1);
       }
+    });
+
+  gatewayCmd
+    .command("idle")
+    .description("Exit 0 if no turn, subagent, or worker is running; else list them and exit 1")
+    .action(() => {
+      if (!checkIdle()) process.exit(1);
     });
 
   gatewayCmd

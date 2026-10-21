@@ -83,7 +83,7 @@ async function run(command: string): Promise<void> {
   program.exitOverride();
   const gatewayCmd = program.command("gateway");
   registerGatewayServiceCommands(gatewayCmd);
-  await program.parseAsync(["gateway", command], { from: "user" });
+  await program.parseAsync(["gateway", ...command.split(" ")], { from: "user" });
 }
 
 describe("gateway service launchd label", () => {
@@ -294,6 +294,83 @@ describe("gateway service launchd label", () => {
 
       expect(logs).toContain(`No plist at ${plistPathFor(LABEL)}`);
       expect(logs).toContain(`Uninstalled: ${LABEL}`);
+    });
+  });
+
+  describe("restart gate", () => {
+    function writeState(pid: number, turns: object[]): void {
+      const file = path.join(homeDir, ".yoplai", "run", "active-turns.json");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ pid, updatedAt: new Date().toISOString(), turns })
+      );
+    }
+    const busyTurn = {
+      kind: "turn",
+      agentId: "main",
+      sessionId: "s1",
+      startedAt: new Date().toISOString(),
+    };
+
+    it("idle exits 0 when the state file is missing", async () => {
+      await run("idle");
+      expect(logs.join("\n")).toContain("idle");
+    });
+
+    it("idle exits 0 when the state file is unparseable", async () => {
+      const file = path.join(homeDir, ".yoplai", "run", "active-turns.json");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "{not json");
+      await run("idle");
+      expect(logs.join("\n")).toContain("idle");
+    });
+
+    it("idle treats a dead gateway PID as idle", async () => {
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        throw Object.assign(new Error("no such process"), { code: "ESRCH" });
+      });
+      writeState(999999, [busyTurn]);
+      await run("idle");
+      expect(logs.join("\n")).toContain("idle");
+    });
+
+    it("idle exits 1 and lists work when the gateway is alive", async () => {
+      writeState(process.pid, [busyTurn, { kind: "subagent", id: "r1", startedAt: busyTurn.startedAt }]);
+      await expect(run("idle")).rejects.toThrow("process.exit(1)");
+      const out = logs.join("\n");
+      expect(out).toContain("agent=main");
+      expect(out).toContain("session=s1");
+      expect(out).toContain("subagent");
+      expect(out).toContain("id=r1");
+    });
+
+    it("idle treats EPERM as alive", async () => {
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        throw Object.assign(new Error("denied"), { code: "EPERM" });
+      });
+      writeState(1, [busyTurn]);
+      await expect(run("idle")).rejects.toThrow("process.exit(1)");
+    });
+
+    it("restart refuses while busy and does not call launchctl", async () => {
+      installPlist(LABEL, true);
+      writeState(process.pid, [busyTurn]);
+      await expect(run("restart")).rejects.toThrow("process.exit(1)");
+      expect(callIndex("kickstart")).toBe(-1);
+    });
+
+    it("restart --force skips the check", async () => {
+      installPlist(LABEL, true);
+      writeState(process.pid, [busyTurn]);
+      await run("restart --force");
+      expect(callIndex("kickstart", target(LABEL))).toBeGreaterThanOrEqual(0);
+    });
+
+    it("idle works without macOS", async () => {
+      Object.defineProperty(process, "platform", { value: "linux" });
+      await run("idle");
+      expect(logs.join("\n")).toContain("idle");
     });
   });
 });

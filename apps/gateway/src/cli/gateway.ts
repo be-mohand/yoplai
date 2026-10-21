@@ -15,6 +15,7 @@ import {
   reloadExtensions,
   setExtensionActivator,
 } from "../extensions/registry.js";
+import { resetActiveTurns } from "../agents/active-turns.js";
 import { bindExtensionContext, createExtensionContext } from "../extensions/context.js";
 import {
   prepareStartupConfig,
@@ -84,6 +85,7 @@ export async function startGatewayCommand(
     ui: { ...config.ui, port: uiPort },
   };
   await initializeDashboardRegistry(runtimeConfig, CONFIG_DIR);
+  resetActiveTurns();
   const extensionContext = createExtensionContext(runtimeConfig);
   for (const extension of extensions) {
     await extension.start(bindExtensionContext(extensionContext, extension.id));

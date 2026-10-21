@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import {
   readEnv,
+  type ActiveWorkItem,
   type GatewayConfig,
   type OrchestratorSource,
 } from "@yoplai/shared";
@@ -11,12 +12,21 @@ import { findProjectLocation } from "../projects/store.js";
 import { dirExists } from "../util/fs.js";
 import { getProjectsRoot, getProjectsWorktreeRoot } from "../util/paths.js";
 import { getSubagentHarnessAdapter } from "./harness-adapter.js";
+import { reportProjectSubagents } from "../context.js";
 import { subagentRunStore, writeJsonFile as writeJson } from "./run-store.js";
 import {
   getSubagentWorkspaceAdapter,
   resolveProjectRepo,
   validateWorkspaceRepo,
 } from "./workspace-adapter.js";
+
+const liveChildren = new Map<string, ActiveWorkItem>();
+
+function setLiveChild(key: string, item: ActiveWorkItem | null): void {
+  if (item) liveChildren.set(key, item);
+  else if (!liveChildren.delete(key)) return;
+  reportProjectSubagents([...liveChildren.values()]);
+}
 
 export const SUPPORTED_SUBAGENT_CLIS = ["claude", "codex", "pi"] as const;
 export type SubagentCli = (typeof SUPPORTED_SUBAGENT_CLIS)[number];
@@ -377,6 +387,15 @@ export async function spawnSubagent(
     cwd: worktreePath,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const liveKey = `${input.projectId}:${input.slug}:${child.pid ?? Date.now()}`;
+  setLiveChild(liveKey, {
+    kind: "subagent",
+    id: `${input.projectId}/${input.slug}`,
+    label: input.name ?? input.slug,
+    startedAt: new Date().toISOString(),
+  });
+  child.once("exit", () => setLiveChild(liveKey, null));
+  child.once("error", () => setLiveChild(liveKey, null));
   let markIoReady!: () => void;
   const ioReady = new Promise<void>((resolve) => {
     markIoReady = resolve;

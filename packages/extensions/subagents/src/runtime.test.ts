@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildArgs,
   getSubagentLogs,
@@ -289,6 +289,30 @@ describe("subagent runtime logs", () => {
         includeArchived: true,
       });
       expect(runs).toHaveLength(1);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("reports running subagents and clears them on exit", async () => {
+    const binDir = await fs.mkdtemp(path.join(tempDir, "bin-"));
+    await fs.writeFile(path.join(binDir, "codex"), "#!/bin/sh\nsleep 0.5\nexit 0\n", {
+      encoding: "utf8",
+      mode: 0o755,
+    });
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+    const reports: Array<Array<{ kind: string; id?: string }>> = [];
+    try {
+      const run = await startSubagentRun(
+        { ...runtimeOptions(), setActiveWork: (items) => reports.push(items) },
+        { cli: "codex", cwd: tempDir, prompt: "test", label: "Sleeper" }
+      );
+      expect(reports.at(-1)).toContainEqual(expect.objectContaining({ kind: "subagent", id: run.id }));
+      await vi.waitFor(
+        () => expect(reports.at(-1)?.some((item) => item.id === run.id)).toBe(false),
+        { timeout: 5000 }
+      );
     } finally {
       process.env.PATH = originalPath;
     }

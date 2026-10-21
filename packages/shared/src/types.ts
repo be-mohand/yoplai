@@ -1371,7 +1371,22 @@ export type ExtensionConfigPatch = {
   removeSecrets?: string[];
 };
 
+/** A running unit of work an extension reports so `yoplai gateway restart` can refuse. */
+export interface ActiveWorkItem {
+  kind: "subagent" | "worker";
+  id?: string;
+  label?: string;
+  agentId?: string;
+  sessionId?: string;
+  startedAt: string;
+}
+
 export interface ExtensionContext {
+  /**
+   * Replace the list of running work this extension owns. Call whenever a
+   * child starts or exits; pass an empty list when nothing runs.
+   */
+  setActiveWork?(extensionId: string, items: ActiveWorkItem[]): void;
   /**
    * Write an agent's per-agent extension config (secrets go to the agent
    * `.env`), then reload the gateway config. An extension can only write its

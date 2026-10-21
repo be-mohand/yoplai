@@ -1,9 +1,10 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { GatewayConfig } from "@yoplai/shared";
+import type { ActiveWorkItem, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnSubagent } from "./runner.js";
+import { clearProjectsContext, setProjectsContext } from "../context.js";
 
 describe("subagent runner repo resolution", () => {
   let tmpDir: string;
@@ -124,6 +125,36 @@ describe("subagent runner repo resolution", () => {
       const finished = JSON.parse(await fs.readFile(path.join(projectDir, "sessions", "worker", "state.json"), "utf8")) as { outcome?: string };
       expect(finished.outcome).toBe("done");
     });
+  });
+
+  it("reports the running child as active work until it exits", async () => {
+    const projectRepo = await createRepo("project-repo");
+    const { config, projectDir } = await createProject({ projectRepo });
+    const reports: ActiveWorkItem[][] = [];
+    setProjectsContext({
+      setActiveWork: (_id: string, items: ActiveWorkItem[]) => reports.push(items),
+    } as unknown as ExtensionContext);
+    try {
+      const result = await spawnSubagent(config, {
+        projectId: "PRO-1",
+        slug: "worker",
+        cli: "codex",
+        prompt: "test",
+        mode: "none",
+      });
+      expect(result.ok).toBe(true);
+      expect(reports[0]).toEqual([
+        expect.objectContaining({ kind: "subagent", id: "PRO-1/worker" }),
+      ]);
+      await vi.waitFor(() => expect(reports.at(-1)).toEqual([]));
+      // Let the spawned worker finish persisting before teardown removes its files.
+      await vi.waitFor(async () => {
+        const finished = JSON.parse(await fs.readFile(path.join(projectDir, "sessions", "worker", "state.json"), "utf8")) as { outcome?: string };
+        expect(finished.outcome).toBe("done");
+      });
+    } finally {
+      clearProjectsContext();
+    }
   });
 
   it("falls back to project repo when slice repo is absent", async () => {

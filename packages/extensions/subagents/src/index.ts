@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type {
+  ActiveWorkItem,
   Extension,
   ExtensionContext,
   OrchestratorSource,
@@ -45,6 +46,8 @@ function runtimeOptions() {
   const ctx = getContext();
   return {
     dataDir: ctx.getDataDir(),
+    setActiveWork: (items: ActiveWorkItem[]) =>
+      ctx.setActiveWork?.("subagents", items),
     emit: (event: Parameters<ExtensionContext["emit"]>[1]) => {
       ctx.emit("subagent.changed", event);
     },

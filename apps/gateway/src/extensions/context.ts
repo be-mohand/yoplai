@@ -20,6 +20,7 @@ import {
   getSubagentTemplates,
   resolveWorkspaceDir,
 } from "../config/index.js";
+import { reportExtensionWork } from "../agents/active-turns.js";
 import { runAgent, agentEventBus } from "../agents/index.js";
 import { getAllSessionsForAgent, getSession } from "../agents/sessions.js";
 import {
@@ -95,6 +96,7 @@ export function createExtensionContext(
       resolve: <T>(input: Parameters<ExtensionCredentials["resolve"]>[0]) =>
         resolveCredential<T>({ ...input, store: getCredentialStore() }),
     },
+    setActiveWork: reportExtensionWork,
     getConfig: () => loadConfig(),
     getDataDir: () => CONFIG_DIR,
     reloadConfig: () => reloadConfig(),

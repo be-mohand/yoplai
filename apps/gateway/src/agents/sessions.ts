@@ -1,4 +1,5 @@
 import { agentEventBus } from "./events.js";
+import { reportSessionTurns } from "./active-turns.js";
 import type { RunAgentParams } from "@yoplai/shared";
 import type { TurnBuffer } from "../history/store.js";
 
@@ -12,6 +13,7 @@ export type AgentSession = {
   agentId: string;
   sessionId: string;
   isStreaming: boolean;
+  streamStartedAt?: number;
   background: boolean;
   lastActivity: number;
   abortController?: AbortController;
@@ -119,6 +121,19 @@ export function popAllPendingUserMessages(
   return pending;
 }
 
+function syncActiveTurns(): void {
+  reportSessionTurns(
+    [...sessions.values()]
+      .filter((s) => s.isStreaming)
+      .map((s) => ({
+        kind: "turn" as const,
+        agentId: s.agentId,
+        sessionId: s.sessionId,
+        startedAt: new Date(s.streamStartedAt ?? s.lastActivity).toISOString(),
+      }))
+  );
+}
+
 export function setSessionStreaming(
   agentId: string,
   sessionId: string,
@@ -129,6 +144,8 @@ export function setSessionStreaming(
   const session = getOrCreateSession(agentId, sessionId);
   const wasSessionStreaming = session.isStreaming;
   session.isStreaming = streaming;
+  if (streaming && !wasSessionStreaming) session.streamStartedAt = Date.now();
+  if (!streaming) session.streamStartedAt = undefined;
   session.background = streaming && background;
   session.lastActivity = Date.now();
   session.abortController = streaming ? abortController : undefined;
@@ -138,6 +155,7 @@ export function setSessionStreaming(
   // chat view can scope its Stop button to its own session) and the
   // agent-wide aggregate (so the sidebar activity indicator stays agent-wide).
   if (wasSessionStreaming !== streaming) {
+    syncActiveTurns();
     const isAgentStreaming = getAllSessionsForAgent(agentId).some(
       (s) => s.isStreaming && !s.background
     );
@@ -194,6 +212,7 @@ export function deleteSession(agentId: string, sessionId: string): boolean {
   session.abortController?.abort();
   sessions.delete(key);
   if (wasSessionStreaming) {
+    syncActiveTurns();
     const isAgentStreaming = getAllSessionsForAgent(agentId).some(
       (s) => s.isStreaming && !s.background
     );

@@ -17,7 +17,7 @@ pnpm link --global ./apps/gateway
 ## Command families
 
 ```text
-yoplai gateway ...          run or manage gateway
+yoplai gateway ...          run or manage gateway (`idle` checks for running work; `restart` refuses unless idle, `--force` overrides)
 yoplai agent list           list agents
 yoplai agents migrate       migrate centralized v2 agents to v3 folders
 yoplai send ...             send agent message
