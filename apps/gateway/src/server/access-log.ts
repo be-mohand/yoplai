@@ -16,12 +16,21 @@ function isPollingOrHealthPath(path: string): boolean {
     path === "/health" ||
     path === "/api/agents/sessions" ||
     path === "/api/auth/get-session" ||
-    /^\/api\/agents\/[^/]+\/history$/.test(path)
+    /^\/api\/agents\/[^/]+\/history$/.test(path) ||
+    /^\/api\/chat-projects(?:\/[^/]+)?$/.test(path) ||
+    (path !== "/api/skills/import-token" &&
+      path !== "/api/skills/recipients" &&
+      /^\/api\/skills(?:\/[^/]+)?$/.test(path)) ||
+    /^\/d-assets\//.test(path) ||
+    /^\/api\/(?:theme\.css|branding\/(?:logo|icon)|manifest\.webmanifest)$/.test(
+      path
+    )
   );
 }
 
 export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
+    if (message.startsWith("<-- ")) return;
     const safeMessage = stripAnsi(message).replace(
       /\/internal\/dashboards\/[^/?\s]+\/html\?[^\s]*/g,
       (target) => {

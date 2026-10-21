@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Reduce gateway log noise: log agent env key names once per content change, emit one access completion line, and quiet fast successful GETs for chat projects, skills and static assets while retaining errors, redirects and slow requests.
 - Emit structured scheduler and channel failures with job/session context, preserve full scheduler diagnostics on disk, and classify upstream tool 4xx and explicitly marked input errors as warnings.
 
 ### Added

@@ -6,6 +6,7 @@ import {
   clearConfigCacheForTests,
   getConfigPath,
   loadConfig,
+  reloadConfig,
   resolveAgentEnv,
 } from "../index.js";
 import { writeFileSync } from "node:fs";
@@ -16,6 +17,19 @@ async function writeAgent(dir: string, id = path.basename(dir)) {
     path.join(dir, "agent.yaml"),
     `id: ${id}\nname: ${id}\nmodel:\n  provider: anthropic\n  model: claude\n`
   );
+}
+
+async function setupAgentEnv() {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-env-log-"));
+  const agentDir = path.join(tmpDir, "agents", "assistant");
+  await writeAgent(agentDir);
+  await fs.writeFile(
+    path.join(tmpDir, "yoplai.json"),
+    JSON.stringify({ version: 3, agents: [agentDir] })
+  );
+  process.env.YOPLAI_HOME = tmpDir;
+  const config = loadConfig();
+  return { tmpDir, agentDir, envPath: path.join(agentDir, ".env"), config };
 }
 
 describe("config loading", () => {
@@ -139,6 +153,145 @@ describe("config loading", () => {
     if (prevAgentOnly === undefined) delete process.env.AGENT_ONLY;
     else process.env.AGENT_ONLY = prevAgentOnly;
     logSpy.mockRestore();
+  });
+
+  it("logs agent env only when content changes while returning fresh values", async () => {
+    const { tmpDir, envPath, config } = await setupAgentEnv();
+    const agent = config.agents[0];
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await fs.writeFile(envPath, "ENV_LOG_TOKEN=first-secret\n");
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBe("first-secret");
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBe("first-secret");
+      expect(logSpy.mock.calls).toEqual([
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+      ]);
+
+      await fs.writeFile(envPath, "ENV_LOG_TOKEN=second-secret\n");
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBe("second-secret");
+      expect(logSpy.mock.calls).toEqual([
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+      ]);
+
+      await fs.writeFile(envPath, "ENV_LOG_TOKEN=second-secret\n");
+      resolveAgentEnv(agent, config);
+      expect(logSpy).toHaveBeenCalledTimes(2);
+
+      await fs.writeFile(
+        envPath,
+        "ENV_LOG_OTHER=third-secret\nENV_LOG_TOKEN=second-secret\n"
+      );
+      expect(resolveAgentEnv(agent, config)).toMatchObject({
+        ENV_LOG_OTHER: "third-secret",
+        ENV_LOG_TOKEN: "second-secret",
+      });
+      expect(logSpy.mock.calls).toEqual([
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "assistant": ENV_LOG_OTHER, ENV_LOG_TOKEN'],
+      ]);
+
+      await fs.appendFile(envPath, "# Changed content with the same keys and values\n");
+      resolveAgentEnv(agent, config);
+      expect(logSpy).toHaveBeenCalledTimes(4);
+      expect(logSpy).toHaveBeenLastCalledWith(
+        '[config] loaded agent env for "assistant": ENV_LOG_OTHER, ENV_LOG_TOKEN'
+      );
+    } finally {
+      logSpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stays silent for empty or missing env files and logs their recreation", async () => {
+    const { tmpDir, envPath, config } = await setupAgentEnv();
+    const agent = config.agents[0];
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBeUndefined();
+      expect(logSpy).not.toHaveBeenCalled();
+
+      await fs.writeFile(envPath, "ENV_LOG_TOKEN=restored-secret\n");
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBe("restored-secret");
+      expect(logSpy).toHaveBeenCalledTimes(1);
+
+      await fs.writeFile(envPath, "");
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBeUndefined();
+      expect(logSpy).toHaveBeenCalledTimes(1);
+
+      await fs.writeFile(envPath, "ENV_LOG_TOKEN=restored-secret\n");
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBe("restored-secret");
+      expect(logSpy).toHaveBeenCalledTimes(2);
+
+      await fs.unlink(envPath);
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBeUndefined();
+      expect(logSpy).toHaveBeenCalledTimes(2);
+
+      await fs.writeFile(envPath, "ENV_LOG_TOKEN=restored-secret\n");
+      expect(resolveAgentEnv(agent, config).ENV_LOG_TOKEN).toBe("restored-secret");
+      expect(logSpy.mock.calls).toEqual([
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+      ]);
+    } finally {
+      logSpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps env log history across reloads and clears it for the test reset", async () => {
+    const { tmpDir, envPath, config } = await setupAgentEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await fs.writeFile(envPath, "ENV_LOG_TOKEN=unchanged-secret\n");
+      resolveAgentEnv(config.agents[0], config);
+      const reloaded = reloadConfig();
+      resolveAgentEnv(reloaded.agents[0], reloaded);
+      expect(logSpy).toHaveBeenCalledTimes(1);
+
+      clearConfigCacheForTests();
+      const reset = loadConfig();
+      resolveAgentEnv(reset.agents[0], reset);
+      expect(logSpy.mock.calls).toEqual([
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+      ]);
+    } finally {
+      logSpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("tracks env content independently for each agent id and absolute path", async () => {
+    const { tmpDir, envPath, config } = await setupAgentEnv();
+    const agent = config.agents[0];
+    const secondDir = path.join(tmpDir, "other-workspace");
+    await fs.mkdir(secondDir);
+    await fs.writeFile(envPath, "ENV_LOG_TOKEN=shared-secret\n");
+    await fs.writeFile(
+      path.join(secondDir, ".env"),
+      "ENV_LOG_TOKEN=shared-secret\n"
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      resolveAgentEnv(agent, config);
+      resolveAgentEnv({ ...agent, id: "second" }, config);
+      resolveAgentEnv({ ...agent, workspaceDir: secondDir }, config);
+      resolveAgentEnv(agent, config);
+      resolveAgentEnv({ ...agent, id: "second" }, config);
+      resolveAgentEnv({ ...agent, workspaceDir: secondDir }, config);
+      resolveAgentEnv({ ...agent, workspaceDir: "./agents/assistant" }, config);
+      expect(logSpy.mock.calls).toEqual([
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "second": ENV_LOG_TOKEN'],
+        ['[config] loaded agent env for "assistant": ENV_LOG_TOKEN'],
+      ]);
+    } finally {
+      logSpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects v2 config with migrate message", async () => {
