@@ -367,6 +367,7 @@ export async function handleTelegramMessage(
     return surfaceChain;
   };
 
+  let sessionId: string | undefined;
   try {
     const agentResult = await getTelegramContext().runAgent({
       agentId: target.agent.id,
@@ -393,6 +394,8 @@ export async function handleTelegramMessage(
             }
           : undefined,
     });
+
+    sessionId = agentResult.meta.sessionId;
 
     // Drain any remaining tool-call notes so the audit trail is complete before
     // the reply is finalized, and so the note chain can't outlive the turn.
@@ -452,7 +455,10 @@ export async function handleTelegramMessage(
       liveMessageId = undefined;
     }
   } catch (err) {
-    console.error(`${target.logPrefix} Error:`, err);
+    getTelegramContext().logger.error("[telegram] agent reply failed", (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0], {
+      agentId: target.agent.id, channel: "telegram", sessionKey,
+      ...(sessionId ? { sessionId } : {}),
+    });
     await send("Sorry, I encountered an error processing your message.");
   } finally {
     typing?.stop();

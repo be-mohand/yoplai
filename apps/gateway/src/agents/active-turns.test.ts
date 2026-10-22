@@ -24,9 +24,30 @@ describe("active turns state file", () => {
     process.env.YOPLAI_HOME = home;
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     if (original === undefined) delete process.env.YOPLAI_HOME;
     else process.env.YOPLAI_HOME = original;
     fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("warns on one JSON line when state cannot be written and resumes after recovery", async () => {
+    const { turns } = await load();
+    fs.writeFileSync(path.join(home, "run"), "blocked");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(() => turns.reportSessionTurns([])).not.toThrow();
+    expect(warn.mock.calls).toHaveLength(1);
+    expect(warn.mock.calls[0]).toHaveLength(1);
+    const line = warn.mock.calls[0]![0];
+    expect(line.split("\n")).toHaveLength(1);
+    expect(JSON.parse(line)).toMatchObject({
+      level: "warn", msg: "[active-turns] failed to write state file",
+      message: expect.stringContaining("EEXIST"),
+    });
+
+    fs.unlinkSync(path.join(home, "run"));
+    turns.reportExtensionWork("worker", [{ kind: "worker", id: "next", startedAt: "2026-10-21T00:00:00.000Z" }]);
+    expect(readState().turns).toEqual([{ kind: "worker", id: "next", startedAt: "2026-10-21T00:00:00.000Z" }]);
   });
 
   it("records a turn on start and clears it on end", async () => {

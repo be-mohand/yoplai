@@ -46,6 +46,7 @@ Important seams:
 - `RunAgentParams.userId` remains the requester for credentials and identity; `sessionOwnerId` selects persisted history/session storage (`undefined` defaults to requester, `null` means shared). Trusted `requesterId` distinguishes unpaired transport senders; different requesters queue separate turns with their own context, attachments, callbacks, and delivery target.
 - `normalizeRunRequest()` is the shared REST/WebSocket input normalization path.
 - `ExtensionRuntime` is the source of loaded routes, tools, prompt contributions, capabilities, and lifecycle state.
+- Extension logging uses `ctx.logger.info/warn(message, fields)` and `ctx.logger.error(message, error, fields)` for top-level structured fields. Pass a short error string when full diagnostics belong only in persisted run/output artifacts. Thrown tool errors with integer HTTP status 400–499 or explicit `code: "invalid_input"` log at warning; unmarked validation errors remain errors.
 
 ### `apps/web`
 
@@ -154,6 +155,7 @@ Key rules:
 - Root `extensions.<id>` configures/loads an extension; agent `extensions.<id>` opts an agent into tool-style extensions unless `enabled: false`.
 - Agent folders may contain `.env`. `$env:NAME` resolves from agent-local env layered over `$YOPLAI_HOME/.env`, `yoplai.json` `env`, and `process.env`.
 - Agent-local resolved values are passed to extension hooks as `ctx.env`; do not assume they enter global `process.env` or sandbox env.
+- Agent env files are read on every resolution; key names log once per content change per agent and absolute path. Reloads preserve this log state; empty/missing files stay silent and reset the observed content.
 - External extensions default to `$YOPLAI_HOME/extensions` or `extensionsPath`; directories and symlinked directories are supported.
 - Projects root is `extensions.projects.root`; top-level `projects.root` is deprecated fallback only.
 - Onboarding tour (multi-user only): `user_onboarding` table in `auth.db` (`createOnboardingStore`, `packages/extensions/multi-user/src/onboarding.ts`) stores per-user `done|skipped` + timestamp, exposed at `GET/PUT/DELETE /api/me/onboarding` (`supported:false` in single-user mode). Web: `apps/web/src/onboarding/` (`steps.ts` route/target table, `OnboardingTour.tsx` driver.js controller mounted in `Layout`, `state.ts` step signal in sessionStorage + `restartTour`). Targets use `data-tour` attributes; keep them when editing the agent catalog, edit-agent, extension details, credential tabs, OAuth connect card and chat composer.
@@ -422,6 +424,8 @@ See [orchestrator README](../packages/extensions/orchestrator/README.md) for `WO
 ## Principal API surfaces
 
 Routes are composed from core plus enabled extensions. Exact route definitions and shared schemas are source of truth.
+
+Access logs emit one completion line. Fast successful GETs for health, session polling/history, chat-project lists/details, skill lists/details (except import-token and recipients), and static assets are quiet; status >= 300 or elapsed > 500 ms still logs. Nested metadata routes and session search remain logged.
 
 - **Core agents:** `/api/agents`, status, messages, history, sessions, extension catalog/config. `GET /api/agents/sessions/search?q=words` shares the sidebar's filename-based enumeration and reads each candidate once for its summary and match. It returns `{ items }` (summaries with avatar plus `match: "title" | "content"`, optional snippet), excludes archived chats, and searches the caller's visible-agent interactive sessions including chat Projects. Case-insensitive substring words must all occur across the shown label (`title || firstUserMessage || sessionId`) and user/assistant text; tool/thinking/system content is excluded. Title matches precede content matches, newest first within each group, capped at 50; blank input returns no items. No index/cache; search remains access-logged.
 - **Realtime:** `/ws`

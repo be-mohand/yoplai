@@ -29,6 +29,17 @@ export type RunScriptResult = {
   finalStdoutLine?: string;
 };
 
+export class ScriptExecutionError extends Error {
+  constructor(
+    message: string,
+    readonly reason: "exit" | "timeout" | "signal" | "spawn",
+    readonly stderrTail: string,
+    readonly exitCode?: number
+  ) {
+    super(message);
+  }
+}
+
 export type WakeAgentResult = {
   wake: boolean;
   context?: string;
@@ -78,8 +89,23 @@ export async function resolveScriptPath(
 export async function runScript(
   input: RunScriptInput
 ): Promise<RunScriptResult> {
+  try {
+    return await executeScript(input);
+  } catch (error) {
+    if (error instanceof ScriptExecutionError) throw error;
+    const failure = new ScriptExecutionError(
+      error instanceof Error ? error.message : String(error), "spawn", ""
+    );
+    if (error instanceof Error) failure.stack = error.stack;
+    throw failure;
+  }
+}
+
+async function executeScript(input: RunScriptInput): Promise<RunScriptResult> {
   const { workspaceDir, script, timeoutMs } = input;
   const scriptPath = await resolveScriptPath(workspaceDir, script);
+  const stat = await fs.stat(scriptPath);
+  if (!stat.isFile()) throw new Error(`script ${scriptPath} is not a file`);
 
   const ext = path.extname(scriptPath);
   let command: string;
@@ -88,7 +114,6 @@ export async function runScript(
     command = "bash";
     args = [scriptPath];
   } else {
-    const stat = await fs.stat(scriptPath);
     if ((stat.mode & 0o111) === 0) {
       throw new Error(`script ${scriptPath} is not executable`);
     }
@@ -120,20 +145,24 @@ export async function runScript(
 
   const stdout = stdoutCap.text();
   const stderr = stderrCap.text();
+  const stderrTail = stderrCap.tail();
 
   if (timedOut) {
-    throw new Error(
-      `script exceeded the ${timeoutMs}ms timeout and was killed\nstderr:\n${stderr}\nstdout:\n${stdout}`
+    throw new ScriptExecutionError(
+      `script exceeded the ${timeoutMs}ms timeout and was killed\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+      "timeout", stderrTail
     );
   }
   if (signal) {
-    throw new Error(
-      `script failed (exit signal)\nstderr:\n${stderr}\nstdout:\n${stdout}`
+    throw new ScriptExecutionError(
+      `script failed (exit signal)\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+      "signal", stderrTail
     );
   }
   if (code !== 0) {
-    throw new Error(
-      `script failed (exit ${code})\nstderr:\n${stderr}\nstdout:\n${stdout}`
+    throw new ScriptExecutionError(
+      `script failed (exit ${code})\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+      "exit", stderrTail, code ?? undefined
     );
   }
 
@@ -321,6 +350,13 @@ function createOutputCap() {
     text(): string {
       const text = Buffer.concat(chunks).toString("utf8");
       return truncated ? text + TRUNCATION_MARKER : text;
+    },
+    tail(): string {
+      const lines = tail.toString("utf8").replace(/\n$/, "").split("\n").slice(-20).join("\n");
+      const bytes = Buffer.from(lines);
+      let start = Math.max(0, bytes.length - 2 * 1024);
+      while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start++;
+      return bytes.subarray(start).toString("utf8");
     },
     // Read from the rolling tail, never from `text()`: the truncation marker
     // would otherwise become the final line and swallow the wakeAgent verdict.

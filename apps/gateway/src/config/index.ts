@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { parseEnv } from "node:util";
@@ -20,6 +21,7 @@ export const SCHEDULES_PATH = path.join(CONFIG_DIR, "schedules.json");
 
 let cachedConfig: GatewayConfig | null = null;
 let singleAgentId: string | null = null;
+const agentEnvDigests = new Map<string, string>();
 
 export function getConfigPath(): string {
   return resolveConfigPath();
@@ -117,13 +119,19 @@ function discoverAgents(
   return agents.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function readEnvFile(envPath: string): Record<string, string> {
-  if (!fs.existsSync(envPath)) return {};
-  return Object.fromEntries(
-    Object.entries(parseEnv(fs.readFileSync(envPath, "utf8"))).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string"
-    )
-  );
+function readEnvFile(envPath: string): {
+  content: string;
+  env: Record<string, string>;
+} {
+  const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
+  return {
+    content,
+    env: Object.fromEntries(
+      Object.entries(parseEnv(content)).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string"
+      )
+    ),
+  };
 }
 
 function processEnvRecord(): Record<string, string> {
@@ -139,12 +147,16 @@ export function resolveAgentEnv(
   config: GatewayConfig = loadConfig()
 ): Record<string, string> {
   const configDir = path.dirname(getConfigPath());
-  const homeEnv = readEnvFile(path.join(configDir, ".env"));
+  const homeEnv = readEnvFile(path.join(configDir, ".env")).env;
   const agentDir = resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace);
   const agentEnvPath = path.join(agentDir, ".env");
-  const agentEnv = readEnvFile(agentEnvPath);
+  const { content, env: agentEnv } = readEnvFile(agentEnvPath);
+  const envKey = JSON.stringify([agent.id, path.resolve(agentEnvPath)]);
+  const digest = createHash("sha256").update(content).digest("hex");
+  const changed = agentEnvDigests.get(envKey) !== digest;
+  agentEnvDigests.set(envKey, digest);
 
-  if (Object.keys(agentEnv).length > 0) {
+  if (Object.keys(agentEnv).length > 0 && changed) {
     console.log(
       `[config] loaded agent env for "${agent.id}": ${Object.keys(agentEnv)
         .sort()
@@ -256,6 +268,7 @@ export function setLoadedConfig(config: GatewayConfig): void {
 export function clearConfigCacheForTests(): void {
   cachedConfig = null;
   singleAgentId = null;
+  agentEnvDigests.clear();
 }
 
 /** Set single-agent mode - only this agent will be active */

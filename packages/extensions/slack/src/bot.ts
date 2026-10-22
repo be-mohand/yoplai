@@ -1028,6 +1028,7 @@ async function handleSlackMessage(
   let progressDisplay: SlackProgressDisplay | null = null;
   let failureKind: import("@yoplai/shared").RunFailureKind | undefined;
   let runAborted = false;
+  let resultSessionId: string | undefined;
   try {
     const { contentSuffix, attachments } = await collectSlackAttachments({
       data,
@@ -1247,6 +1248,7 @@ async function handleSlackMessage(
         },
       });
     const agentResult = await runAgent(binding?.sessionId);
+    resultSessionId = agentResult.meta.sessionId;
     thinkingDisplay?.setSessionId(agentResult.meta.sessionId);
 
     if (agentResult.meta.queued) {
@@ -1283,7 +1285,12 @@ async function handleSlackMessage(
     await thinkingDisplay?.cleanup();
     await stopThinkingReaction(client, data.channel, data.ts);
   } catch (err) {
-    console.error(`${target.logPrefix} Error:`, err);
+    getSlackContext().logger.error("[slack] agent reply failed", (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0], {
+      agentId: target.agent.id,
+      channel: "slack",
+      sessionKey,
+      ...((resultSessionId ?? binding?.sessionId) ? { sessionId: resultSessionId ?? binding?.sessionId } : {}),
+    });
     try {
       const aborted = runAborted || (err instanceof Error && err.name === "AbortError");
       await progressDisplay?.finish(aborted ? "interrupted" : "failed");

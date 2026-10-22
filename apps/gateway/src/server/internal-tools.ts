@@ -369,14 +369,23 @@ export function createInternalTools(
       if (message.startsWith("Unknown tool: ")) {
         return c.json({ error: message }, 400);
       }
+      const status = (error as { status?: unknown } | null)?.status;
       if (parsed.data.tool !== "__register_file_output") {
-        logError("[internal-tools] tool execution failed", error, {
-          tool: parsed.data.tool,
-          agentId: context.agentId,
-        });
+        const fields = { tool: parsed.data.tool, agentId: context.agentId };
+        // Validation is caller-caused only when its producer explicitly marks it.
+        const invalidInput = (error as { code?: unknown } | null)?.code === "invalid_input";
+        if (invalidInput || (typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 499)) {
+          logWarn("[internal-tools] tool execution failed", {
+            ...fields,
+            status,
+            endpoint: (error as { endpoint?: unknown } | null)?.endpoint,
+            message,
+          });
+        } else {
+          logError("[internal-tools] tool execution failed", error, fields);
+        }
       }
       // Pass through upstream HTTP errors (e.g. Google 404) instead of masking them as 500.
-      const status = (error as { status?: unknown } | null)?.status;
       const httpStatus =
         typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599
           ? (status as ContentfulStatusCode)

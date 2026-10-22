@@ -13,6 +13,7 @@ import { resolveAgentEnv } from "../config/index.js";
 import { getOAuthService } from "../oauth/service.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { getConversationFiles } from "../media/conversation-files.js";
+import { logWarn } from "../logging.js";
 
 type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "conversationFiles" | "actorUserId" | "actorKind">;
 
@@ -271,7 +272,7 @@ export class ExtensionRuntime {
             },
           }));
         } catch (error) {
-          console.warn("Skipping extension tools", {
+          logWarn("Skipping extension tools", {
             extensionId: extension.id,
             agentId: agent.id,
             fields: extensionConfigFieldNames(error),
@@ -357,7 +358,7 @@ export class ExtensionRuntime {
           if (!contribution) return [];
           return Array.isArray(contribution) ? contribution : [contribution];
         } catch (error) {
-          console.warn("Skipping extension prompt", {
+          logWarn("Skipping extension prompt", {
             extensionId: extension.id,
             agentId: agent.id,
             fields: extensionConfigFieldNames(error),
