@@ -3123,6 +3123,9 @@ export function ChatView() {
             class="notification-sound-btn"
             aria-label={notificationSoundEnabled() ? "Notification sound on" : "Notification sound off"}
             aria-pressed={notificationSoundEnabled()}
+            title={notificationSoundEnabled()
+              ? "Sound on: a sound plays when an agent finishes a reply. Click to turn off."
+              : "Sound off: no sound when an agent finishes a reply. Click to turn on."}
             onClick={toggleNotificationSound}
           >
             <i class={notificationSoundEnabled() ? "fa-solid fa-bell" : "fa-solid fa-bell-slash"} aria-hidden="true" />
