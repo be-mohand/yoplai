@@ -1078,6 +1078,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
           flex: 1;
           min-height: 0;
           overflow: auto;
+          /* Put the scrollbar gutter in the sidebar padding so right space matches left. */
+          margin-right: -10px;
           display: flex;
           flex-direction: column;
           gap: 10px;
@@ -1120,7 +1122,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: flex;
           align-items: center;
           gap: 8px;
-          padding: 7px 28px 7px 6px;
+          padding: 7px 6px;
           border: none;
           border-radius: 8px;
           background: transparent;
