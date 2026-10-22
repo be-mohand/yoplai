@@ -159,6 +159,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
   };
 
   const refreshProjects = async () => {
+    if (pollStopped || document.visibilityState !== "visible") return;
     try { setProjects((await fetchChatProjects()).items); }
     catch { setSessionError("Unable to load projects. Try again."); }
   };
@@ -168,14 +169,14 @@ export function AgentSidebar(props: AgentSidebarProps) {
   onCleanup(() => window.removeEventListener("chat-projects-changed", refresh));
   const poll = window.setInterval(refresh, 3000);
   const clock = window.setInterval(() => setCurrentTime(Date.now()), 60000);
-  window.addEventListener("focus", refreshSessions);
-  document.addEventListener("visibilitychange", refreshSessions);
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", refresh);
   onCleanup(() => {
     clearTimeout(scrollIdleTimer);
     window.clearInterval(poll);
     window.clearInterval(clock);
-    window.removeEventListener("focus", refreshSessions);
-    document.removeEventListener("visibilitychange", refreshSessions);
+    window.removeEventListener("focus", refresh);
+    document.removeEventListener("visibilitychange", refresh);
   });
 
   // Close session/project menus on outside click or Escape

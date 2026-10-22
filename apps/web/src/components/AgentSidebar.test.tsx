@@ -11,11 +11,18 @@ const fetchProjectsMock = vi.fn<() => Promise<unknown[]>>();
 const fetchAgentSessionsMock = vi.fn(async () => ({ items: [] as unknown[] }));
 const fetchChatProjectsMock = vi.fn(async () => ({ items: [] as { id: string; name: string; createdAt: number; updatedAt: number }[] }));
 const moveChatToProjectMock = vi.fn(async () => {});
+const createChatProjectMock = vi.fn(async () => ({ id: "created" }));
+const renameChatProjectMock = vi.fn(async () => {});
+const deleteChatProjectMock = vi.fn(async () => {});
 const navigateMock = vi.fn();
 const pinAgentSessionMock = vi.fn(async () => {});
 const archiveAgentSessionMock = vi.fn(async () => {});
 const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
 const showToastMock = vi.fn();
+
+function setVisibility(state: DocumentVisibilityState) {
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue(state);
+}
 
 class UnauthenticatedError extends Error {
   constructor() {
@@ -34,7 +41,13 @@ vi.mock("../api", () => ({
   UnauthenticatedError,
 }));
 
-vi.mock("../api/chat-projects", () => ({ fetchChatProjects: fetchChatProjectsMock, createChatProject: vi.fn(), moveChatToProject: moveChatToProjectMock }));
+vi.mock("../api/chat-projects", () => ({
+  fetchChatProjects: fetchChatProjectsMock,
+  createChatProject: createChatProjectMock,
+  renameChatProject: renameChatProjectMock,
+  deleteChatProject: deleteChatProjectMock,
+  moveChatToProject: moveChatToProjectMock,
+}));
 
 vi.mock("../api/top-extensions", () => ({
   EMPTY_TOP_EXTENSIONS: { extensions: [], mcp: [] },
@@ -74,6 +87,12 @@ describe("AgentSidebar", () => {
     fetchChatProjectsMock.mockResolvedValue({ items: [] });
     moveChatToProjectMock.mockReset();
     moveChatToProjectMock.mockResolvedValue(undefined);
+    createChatProjectMock.mockReset();
+    createChatProjectMock.mockResolvedValue({ id: "created" });
+    renameChatProjectMock.mockReset();
+    renameChatProjectMock.mockResolvedValue(undefined);
+    deleteChatProjectMock.mockReset();
+    deleteChatProjectMock.mockResolvedValue(undefined);
     setPathname("/projects");
     pinAgentSessionMock.mockReset();
     pinAgentSessionMock.mockResolvedValue(undefined);
@@ -82,6 +101,7 @@ describe("AgentSidebar", () => {
     showToastMock.mockReset();
     fetchAgentSessionsMock.mockResolvedValue({ items: [] });
     vi.useRealTimers();
+    vi.restoreAllMocks();
     fetchProjectsMock.mockReset();
     fetchProjectsMock.mockResolvedValue([]);
     resetCapabilitiesForTests();
@@ -324,6 +344,164 @@ describe("AgentSidebar", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(moveChatToProjectMock).toHaveBeenCalledWith("a", "pin", "p1");
     dispose();
+  });
+
+  it("defers hidden mount and resumes both lists on visibility", async () => {
+    vi.useFakeTimers();
+    setVisibility("hidden");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchAgentSessionsMock).not.toHaveBeenCalled();
+      expect(fetchChatProjectsMock).not.toHaveBeenCalled();
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(1);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("pauses both lists while hidden and preserves visible polling and wake events", async () => {
+    vi.useFakeTimers();
+    setVisibility("visible");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const sessions = fetchAgentSessionsMock.mock.calls.length;
+      const projects = fetchChatProjectsMock.mock.calls.length;
+      setVisibility("hidden");
+      await vi.advanceTimersByTimeAsync(9000);
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("chat-projects-changed"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(sessions);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(projects);
+      setVisibility("visible");
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(sessions + 3);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(projects + 3);
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(sessions + 4);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(projects + 4);
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(sessions + 5);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(projects + 5);
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each(["create", "rename", "move", "delete"])("gates project refresh after %s completes hidden and refreshes visible mutations", async (mutation) => {
+    vi.useFakeTimers();
+    setVisibility("visible");
+    fetchChatProjectsMock.mockResolvedValue({ items: [{ id: "p1", name: "Work", createdAt: 1, updatedAt: 1 }] });
+    fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "a", sessionId: "s1", lastActivity: 1, firstUserMessage: "Chat", projectId: null }] });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const click = (text: string, selector = "button") => {
+      const button = Array.from(container.querySelectorAll<HTMLButtonElement>(selector)).find((item) => item.textContent?.trim() === text);
+      expect(button).toBeDefined();
+      button!.click();
+    };
+    const startMutation = () => {
+      if (mutation === "create") {
+        container.querySelector<HTMLButtonElement>('[aria-label="New project"]')!.click();
+      } else {
+        click(mutation === "rename" ? "Rename…" : mutation === "delete" ? "Delete…" : "Move to project…", ".session-action");
+      }
+      if (mutation === "create" || mutation === "rename") {
+        const input = container.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+        input.value = "Updated project";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      click(mutation === "create" ? "Create" : mutation === "rename" ? "Rename" : mutation === "delete" ? "Delete project" : "Work", '[role="dialog"] button, [role="alertdialog"] button');
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      let finishMutation!: () => void;
+      if (mutation === "create") {
+        createChatProjectMock.mockImplementationOnce(() => new Promise((resolve) => { finishMutation = () => resolve({ id: "created" }); }));
+      } else {
+        const mock = mutation === "rename" ? renameChatProjectMock : mutation === "delete" ? deleteChatProjectMock : moveChatToProjectMock;
+        mock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishMutation = resolve; }));
+      }
+      startMutation();
+      expect(finishMutation).toBeDefined();
+      const baseline = fetchChatProjectsMock.mock.calls.length;
+      setVisibility("hidden");
+      finishMutation();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(baseline);
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(baseline + 1);
+      const visibleBaseline = fetchChatProjectsMock.mock.calls.length;
+      startMutation();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchChatProjectsMock.mock.calls.length).toBeGreaterThan(visibleBaseline);
+      expect(container.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("stops both lists after a handled sessions 401", async () => {
+    vi.useFakeTimers();
+    setVisibility("visible");
+    fetchAgentSessionsMock.mockRejectedValueOnce(new UnauthenticatedError());
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(navigateMock).toHaveBeenCalledWith("/login");
+      const sessions = fetchAgentSessionsMock.mock.calls.length;
+      const projects = fetchChatProjectsMock.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(9000);
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("chat-projects-changed"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(sessions);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(projects);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("removes polling and every refresh listener on disposal", async () => {
+    vi.useFakeTimers();
+    setVisibility("visible");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const sessions = fetchAgentSessionsMock.mock.calls.length;
+      const projects = fetchChatProjectsMock.mock.calls.length;
+      dispose();
+      await vi.advanceTimersByTimeAsync(9000);
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("chat-projects-changed"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchAgentSessionsMock).toHaveBeenCalledTimes(sessions);
+      expect(fetchChatProjectsMock).toHaveBeenCalledTimes(projects);
+    } finally {
+      dispose();
+    }
   });
 
   it("keeps refreshing chats when project requests hang or fail", async () => {
