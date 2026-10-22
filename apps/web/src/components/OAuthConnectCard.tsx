@@ -11,7 +11,9 @@ import {
 import { useSession } from "../auth/client";
 import { disconnectOAuth, fetchOAuthStatus, oauthAuthorizeUrl, type OAuthConnectionState, type OAuthStatus } from "../api/oauth";
 import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_UP, STATUS_RECONNECT, type CredentialScope, type ScopeStatus } from "./CredentialScopeTabs";
-import { navigateOAuthPopup, onOAuthReturn, openOAuthPopup, reserveOAuthPopup } from "../lib/oauth-popup";
+import { onOAuthReturn } from "../lib/oauth-popup";
+import { readOAuthResult } from "../lib/oauth-return";
+import { showToast } from "../lib/toast";
 import { ReconnectWarning, ScopeUsageNote, TEAM_MANAGED_NOTE } from "./ScopedConnectionNotes";
 
 type ConnectionState = OAuthConnectionState;
@@ -46,11 +48,18 @@ export function OAuthConnectCard(props: {
   children?: JSX.Element;
 }) {
   const settings = children(() => props.children);
+  const oauthResult = readOAuthResult();
+  if (oauthResult?.status === "connected") showToast(`Connected to ${props.label}`, "success");
   const [statuses, setStatuses] = createSignal<Partial<Record<CredentialScope, OAuthStatus>>>({});
   const [loading, setLoading] = createSignal(false);
+  // Show feedback while the provider sign-in page loads. Reset it when Back restores this page from the bfcache.
+  const [redirecting, setRedirecting] = createSignal(false);
+  const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) setRedirecting(false); };
+  window.addEventListener("pageshow", onPageShow);
+  onCleanup(() => window.removeEventListener("pageshow", onPageShow));
   const [error, setError] = createSignal<string>();
   const session = useSession();
-  const [ownScope, setOwnScope] = createSignal<CredentialScope>("personal");
+  const [ownScope, setOwnScope] = createSignal<CredentialScope>(oauthResult?.scope ?? "personal");
   const scope = () => props.scope ?? ownScope();
   const setScope = (next: CredentialScope) => {
     setOwnScope(next);
@@ -58,7 +67,8 @@ export function OAuthConnectCard(props: {
   };
   const scopesFor = (target: CredentialScope) => (target === "personal" ? props.personalScopes ?? props.scopes : props.scopes) ?? [];
   const [canConfigureTeam, setCanConfigureTeam] = createSignal(true);
-  let scopePicked = false;
+  let scopePicked = !!oauthResult;
+  if (oauthResult) props.onScopeChange?.(oauthResult.scope);
   let statusRequest = 0;
 
   const refreshStatus = async () => {
@@ -119,23 +129,18 @@ export function OAuthConnectCard(props: {
   const teamReadOnly = () => scope() === "team" && !canConfigureTeam();
 
   const authorizeUrl = (target: CredentialScope, scopes: string[]) =>
-    oauthAuthorizeUrl(props.agentId, props.provider, target, scopes);
+    oauthAuthorizeUrl(props.agentId, props.provider, target, scopes, window.location.pathname + window.location.search + window.location.hash);
 
   const connect = async () => {
     if (!props.agentId) return;
     const target = scope();
-    if (!props.hasUnsavedSettings?.()) {
-      openOAuthPopup(authorizeUrl(target, scopesFor(target)));
-      return;
-    }
-    // Reserve the popup in the click event; browsers block windows opened after fetch.
-    const popup = reserveOAuthPopup();
+    setRedirecting(true);
     try {
-      const url = authorizeUrl(target, (await props.saveSettings?.()) ?? scopesFor(target));
-      navigateOAuthPopup(popup, url);
+      const scopes = props.hasUnsavedSettings?.() ? await props.saveSettings?.() : undefined;
+      window.location.assign(authorizeUrl(target, scopes ?? scopesFor(target)));
       setError(undefined);
     } catch (cause) {
-      popup?.close();
+      setRedirecting(false);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
@@ -148,6 +153,9 @@ export function OAuthConnectCard(props: {
   return (
     <>
       <style>{OAUTH_CONNECT_CARD_STYLES}</style>
+      <Show when={oauthResult?.status === "error" && oauthResult}>
+        {(result) => <div class="oauth-error" role="alert">{result().error}</div>}
+      </Show>
       <Show when={error()}>
         {(message) => <div class="oauth-error">{message()}</div>}
       </Show>
@@ -171,10 +179,10 @@ export function OAuthConnectCard(props: {
               <button
                 class="oauth-btn oauth-btn-primary"
                 data-tour="oauth-connect"
-                disabled={!props.agentId}
+                disabled={!props.agentId || redirecting()}
                 onClick={() => void connect()}
               >
-                Connect {props.label}
+                {redirecting() ? "Redirecting…" : `Connect ${props.label}`}
               </button>
             }
           >
@@ -193,8 +201,8 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={needsGrant()}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" onClick={() => void connect()}>
-                  Grant {props.label} access
+                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" disabled={redirecting()} onClick={() => void connect()}>
+                  {redirecting() ? "Redirecting…" : `Grant ${props.label} access`}
                 </button>
                 <button
                   class="oauth-btn oauth-btn-danger"
@@ -206,8 +214,8 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={lifecycle() === "needs_reconnect"}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" onClick={() => void connect()}>
-                  Reconnect
+                <button class="oauth-btn oauth-btn-primary" disabled={redirecting()} onClick={() => void connect()}>
+                  {redirecting() ? "Redirecting…" : "Reconnect"}
                 </button>
                 <button
                   class="oauth-btn oauth-btn-danger"

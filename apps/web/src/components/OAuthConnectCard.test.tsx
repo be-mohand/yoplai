@@ -38,19 +38,34 @@ describe("OAuthConnectCard scope", () => {
   it("starts and disconnects the selected personal scope", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ connected: false, provider: "google" })));
     vi.stubGlobal("fetch", fetchMock);
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const assign = vi.fn();
+    vi.stubGlobal("location", { href: "http://localhost/connections?agent=probe", pathname: "/connections", search: "?agent=probe", hash: "", assign });
     dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
     await flush();
     selectScope(document, "personal");
     await flush();
     document.querySelector<HTMLButtonElement>(".oauth-btn-primary")!.click();
-    expect(open).toHaveBeenCalledWith("/api/oauth/google/authorize?agent=probe&scope=personal", "yoplai-oauth", "width=520,height=640");
+    expect(assign).toHaveBeenCalledWith("/api/oauth/google/authorize?agent=probe&scope=personal&returnTo=%2Fconnections%3Fagent%3Dprobe");
     fetchMock.mockImplementation(async () => new Response(JSON.stringify({ connected: true, provider: "google", scopes: [] })));
     window.dispatchEvent(new Event("focus"));
     await flush();
     document.querySelector<HTMLButtonElement>(".oauth-btn-danger")!.click();
     await flush();
     expect(fetchMock).toHaveBeenCalledWith("/api/oauth/google/disconnect?agent=probe&scope=personal", { method: "POST", credentials: "include" });
+  });
+
+  it("shows feedback while the sign-in page loads and resets it when Back restores the page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ connected: false, provider: "google" }))));
+    vi.stubGlobal("location", { href: "http://localhost/connections?agent=probe", pathname: "/connections", search: "?agent=probe", hash: "", assign: vi.fn() });
+    dispose = render(() => <OAuthConnectCard agentId="probe" provider="google" label="Google" />, document.body);
+    await flush();
+    const button = () => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((item) => /Connect Google|Redirecting/.test(item.textContent ?? ""))!;
+    button().click();
+    expect(button().textContent).toBe("Redirecting…");
+    expect(button().disabled).toBe(true);
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    expect(button().textContent).toBe("Connect Google");
+    expect(button().disabled).toBe(false);
   });
 
   it("opens on the connected team tab, read-only for non-admins, when Just me is not set up", async () => {
