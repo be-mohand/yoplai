@@ -40,6 +40,7 @@ import {
   FIRST_RUN_BOOTSTRAP_PROMPT,
   ensureWorkspaceFiles,
 } from "../../agents/workspace.js";
+import { selfImprovementPrompt } from "../../agents/self-improvement.js";
 import { getSessionCreatedAt } from "../../sessions/store.js";
 import { resolveSessionDataFile } from "../../sessions/files.js";
 import { getExtensionSystemPromptContributions } from "../../extensions/prompts.js";
@@ -531,6 +532,7 @@ export const piAdapter: SdkAdapter = {
       const allAppendedPrompts = [
         isFirstRun ? FIRST_RUN_BOOTSTRAP_PROMPT : undefined,
         ...extensionPrompts,
+        selfImprovementPrompt(agent),
         renderedContext || undefined,
         `Conversation files: ${getConversationFiles(agent.id, params.sessionId, params.userId).runtimePath}. Download and edit files here; use send_file to share the result with the user.`,
       ].filter((prompt): prompt is string => Boolean(prompt));

@@ -70,6 +70,7 @@ Common fields:
 | `introMessage`                        | Custom message shown after `/new`                           |
 | `discord`, `slack`, `telegram`, `irc` | Supported per-agent transport config                        |
 | `heartbeat`, `dream`, `webhooks`      | Periodic and webhook-triggered behavior                     |
+| `reflect`                             | `true` or `{ enabled, cadence, provider, model, timeoutMs }`. Adds a self-improvement prompt so the agent saves lessons in the same turn. Off by default. Only `enabled` has an effect now; the other fields are reserved |
 | `extensions`                          | Per-agent tool-extension opt-ins/overrides                  |
 | `globalSkills`                        | Include global agent skills when true                       |
 | `sandbox`                             | Per-agent Docker isolation settings                         |

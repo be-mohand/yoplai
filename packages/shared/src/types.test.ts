@@ -110,6 +110,22 @@ describe("AgentConfigSchema openclaw model handling", () => {
     expect(result.success).toBe(false);
   });
 
+  it("parses reflect config shapes and rejects provider without model", () => {
+    const base = {
+      id: "r",
+      name: "R",
+      workspace: "~/agents/r",
+      model: { provider: "openai", model: "gpt" },
+    };
+    expect(AgentConfigSchema.parse({ ...base, reflect: true }).reflect).toBe(true);
+    expect(
+      AgentConfigSchema.parse({ ...base, reflect: { cadence: 5 } }).reflect
+    ).toMatchObject({ enabled: true, cadence: 5 });
+    expect(
+      AgentConfigSchema.safeParse({ ...base, reflect: { provider: "x" } }).success
+    ).toBe(false);
+  });
+
   it("accepts dream shorthand and validates model overrides", () => {
     expect(
       AgentConfigSchema.parse({

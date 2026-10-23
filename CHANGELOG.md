@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Add the `reflect` agent option. It adds a self-improvement prompt so the agent saves lessons to skills and `memory.md` in the same turn. Off by default.
+
 ### Fixed
 
 - Show MCP cards and connection settings before live discovery completes, keep their initial Top/name order during status refreshes, and retry unreachable servers individually without treating outages as lost OAuth grants.

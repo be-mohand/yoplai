@@ -326,6 +326,45 @@ describe("container input builder", () => {
     ]);
   });
 
+  it("adds the self-improvement prompt only when reflect is on", async () => {
+    const workspaceDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "yoplai-container-input-")
+    );
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "soul");
+    const builder = new ContainerInputBuilder({
+      buildSystemPrompts: async () => [],
+      buildTools: async () => [],
+    });
+    const make = (reflect?: true) =>
+      ({
+        agentId: "cloud",
+        sessionId: "session-1",
+        message: "hello",
+        workspaceDir,
+        agent: {
+          id: "cloud",
+          model: { provider: "anthropic", model: "claude-sonnet" },
+          reflect,
+        },
+      }) as SdkRunParams;
+    const on = make(true);
+    const off = make();
+    const withReflect = await builder.build(
+      on,
+      { agents: [on.agent], extensions: {} } as GatewayConfig,
+      "token-1"
+    );
+    const without = await builder.build(
+      off,
+      { agents: [off.agent], extensions: {} } as GatewayConfig,
+      "token-1"
+    );
+    expect(withReflect.extensionSystemPrompts?.join("\n")).toContain(
+      "skill_save"
+    );
+    expect(without.extensionSystemPrompts).toBeUndefined();
+  });
+
   it("resolves system files on the host before container launch", async () => {
     const workspaceDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "yoplai-container-input-")

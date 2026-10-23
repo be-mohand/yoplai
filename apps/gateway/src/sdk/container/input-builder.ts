@@ -7,6 +7,7 @@ import {
 } from "@yoplai/shared";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { resolveToolDeferralConfig } from "@yoplai/shared/tool-deferral";
+import { selfImprovementPrompt } from "../../agents/self-improvement.js";
 import { getDefaultSdkId } from "../registry.js";
 import type { SdkRunParams } from "../types.js";
 import {
@@ -37,6 +38,11 @@ export class ContainerInputBuilder {
       params,
       config
     );
+    const systemPrompts = [
+      bootstrapPrompt,
+      ...extensionSystemPrompts,
+      selfImprovementPrompt(params.agent),
+    ].filter((prompt): prompt is string => Boolean(prompt));
     const provider = params.model?.provider ?? params.agent.model.provider;
     const model = params.model?.model ?? params.agent.model.model;
     const primaryImageInputSupported = provider
@@ -82,11 +88,7 @@ export class ContainerInputBuilder {
         content: file.content,
       })),
       extensionSystemPrompts:
-        bootstrapPrompt || extensionSystemPrompts.length > 0
-          ? [bootstrapPrompt, ...extensionSystemPrompts].filter(
-              (prompt): prompt is string => Boolean(prompt)
-            )
-          : undefined,
+        systemPrompts.length > 0 ? systemPrompts : undefined,
       extensionTools: extensionTools.length > 0 ? extensionTools : undefined,
       retry: {
         maxAttempts:

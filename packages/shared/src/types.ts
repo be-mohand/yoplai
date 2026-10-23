@@ -150,6 +150,27 @@ export const DreamConfigSchema = z.union([
 ]);
 export type DreamConfig = z.infer<typeof DreamConfigSchema>;
 
+export const ReflectConfigSchema = z.union([
+  z.literal(true),
+  z
+    .object({
+      enabled: z.boolean().optional().default(true),
+      cadence: z.number().int().positive().optional(),
+      provider: z.string().min(1).optional(),
+      model: z.string().min(1).optional(),
+      timeoutMs: z.number().positive().optional(),
+    })
+    .superRefine((value, ctx) => {
+      if (Boolean(value.provider) !== Boolean(value.model)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "provider and model must be set together",
+        });
+      }
+    }),
+]);
+export type ReflectConfig = z.infer<typeof ReflectConfigSchema>;
+
 export const DreamGatewayConfigSchema = z.object({
   prompt: z.string().min(1).optional(),
   timeoutMs: z.number().positive().optional(),
@@ -276,6 +297,7 @@ const AgentConfigBaseSchema = z.object({
   retryBaseDelay: z.number().positive().optional(),
   heartbeat: HeartbeatConfigSchema.optional(), // Periodic heartbeat config
   dream: DreamConfigSchema.optional(),
+  reflect: ReflectConfigSchema.optional(),
   webhooks: z.record(z.string(), WebhookConfigSchema).optional(),
   introMessage: z.string().optional(), // Custom intro for /new (default: "New conversation started.")
   extensions: z.record(z.string(), ExtensionBaseConfigSchema).optional(),
