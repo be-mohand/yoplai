@@ -24,6 +24,8 @@ type ToolMetadata = {
 
 // Pi does not list deferred tools in the codemode description. A script
 // that passes wrong arguments gets the signature from hintCodemodeSignatures.
+const DEFERRED_GROUP_RULE =
+  "Each line lists the tools of one group. To load a whole group, call tool_search with the group name as query and a limit of at least its tool count.";
 const CODEMODE_DEFERRED_RULES = [
   "A tool with an output schema resolves to an object. Do not use JSON.parse on it.",
 ].join("\n");
@@ -124,19 +126,22 @@ export function createToolDeferralCatalog(
   const namespaceSummary = [...namespaces.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, group]) => {
-      const detail =
-        group.description ??
-        `${group.examples.length} tools, e.g. ${group.examples.sort().slice(0, 4).join(", ")}`;
-      const label = group.description
-        ? (group.displayName ?? group.label)
+      const head = group.description
+        ? `${group.displayName ?? group.label}: ${group.description}`
+            .replace(/\s+/g, " ")
+            .slice(0, 200)
         : group.label;
-      return `${label}: ${detail}`.replace(/\s+/g, " ").slice(0, 200);
+      const count = group.examples.length;
+      return `${head} (${count} tool${count === 1 ? "" : "s"}: ${group.examples.sort().join(", ")})`;
     })
     .join("\n");
-  const summary =
-    namespaceSummary && options.codemode
-      ? `${namespaceSummary}\n${CODEMODE_DEFERRED_RULES}`
-      : namespaceSummary;
+  const summary = namespaceSummary
+    ? [
+        namespaceSummary,
+        DEFERRED_GROUP_RULE,
+        ...(options.codemode ? [CODEMODE_DEFERRED_RULES] : []),
+      ].join("\n")
+    : namespaceSummary;
   return {
     tools,
     summary,

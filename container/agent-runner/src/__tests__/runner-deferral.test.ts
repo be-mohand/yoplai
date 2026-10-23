@@ -510,7 +510,7 @@ describe("Container Pi deferred tools", () => {
     };
     const extensionTools = [described, fallback, stock];
     const summary =
-      "inventory: Find current stock\nlegacy: 1 tools, e.g. not_connected\nMeeting Library: Find recorded meeting notes";
+      "inventory: Find current stock (1 tool: inventory.lookup)\nlegacy (1 tool: not_connected)\nMeeting Library: Find recorded meeting notes (1 tool: lookup)\nEach line lists the tools of one group. To load a whole group, call tool_search with the group name as query and a limit of at least its tool count.";
     respond([capture]);
     await run({ extensionTools });
     const actualSummary = getCurrentSystemMessage(contexts[0].messages)
@@ -541,7 +541,7 @@ describe("Container Pi deferred tools", () => {
         "deferred-tools"
       ]
     ).toBe(
-      "<deferred-tools>\ninventory: Find current stock\nMeeting Library: Find recorded meeting notes\n</deferred-tools>"
+      "<deferred-tools>\ninventory: Find current stock (1 tool: inventory.lookup)\nMeeting Library: Find recorded meeting notes (1 tool: lookup)\nEach line lists the tools of one group. To load a whole group, call tool_search with the group name as query and a limit of at least its tool count.\n</deferred-tools>"
     );
     respond([capture]);
     await run({ extensionTools: [], message: "no integrations" });

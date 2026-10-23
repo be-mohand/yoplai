@@ -167,7 +167,7 @@ describe("Pi gateway deferred tools", () => {
     };
     setup.faux.setResponses([capture]);
     await piAdapter.run(run.params);
-    expect(summary).toContain("blank: 1 tools, e.g. query");
+    expect(summary).toContain("blank (1 tool: query)");
     expect(summary).not.toContain("Unused label:");
     run.catalog.tools[0].namespace = {
       name: "blank",
@@ -365,7 +365,9 @@ describe("Pi gateway deferred tools", () => {
     );
     for (const section of sections)
       for (const line of section.split("\n"))
-        expect(line.length).toBeLessThanOrEqual(200);
+        expect(
+          line.replace(/ \(\d+ tools?: .*\)$/, "").length
+        ).toBeLessThanOrEqual(200);
   });
   it("restores activation from each fork point and drops removed tools while newly available stubs stay deferred", async () => {
     const run = fixture();

@@ -73,7 +73,9 @@ describe("MCP namespace instructions", () => {
   it("uses the first instructions line, capped at 200 characters, when the description is missing", () => {
     const first = "x".repeat(300);
     const { summary } = build({ instructions: `\n${first}\nSecond line` });
-    expect(summary).toBe(`recordings: ${first}`.slice(0, 200));
+    expect(summary.split("\n")[0]).toBe(
+      `${`recordings: ${first}`.slice(0, 200)} (1 tool: get_transcript)`
+    );
   });
 
   it("prefers the description over instructions in the summary", () => {
@@ -81,7 +83,9 @@ describe("MCP namespace instructions", () => {
       description: "Search meetings",
       instructions: "Call search first.",
     });
-    expect(summary).toBe("recordings: Search meetings");
+    expect(summary.split("\n")[0]).toBe(
+      "recordings: Search meetings (1 tool: get_transcript)"
+    );
   });
 });
 
