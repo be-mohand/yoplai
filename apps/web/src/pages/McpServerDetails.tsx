@@ -208,7 +208,7 @@ export function McpServerDetails() {
                   </Show>
                 </div>
               </div>
-              <Show when={(!current().shared || current().enabled) && (checking() || statusFailed() || current().state === "unreachable" || current().state === "connected")}>
+              <Show when={(!current().shared || current().enabled) && (checking() || statusFailed() || current().state === "unreachable" || (current().state === "connected" && current().auth !== "oauth"))}>
                 <p role="status">
                   <Switch fallback="Connected">
                     <Match when={checking()}>Checking…</Match>

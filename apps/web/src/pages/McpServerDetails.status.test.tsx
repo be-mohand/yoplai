@@ -65,7 +65,8 @@ it.each([
   await tick();
   expect(document.body.textContent).not.toContain("Failed to check status.");
   expect(document.body.textContent).not.toContain("Unreachable");
-  expect(getByRole(document.body, "status").textContent).toBe("Connected");
+  expect(queryByRole(document.body, "status")).toBeNull();
+  expect(within(getByRole(document.body, "tab", { name: /Just me/ })).getByText(label)).toBeTruthy();
   expect(requests.filter((request) => request.includes("live=0"))).toHaveLength(1);
 });
 
