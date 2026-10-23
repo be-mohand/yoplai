@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- Sandbox and Harbor eval images now run on Node 24 LTS instead of Node 22, which only receives security fixes. Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
+
 ## v0.26.0 — Chat projects, Skills directory + owned dashboards
 
 Chat gets personal projects with shared instructions, files, references and notes, plus pinned and archived chats, full-text search, a personal main agent, and copy buttons for replies and code blocks. A new **Skills** page lets each user upload, share, import and roll back skills, and superadmins can promote skills to defaults. Dashboards now have owners: new pages are private, owners share them with selected users or the whole platform, and users can pin them. Agents get opt-in codemode, deferred tool loading, structured tool results, per-conversation writable files, a `session_history` tool, and browser previews in sandboxes. Scheduled jobs gain opt-in run history with live traces. A new Threadit extension connects agents to a Threadit board, and Slack agents can add reactions. Agents have Public/Private visibility, separate from team ownership.
