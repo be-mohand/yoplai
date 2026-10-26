@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Generate agent avatars in a chosen style (3D animated by default, manga, flat, watercolor, pixel, or your own) from the agent page or `yoplai agent avatar`, using a ChatGPT subscription or an OpenAI API key.
+
 ### Changed
 
 - Sandbox and Harbor eval images now run on Node 24 LTS instead of Node 22, which only receives security fixes. Rebuild custom images that start `FROM yoplai-agent:latest`. The gateway still supports Node 22.19+.
